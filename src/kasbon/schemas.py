@@ -71,4 +71,14 @@ class LoanListResponse(BaseModel):
     message: Optional[str] = None
 
     class Config:
+        from_attributes = True
+
+
+class LoanFeesResponse(BaseModel):
+    status: str
+    total_expected_admin_fee: int
+    total_collected_admin_fee: int
+    message: Optional[str] = None
+
+    class Config:
         from_attributes = True 

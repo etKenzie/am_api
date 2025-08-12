@@ -33,6 +33,8 @@ async def root():
             "kasbon_eligible_count_filtered": "/kasbon/eligible-count?employer=EMPLOYER&project=PROJECT&id_karyawan=123",
             "kasbon_loans": "/kasbon/loans (loan data with enhanced karyawan information)",
             "kasbon_loans_filtered": "/kasbon/loans?employer=EMPLOYER&project=PROJECT&loan_status=1&id_karyawan=123",
+            "kasbon_loan_fees": "/kasbon/loan-fees (total expected and collected admin fees)",
+            "kasbon_loan_fees_filtered": "/kasbon/loan-fees?employer=EMPLOYER&project=PROJECT&loan_status=1&id_karyawan=123",
             "kasbon_filters": "/kasbon/filters (get available filter values)",
             "health": "/health"
         },
@@ -42,6 +44,8 @@ async def root():
             "get_kasbon_eligible_count": "GET /kasbon/eligible-count",
             "filter_kasbon_eligible_count": "GET /kasbon/eligible-count?employer=Employer A&project=Project 1&id_karyawan=123",
             "get_kasbon_loans": "GET /kasbon/loans",
-            "filter_kasbon_loans": "GET /kasbon/loans?employer=Employer A&project=Project 1&loan_status=1&id_karyawan=123"
+            "filter_kasbon_loans": "GET /kasbon/loans?employer=Employer A&project=Project 1&loan_status=1&id_karyawan=123",
+            "get_kasbon_loan_fees": "GET /kasbon/loan-fees",
+            "filter_kasbon_loan_fees": "GET /kasbon/loan-fees?employer=Employer A&project=Project 1&loan_status=1&id_karyawan=123"
         }
     }

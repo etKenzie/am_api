@@ -25,9 +25,6 @@ async def get_karyawan(
     db: Session = Depends(get_db)
 ):
     """Get enhanced karyawan data with join to tbl_gmc table and multiple filters"""
-    print(f"🌐 API endpoint /kasbon/karyawan called")
-    print(f"🔍 Filters: id_karyawan={id_karyawan}, employer={employer}, sourced_to={sourced_to}, project={project}")
-    
     try:
         print(f"🔍 About to call crud.get_enhanced_karyawan...")
         karyawan_list = crud.get_enhanced_karyawan(
@@ -67,9 +64,6 @@ async def get_eligible_count(
     db: Session = Depends(get_db)
 ):
     """Get count of eligible employees (status = '1' and loan_kasbon_eligible = '1')"""
-    print(f"🌐 API endpoint /kasbon/eligible-count called")
-    print(f"🔍 Filters: id_karyawan={id_karyawan}, employer={employer}, sourced_to={sourced_to}, project={project}")
-    
     try:
         print(f"🔍 About to call crud.get_eligible_count...")
         total_eligible = crud.get_eligible_count(
@@ -108,9 +102,6 @@ async def get_loans(
     db: Session = Depends(get_db)
 ):
     """Get loans data with enhanced karyawan information and filters"""
-    print(f"🌐 API endpoint /kasbon/loans called")
-    print(f"🔍 Filters: employer={employer}, sourced_to={sourced_to}, project={project}, loan_status={loan_status}, id_karyawan={id_karyawan}")
-    
     try:
         print(f"🔍 About to call crud.get_loans_with_karyawan...")
         loans_list = crud.get_loans_with_karyawan(
@@ -162,4 +153,48 @@ async def get_available_filters(db: Session = Depends(get_db)):
             "status": "error",
             "message": str(e),
             "filters": {}
+        } 
+
+
+@router.get("/loan-fees", response_model=schemas.LoanFeesResponse)
+async def get_loan_fees(
+    employer: str = None, 
+    sourced_to: str = None, 
+    project: str = None,
+    loan_status: int = None,
+    id_karyawan: int = None,
+    db: Session = Depends(get_db)
+):
+    """Get loan fees summary (total expected and collected admin fees)"""
+    print(f"🌐 API endpoint /kasbon/loan-fees called")
+    print(f"🔍 Filters: employer={employer}, sourced_to={sourced_to}, project={project}, loan_status={loan_status}, id_karyawan={id_karyawan}")
+    
+    try:
+        print(f"🔍 About to call crud.get_loan_fees_summary...")
+        fees_summary = crud.get_loan_fees_summary(
+            db, 
+            employer_filter=employer,
+            sourced_to_filter=sourced_to,
+            project_filter=project,
+            loan_status_filter=loan_status,
+            id_karyawan_filter=id_karyawan
+        )
+        
+        print(f"💰 Returning loan fees summary to client")
+        
+        # Return structured response
+        return {
+            "status": "success",
+            "total_expected_admin_fee": fees_summary["total_expected_admin_fee"],
+            "total_collected_admin_fee": fees_summary["total_collected_admin_fee"]
+        }
+    except Exception as e:
+        print(f"❌ Error in loan fees endpoint: {e}")
+        print(f"   Error type: {type(e).__name__}")
+        # Return error response with status
+        return {
+            "status": "error",
+            "message": str(e),
+            "total_expected_admin_fee": 0,
+            "total_collected_admin_fee": 0
         } 
