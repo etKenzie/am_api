@@ -5,11 +5,9 @@ from sqlalchemy.orm import Session
 # Flexible imports that work both locally and in Docker
 try:
     # Try relative imports first (for Docker)
-    from . import crud, schemas
     from .db import get_db
 except ImportError:
     # Fall back to absolute imports (for local development)
-    import crud, schemas
     from db import get_db
 
 
@@ -29,79 +27,21 @@ async def root():
         "service": "Aku Maju API",
         "version": "1.0.0",
         "endpoints": {
-            "karyawan": "/karyawan (includes: id_karyawan, status, loan_kasbon_eligible, klient)",
-            "karyawan_filtered": "/karyawan?klient=CLIENT_NAME (filter by specific klient)",
+            "kasbon_karyawan": "/kasbon/karyawan (includes: employer_name, sourced_to_name, project_name)",
+            "kasbon_karyawan_filtered": "/kasbon/karyawan?employer=EMPLOYER&sourced_to=PLACEMENT&project=PROJECT&id_karyawan=123",
+            "kasbon_eligible_count": "/kasbon/eligible-count (count of employees with status='1' and loan_kasbon_eligible='1')",
+            "kasbon_eligible_count_filtered": "/kasbon/eligible-count?employer=EMPLOYER&project=PROJECT&id_karyawan=123",
+            "kasbon_loans": "/kasbon/loans (loan data with enhanced karyawan information)",
+            "kasbon_loans_filtered": "/kasbon/loans?employer=EMPLOYER&project=PROJECT&loan_status=1&id_karyawan=123",
+            "kasbon_filters": "/kasbon/filters (get available filter values)",
             "health": "/health"
         },
         "usage": {
-            "get_all_karyawan": "GET /karyawan",
-            "filter_by_klient": "GET /karyawan?klient=PT_ABC"
+            "get_kasbon_karyawan": "GET /kasbon/karyawan",
+            "filter_kasbon_karyawan": "GET /kasbon/karyawan?employer=Employer A&sourced_to=Placement X&project=Project 1&id_karyawan=123",
+            "get_kasbon_eligible_count": "GET /kasbon/eligible-count",
+            "filter_kasbon_eligible_count": "GET /kasbon/eligible-count?employer=Employer A&project=Project 1&id_karyawan=123",
+            "get_kasbon_loans": "GET /kasbon/loans",
+            "filter_kasbon_loans": "GET /kasbon/loans?employer=Employer A&project=Project 1&loan_status=1&id_karyawan=123"
         }
     }
-
-
-@router.get("/karyawan", response_model=schemas.KaryawanListResponse)
-async def get_all_karyawan(klient: str = None, db: Session = Depends(get_db)):
-    """Get all karyawan with optional klient filter"""
-    print(f"🌐 API endpoint /karyawan called")
-    if klient:
-        print(f"🔍 Filtering by klient: {klient}")
-    print(f"   Database session: {type(db).__name__}")
-    
-    try:
-        print(f"🔍 About to call crud.get_all_karyawan...")
-        karyawan_list = crud.get_all_karyawan(db, klient_filter=klient)
-        print(f"📤 Returning {len(karyawan_list)} karyawan records to client")
-        
-        # Return structured response with status and results
-        return {
-            "status": "success",
-            "count": len(karyawan_list),
-            "results": karyawan_list
-        }
-    except Exception as e:
-        print(f"❌ Error in endpoint: {e}")
-        print(f"   Error type: {type(e).__name__}")
-        # Return error response with status
-        return {
-            "status": "error",
-            "message": str(e),
-            "count": 0,
-            "results": []
-        }
-
-
-@router.get("/karyawan-raw")
-async def get_all_karyawan_raw(db: Session = Depends(get_db)):
-    """Get all karyawan using raw SQL for testing"""
-    print(f"🌐 API endpoint /karyawan-raw called")
-    
-    try:
-        from sqlalchemy import text
-        
-        # Use raw SQL to get data
-        result = db.execute(text("SELECT id_karyawan, nama, nik, email, status, dept, posisi FROM td_karyawan LIMIT 10"))
-        records = result.fetchall()
-        
-        print(f"📊 Raw SQL returned {len(records)} records")
-        
-        # Convert to list of dictionaries
-        karyawan_list = []
-        for record in records:
-            karyawan_list.append({
-                "id_karyawan": record[0],
-                "nama": record[1],
-                "nik": record[2],
-                "email": record[3],
-                "status": record[4],
-                "dept": record[5],
-                "posisi": record[6]
-            })
-        
-        print(f"📤 Returning {len(karyawan_list)} karyawan records to client")
-        return {"status": "success", "count": len(karyawan_list), "data": karyawan_list}
-        
-    except Exception as e:
-        print(f"❌ Error in raw endpoint: {e}")
-        print(f"   Error type: {type(e).__name__}")
-        return {"status": "error", "message": str(e)}

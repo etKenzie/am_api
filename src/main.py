@@ -6,12 +6,10 @@ try:
     # Try relative imports first (for Docker)
     from .router import router as process_router
     from .db import get_engine
-    from . import models
 except ImportError:
     # Fall back to absolute imports (for local development)
     from router import router as process_router
     from db import get_engine
-    import models
 
 # Create database tables with error handling
 try:
