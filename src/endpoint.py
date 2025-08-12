@@ -29,28 +29,46 @@ async def root():
         "service": "Aku Maju API",
         "version": "1.0.0",
         "endpoints": {
-            "karyawan": "/karyawan",
+            "karyawan": "/karyawan (includes: id_karyawan, status, loan_kasbon_eligible, klient)",
+            "karyawan_filtered": "/karyawan?klient=CLIENT_NAME (filter by specific klient)",
             "health": "/health"
+        },
+        "usage": {
+            "get_all_karyawan": "GET /karyawan",
+            "filter_by_klient": "GET /karyawan?klient=PT_ABC"
         }
     }
 
 
-@router.get("/karyawan", response_model=List[schemas.TdKaryawanResponse])
-async def get_all_karyawan(db: Session = Depends(get_db)):
-    """Get all karyawan with a limit of 1000"""
+@router.get("/karyawan", response_model=schemas.KaryawanListResponse)
+async def get_all_karyawan(klient: str = None, db: Session = Depends(get_db)):
+    """Get all karyawan with optional klient filter"""
     print(f"🌐 API endpoint /karyawan called")
+    if klient:
+        print(f"🔍 Filtering by klient: {klient}")
     print(f"   Database session: {type(db).__name__}")
     
     try:
         print(f"🔍 About to call crud.get_all_karyawan...")
-        karyawan_list = crud.get_all_karyawan(db)
+        karyawan_list = crud.get_all_karyawan(db, klient_filter=klient)
         print(f"📤 Returning {len(karyawan_list)} karyawan records to client")
-        return karyawan_list
+        
+        # Return structured response with status and results
+        return {
+            "status": "success",
+            "count": len(karyawan_list),
+            "results": karyawan_list
+        }
     except Exception as e:
         print(f"❌ Error in endpoint: {e}")
         print(f"   Error type: {type(e).__name__}")
-        # Return a simple response to show the error
-        return []
+        # Return error response with status
+        return {
+            "status": "error",
+            "message": str(e),
+            "count": 0,
+            "results": []
+        }
 
 
 @router.get("/karyawan-raw")

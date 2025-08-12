@@ -20,7 +20,7 @@ class TdKaryawan(Base):
     # Basic employee information
     # valdo_inc = Column(String(200), nullable=True)
     # nik_klient = Column(String(200), nullable=True)
-    # klient = Column(String(200), nullable=True)
+    klient = Column(String(200), nullable=True)
     # placement = Column(String(200), nullable=False)
     # project = Column(String(200), nullable=True)
     # area = Column(String(200), nullable=True)
