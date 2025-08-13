@@ -1099,8 +1099,8 @@ def get_loan_risk_summary(db: Session,
             SUM(CASE WHEN l.loan_status = 4 THEN l.total_loan ELSE 0 END) as total_unrecovered_kasbon,
             COUNT(CASE WHEN l.loan_status = 4 THEN 1 END) as unrecovered_kasbon_count,
             SUM(CASE WHEN l.loan_status IN (1, 4) THEN l.total_payment ELSE 0 END) as total_expected_repayment,
-            SUM(CASE WHEN l.loan_status = 2 THEN l.total_loan ELSE 0 END) as total_loan_status_2,
-            SUM(CASE WHEN l.loan_status = 1 THEN l.total_loan ELSE 0 END) as total_loan_status_1
+            SUM(CASE WHEN l.loan_status = 2 THEN l.total_loan ELSE 0 END) as total_paid,
+            SUM(CASE WHEN l.loan_status IN (1, 2, 4) THEN l.total_loan ELSE 0 END) as total_disbursed
         FROM td_loan l
         LEFT JOIN td_karyawan tk
             ON l.id_karyawan = tk.id_karyawan
@@ -1163,13 +1163,13 @@ def get_loan_risk_summary(db: Session,
         total_unrecovered_kasbon = record[0] if record[0] is not None else 0
         unrecovered_kasbon_count = record[1] if record[1] is not None else 0
         total_expected_repayment = record[2] if record[2] is not None else 0
-        total_loan_status_2 = record[3] if record[3] is not None else 0
-        total_loan_status_1 = record[4] if record[4] is not None else 0
+        total_paid = record[3] if record[3] is not None else 0
+        total_disbursed = record[4] if record[4] is not None else 0
         
         # Calculate kasbon principal recovery rate
         kasbon_principal_recovery_rate = 0
-        if total_loan_status_1 > 0:
-            kasbon_principal_recovery_rate = total_loan_status_2 / total_loan_status_1
+        if total_disbursed > 0:
+            kasbon_principal_recovery_rate = total_paid / total_disbursed
         
         print(f"📊 Loan risk summary:")
         print(f"   Total unrecovered kasbon: {total_unrecovered_kasbon} (from {unrecovered_kasbon_count} loans)")
@@ -1211,8 +1211,8 @@ def get_loan_risk_monthly_summary(db: Session,
             SUM(CASE WHEN l.loan_status = 4 THEN l.total_loan ELSE 0 END) as total_unrecovered_kasbon,
             COUNT(CASE WHEN l.loan_status = 4 THEN 1 END) as unrecovered_kasbon_count,
             SUM(CASE WHEN l.loan_status IN (1, 4) THEN l.total_payment ELSE 0 END) as total_expected_repayment,
-            SUM(CASE WHEN l.loan_status = 2 THEN l.total_loan ELSE 0 END) as total_loan_status_2,
-            SUM(CASE WHEN l.loan_status = 1 THEN l.total_loan ELSE 0 END) as total_loan_status_1
+            SUM(CASE WHEN l.loan_status = 2 THEN l.total_loan ELSE 0 END) as total_paid,
+            SUM(CASE WHEN l.loan_status IN (1, 2, 4) THEN l.total_loan ELSE 0 END) as total_disbursed
         FROM td_loan l
         LEFT JOIN td_karyawan tk
             ON l.id_karyawan = tk.id_karyawan
@@ -1297,13 +1297,13 @@ def get_loan_risk_monthly_summary(db: Session,
             total_unrecovered_kasbon = record[1] if record[1] is not None else 0
             unrecovered_kasbon_count = record[2] if record[2] is not None else 0
             total_expected_repayment = record[3] if record[3] is not None else 0
-            total_loan_status_2 = record[4] if record[4] is not None else 0
-            total_loan_status_1 = record[5] if record[5] is not None else 0
+            total_paid = record[4] if record[4] is not None else 0
+            total_disbursed = record[5] if record[5] is not None else 0
             
             # Calculate kasbon principal recovery rate
             kasbon_principal_recovery_rate = 0
-            if total_loan_status_1 > 0:
-                kasbon_principal_recovery_rate = total_loan_status_2 / total_loan_status_1
+            if total_disbursed > 0:
+                kasbon_principal_recovery_rate = total_paid / total_disbursed
             
             monthly_data[month_year] = {
                 "total_unrecovered_kasbon": total_unrecovered_kasbon,
