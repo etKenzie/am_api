@@ -311,7 +311,8 @@ async def get_loan_fees(
             "expected_loans_count": fees_summary["expected_loans_count"],
             "total_collected_admin_fee": fees_summary["total_collected_admin_fee"],
             "collected_loans_count": fees_summary["collected_loans_count"],
-            "admin_fee_profit": fees_summary["total_collected_admin_fee"] - fees_summary["total_expected_admin_fee"],
+            "total_failed_payment": fees_summary["total_failed_payment"],
+            "admin_fee_profit": fees_summary["admin_fee_profit"],
         }
     except Exception as e:
         print(f"❌ Error in loan fees endpoint: {e}")
@@ -324,6 +325,7 @@ async def get_loan_fees(
             "expected_loans_count": 0,
             "total_collected_admin_fee": 0,
             "collected_loans_count": 0,
+            "total_failed_payment": 0,
             "admin_fee_profit": 0
         }
 

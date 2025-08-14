@@ -110,6 +110,7 @@ class LoanFeesResponse(BaseModel):
     expected_loans_count: int
     total_collected_admin_fee: int
     collected_loans_count: int
+    total_failed_payment: int
     admin_fee_profit: int
     message: Optional[str] = None
 
@@ -122,6 +123,7 @@ class MonthlyLoanFeesData(BaseModel):
     expected_loans_count: int
     total_collected_admin_fee: int
     collected_loans_count: int
+    total_failed_payment: int
     admin_fee_profit: int
 
     class Config:

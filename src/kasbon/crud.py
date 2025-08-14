@@ -868,10 +868,11 @@ def get_loan_fees_summary(db: Session,
         # Build the query to calculate admin fees
         fees_query = """
         SELECT
-            SUM(CASE WHEN l.loan_status IN (1, 4) THEN l.admin_fee ELSE 0 END) as total_expected_admin_fee,
-            COUNT(CASE WHEN l.loan_status IN (1, 4) THEN 1 END) as expected_loans_count,
+            SUM(CASE WHEN l.loan_status IN (1, 2, 4) THEN l.admin_fee ELSE 0 END) as total_expected_admin_fee,
+            COUNT(CASE WHEN l.loan_status IN (1, 2, 4) THEN 1 END) as expected_loans_count,
             SUM(CASE WHEN l.loan_status = 2 THEN l.admin_fee ELSE 0 END) as total_collected_admin_fee,
-            COUNT(CASE WHEN l.loan_status = 2 THEN 1 END) as collected_loans_count
+            COUNT(CASE WHEN l.loan_status = 2 THEN 1 END) as collected_loans_count,
+            SUM(CASE WHEN l.loan_status = 4 THEN l.total_loan ELSE 0 END) as total_failed_payment
         FROM td_loan l
         LEFT JOIN td_karyawan tk
             ON l.id_karyawan = tk.id_karyawan
@@ -944,16 +945,24 @@ def get_loan_fees_summary(db: Session,
         expected_count = record[1] if record[1] is not None else 0
         total_collected = record[2] if record[2] is not None else 0
         collected_count = record[3] if record[3] is not None else 0
+        total_failed_payment = record[4] if record[4] is not None else 0
+        
+        # Calculate admin_fee_profit: total_collected_admin_fee - total_failed_payment
+        admin_fee_profit = total_collected - total_failed_payment
         
         print(f"💰 Loan fees summary:")
         print(f"   Expected admin fee: {total_expected} (from {expected_count} loans with status 1,4)")
         print(f"   Collected admin fee: {total_collected} (from {collected_count} loans with status 2)")
+        print(f"   Total failed payment: {total_failed_payment} (from loans with status 4)")
+        print(f"   Admin fee profit: {admin_fee_profit}")
         
         return {
             "total_expected_admin_fee": total_expected,
             "expected_loans_count": expected_count,
             "total_collected_admin_fee": total_collected,
-            "collected_loans_count": collected_count
+            "collected_loans_count": collected_count,
+            "total_failed_payment": total_failed_payment,
+            "admin_fee_profit": admin_fee_profit
         }
         
     except Exception as e:
@@ -965,7 +974,9 @@ def get_loan_fees_summary(db: Session,
             "total_expected_admin_fee": 0,
             "expected_loans_count": 0,
             "total_collected_admin_fee": 0,
-            "collected_loans_count": 0
+            "collected_loans_count": 0,
+            "total_failed_payment": 0,
+            "admin_fee_profit": 0
         }
 
 
@@ -981,10 +992,11 @@ def get_loan_fees_monthly_summary(db: Session,
         fees_query = """
         SELECT
             DATE_FORMAT(l.proses_date, '%M %Y') as month_year,
-            SUM(CASE WHEN l.loan_status IN (1, 4) THEN l.admin_fee ELSE 0 END) as total_expected_admin_fee,
-            COUNT(CASE WHEN l.loan_status IN (1, 4) THEN 1 END) as expected_loans_count,
+            SUM(CASE WHEN l.loan_status IN (1, 2, 4) THEN l.admin_fee ELSE 0 END) as total_expected_admin_fee,
+            COUNT(CASE WHEN l.loan_status IN (1, 2, 4) THEN 1 END) as expected_loans_count,
             SUM(CASE WHEN l.loan_status = 2 THEN l.admin_fee ELSE 0 END) as total_collected_admin_fee,
-            COUNT(CASE WHEN l.loan_status = 2 THEN 1 END) as collected_loans_count
+            COUNT(CASE WHEN l.loan_status = 2 THEN 1 END) as collected_loans_count,
+            SUM(CASE WHEN l.loan_status = 4 THEN l.total_loan ELSE 0 END) as total_failed_payment
         FROM td_loan l
         LEFT JOIN td_karyawan tk
             ON l.id_karyawan = tk.id_karyawan
@@ -1061,13 +1073,18 @@ def get_loan_fees_monthly_summary(db: Session,
             expected_count = record[2] if record[2] is not None else 0
             total_collected = record[3] if record[3] is not None else 0
             collected_count = record[4] if record[4] is not None else 0
+            total_failed_payment = record[5] if record[5] is not None else 0
+            
+            # Calculate admin_fee_profit: total_collected_admin_fee - total_failed_payment
+            admin_fee_profit = total_collected - total_failed_payment
             
             monthly_data[month_year] = {
                 "total_expected_admin_fee": total_expected,
                 "expected_loans_count": expected_count,
                 "total_collected_admin_fee": total_collected,
                 "collected_loans_count": collected_count,
-                "admin_fee_profit": total_collected - total_expected
+                "total_failed_payment": total_failed_payment,
+                "admin_fee_profit": admin_fee_profit
             }
         
         print(f"💰 Monthly loan fees summary:")
