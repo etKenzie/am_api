@@ -252,13 +252,22 @@ async def get_loan_purpose_summary(
 
 
 @router.get("/filters")
-async def get_available_filters(db: Session = Depends(get_db)):
-    """Get available filter values for enhanced karyawan queries"""
+async def get_available_filters(
+    employer: str = None, 
+    placement: str = None, 
+    db: Session = Depends(get_db)
+):
+    """Get available filter values for enhanced karyawan queries with cascading filters"""
     print(f"🌐 API endpoint /kasbon/filters called")
+    print(f"🔍 Filter parameters: employer={employer}, placement={placement}")
     
     try:
         print(f"🔍 About to call crud.get_available_filter_values...")
-        filter_values = crud.get_available_filter_values(db)
+        filter_values = crud.get_available_filter_values(
+            db, 
+            employer_filter=employer,
+            placement_filter=placement
+        )
         print(f"📤 Returning filter values to client")
         
         return {
@@ -271,7 +280,7 @@ async def get_available_filters(db: Session = Depends(get_db)):
             "status": "error",
             "message": str(e),
             "filters": {}
-        } 
+        }
 
 
 @router.get("/loan-fees", response_model=schemas.LoanFeesResponse)

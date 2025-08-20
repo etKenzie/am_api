@@ -803,11 +803,11 @@ def get_loans_with_karyawan(db: Session, limit: int = 1000000,
         return []
 
 
-def get_available_filter_values(db: Session) -> dict:
-    """Get available filter values from tbl_gmc table for different categories"""
+def get_available_filter_values(db: Session, employer_filter: str = None, placement_filter: str = None) -> dict:
+    """Get available filter values from tbl_gmc table for different categories with cascading filters"""
     
     try:
-        # Get employers (sub_client)
+        # Get employers (sub_client) - always show all
         employer_query = """
         SELECT DISTINCT keterangan 
         FROM tbl_gmc 
@@ -817,30 +817,94 @@ def get_available_filter_values(db: Session) -> dict:
         ORDER BY keterangan
         """
         
-        # Get placement clients
+        # Get placement clients - filtered by employer if provided
         placement_query = """
-        SELECT DISTINCT keterangan 
-        FROM tbl_gmc 
-        WHERE group_gmc = 'placement_client' 
-        AND aktif = 'Yes' 
-        AND keterangan3 = 1
-        ORDER BY keterangan
+        SELECT DISTINCT src.keterangan 
+        FROM tbl_gmc src
         """
         
-        # Get projects
+        if employer_filter:
+            placement_query += """
+            INNER JOIN td_karyawan tk ON src.kode_gmc = tk.placement
+            INNER JOIN tbl_gmc emp ON tk.valdo_inc = emp.kode_gmc
+            WHERE emp.keterangan = :employer
+            AND emp.group_gmc = 'sub_client'
+            AND emp.aktif = 'Yes'
+            AND emp.keterangan3 = 1
+            AND src.group_gmc = 'placement_client'
+            AND src.aktif = 'Yes'
+            AND src.keterangan3 = 1
+            """
+        else:
+            placement_query += """
+            WHERE src.group_gmc = 'placement_client' 
+            AND src.aktif = 'Yes' 
+            AND src.keterangan3 = 1
+            """
+        
+        placement_query += " ORDER BY src.keterangan"
+        
+        # Get projects - filtered by employer and/or placement if provided
         project_query = """
-        SELECT DISTINCT keterangan 
-        FROM tbl_gmc 
-        WHERE group_gmc = 'client_project' 
-        AND aktif = 'Yes' 
-        AND keterangan3 = 1
-        ORDER BY keterangan
+        SELECT DISTINCT prj.keterangan 
+        FROM tbl_gmc prj
         """
+        
+        if employer_filter or placement_filter:
+            project_query += """
+            INNER JOIN td_karyawan tk ON prj.kode_gmc = tk.project
+            """
+            
+            if employer_filter:
+                project_query += """
+                INNER JOIN tbl_gmc emp ON tk.valdo_inc = emp.kode_gmc
+                """
+            
+            if placement_filter:
+                project_query += """
+                INNER JOIN tbl_gmc src ON tk.placement = src.kode_gmc
+                """
+            
+            project_query += " WHERE "
+            conditions = []
+            
+            if employer_filter:
+                conditions.append("emp.keterangan = :employer AND emp.group_gmc = 'sub_client' AND emp.aktif = 'Yes' AND emp.keterangan3 = 1")
+            
+            if placement_filter:
+                conditions.append("src.keterangan = :placement AND src.group_gmc = 'placement_client' AND src.aktif = 'Yes' AND src.keterangan3 = 1")
+            
+            project_query += " AND ".join(conditions)
+            project_query += " AND prj.group_gmc = 'client_project' AND prj.aktif = 'Yes' AND prj.keterangan3 = 1"
+        else:
+            project_query += """
+            WHERE prj.group_gmc = 'client_project' 
+            AND prj.aktif = 'Yes' 
+            AND prj.keterangan3 = 1
+            """
+        
+        project_query += " ORDER BY prj.keterangan"
+        
+        # Build parameters for filtered queries
+        placement_params = {}
+        project_params = {}
+        
+        if employer_filter:
+            placement_params['employer'] = employer_filter
+            project_params['employer'] = employer_filter
+        
+        if placement_filter:
+            project_params['placement'] = placement_filter
         
         # Execute queries
         employers = [row[0] for row in db.execute(text(employer_query)).fetchall()]
-        placements = [row[0] for row in db.execute(text(placement_query)).fetchall()]
-        projects = [row[0] for row in db.execute(text(project_query)).fetchall()]
+        placements = [row[0] for row in db.execute(text(placement_query), placement_params).fetchall()]
+        projects = [row[0] for row in db.execute(text(project_query), project_params).fetchall()]
+        
+        print(f"🔍 Filter values retrieved:")
+        print(f"   Employers: {len(employers)} options")
+        print(f"   Placements: {len(placements)} options (filtered by employer: {employer_filter})")
+        print(f"   Projects: {len(projects)} options (filtered by employer: {employer_filter}, placement: {placement_filter})")
         
         return {
             "employers": employers,
@@ -850,6 +914,9 @@ def get_available_filter_values(db: Session) -> dict:
         
     except Exception as e:
         print(f"❌ Error getting filter values: {e}")
+        print(f"   Error type: {type(e).__name__}")
+        import traceback
+        traceback.print_exc()
         return {
             "employers": [],
             "placements": [],
@@ -1423,14 +1490,7 @@ def get_karyawan_overdue_summary(db: Session,
         ORDER BY total_amount_owed DESC
         """
         
-        print(f"🔍 Executing karyawan overdue query with filters:")
-        print(f"   id_karyawan: {id_karyawan_filter}")
-        print(f"   employer: {employer_filter}")
-        print(f"   sourced_to: {sourced_to_filter}")
-        print(f"   project: {project_filter}")
-        print(f"   loan_status: {loan_status_filter}")
-        print(f"   month: {month_filter}")
-        print(f"   year: {year_filter}")
+
         
         # Execute the query
         result = db.execute(text(overdue_query), params)
