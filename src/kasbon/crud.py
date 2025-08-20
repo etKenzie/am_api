@@ -303,9 +303,9 @@ def get_user_coverage_summary(db: Session,
         WHERE l.loan_status IN (1, 2, 4)
         """
         
-        # Build the total unique requests query
-        total_unique_requests_query = """
-        SELECT COUNT(DISTINCT l.id_karyawan)
+        # Build the total loans query (for average calculation - count all loans, not unique borrowers)
+        total_loans_query = """
+        SELECT COUNT(*)
         FROM td_loan l
         LEFT JOIN td_karyawan tk
             ON l.id_karyawan = tk.id_karyawan
@@ -324,7 +324,7 @@ def get_user_coverage_summary(db: Session,
             AND prj.group_gmc = 'client_project'
             AND prj.aktif = 'Yes'
             AND prj.keterangan3 = 1
-        WHERE 1=1
+        WHERE l.loan_status IN (1, 2, 4)
         """
         
         # Build parameters dict for filters
@@ -340,7 +340,7 @@ def get_user_coverage_summary(db: Session,
             rejected_requests_query += " AND l.id_karyawan = :id_karyawan"
             avg_approval_time_query += " AND l.id_karyawan = :id_karyawan"
             total_disbursed_amount_query += " AND l.id_karyawan = :id_karyawan"
-            total_unique_requests_query += " AND l.id_karyawan = :id_karyawan"
+            total_loans_query += " AND l.id_karyawan = :id_karyawan"
             params['id_karyawan'] = id_karyawan_filter
         if employer_filter:
             eligible_count_query += " AND emp.keterangan = :employer"
@@ -351,7 +351,7 @@ def get_user_coverage_summary(db: Session,
             rejected_requests_query += " AND emp.keterangan = :employer"
             avg_approval_time_query += " AND emp.keterangan = :employer"
             total_disbursed_amount_query += " AND emp.keterangan = :employer"
-            total_unique_requests_query += " AND emp.keterangan = :employer"
+            total_loans_query += " AND emp.keterangan = :employer"
             params['employer'] = employer_filter
         if sourced_to_filter:
             eligible_count_query += " AND src.keterangan = :sourced_to"
@@ -362,7 +362,7 @@ def get_user_coverage_summary(db: Session,
             rejected_requests_query += " AND src.keterangan = :sourced_to"
             avg_approval_time_query += " AND src.keterangan = :sourced_to"
             total_disbursed_amount_query += " AND src.keterangan = :sourced_to"
-            total_unique_requests_query += " AND src.keterangan = :sourced_to"
+            total_loans_query += " AND src.keterangan = :sourced_to"
             params['sourced_to'] = sourced_to_filter
         if project_filter:
             eligible_count_query += " AND prj.keterangan = :project"
@@ -373,7 +373,7 @@ def get_user_coverage_summary(db: Session,
             rejected_requests_query += " AND prj.keterangan = :project"
             avg_approval_time_query += " AND prj.keterangan = :project"
             total_disbursed_amount_query += " AND prj.keterangan = :project"
-            total_unique_requests_query += " AND prj.keterangan = :project"
+            total_loans_query += " AND prj.keterangan = :project"
             params['project'] = project_filter
         if month_filter:
             processed_requests_query += " AND MONTH(l.proses_date) = :month"
@@ -383,7 +383,7 @@ def get_user_coverage_summary(db: Session,
             rejected_requests_query += " AND MONTH(l.proses_date) = :month"
             avg_approval_time_query += " AND MONTH(l.proses_date) = :month"
             total_disbursed_amount_query += " AND MONTH(l.proses_date) = :month"
-            total_unique_requests_query += " AND MONTH(l.proses_date) = :month"
+            total_loans_query += " AND MONTH(l.proses_date) = :month"
             params['month'] = month_filter
         if year_filter:
             processed_requests_query += " AND YEAR(l.proses_date) = :year"
@@ -393,7 +393,7 @@ def get_user_coverage_summary(db: Session,
             rejected_requests_query += " AND YEAR(l.proses_date) = :year"
             avg_approval_time_query += " AND YEAR(l.proses_date) = :year"
             total_disbursed_amount_query += " AND YEAR(l.proses_date) = :year"
-            total_unique_requests_query += " AND YEAR(l.proses_date) = :year"
+            total_loans_query += " AND YEAR(l.proses_date) = :year"
             params['year'] = year_filter
 
         
@@ -423,8 +423,8 @@ def get_user_coverage_summary(db: Session,
         total_disbursed_amount_result = db.execute(text(total_disbursed_amount_query), params)
         total_disbursed_amount = total_disbursed_amount_result.fetchone()[0] or 0
         
-        total_unique_requests_result = db.execute(text(total_unique_requests_query), params)
-        total_unique_requests = total_unique_requests_result.fetchone()[0] or 0
+        total_loans_result = db.execute(text(total_loans_query), params)
+        total_loans = total_loans_result.fetchone()[0] or 0
         
         # Calculate penetration rate
         penetration_rate = 0
@@ -436,10 +436,10 @@ def get_user_coverage_summary(db: Session,
         if total_processed > 0:
             approval_rate = total_approved / total_processed
             
-        # Calculate average disbursed amount
+        # Calculate average disbursed amount (per loan, not per borrower)
         average_disbursed_amount = 0
-        if total_unique_requests > 0:
-            average_disbursed_amount = total_disbursed_amount / total_unique_requests
+        if total_loans > 0:
+            average_disbursed_amount = total_disbursed_amount / total_loans
         
         print(f"📊 User coverage summary:")
         print(f"   Total eligible employees: {total_eligible}")
@@ -449,7 +449,7 @@ def get_user_coverage_summary(db: Session,
         print(f"   Total approved requests: {total_approved}")
         print(f"   Total rejected requests: {total_rejected}")
         print(f"   Total disbursed amount: {total_disbursed_amount}")
-        print(f"   Total unique requests: {total_unique_requests}")
+        print(f"   Total loans: {total_loans}")
         print(f"   Average disbursed amount: {average_disbursed_amount:.2f}")
         print(f"   Penetration rate: {penetration_rate:.2%}")
         print(f"   Approval rate: {approval_rate:.2%}")
@@ -463,7 +463,7 @@ def get_user_coverage_summary(db: Session,
             "total_approved_requests": total_approved,
             "total_rejected_requests": total_rejected,
             "total_disbursed_amount": total_disbursed_amount,
-            "total_unique_requests": total_unique_requests,
+            "total_loans": total_loans,
             "average_disbursed_amount": average_disbursed_amount,
             "approval_rate": approval_rate,
             "average_approval_time": avg_approval_time,
@@ -483,7 +483,7 @@ def get_user_coverage_summary(db: Session,
             "total_approved_requests": 0,
             "total_rejected_requests": 0,
             "total_disbursed_amount": 0,
-            "total_unique_requests": 0,
+            "total_loans": 0,
             "average_disbursed_amount": 0,
             "approval_rate": 0,
             "average_approval_time": 0,
@@ -491,13 +491,479 @@ def get_user_coverage_summary(db: Session,
         }
 
 
-def get_user_coverage_monthly_summary(db: Session, start_date: str, end_date: str,
-                                     employer_filter: str = None, sourced_to_filter: str = None, 
-                                     project_filter: str = None, id_karyawan_filter: int = None) -> dict:
-    """Get user coverage summary monthly data with eligible count and kasbon request metrics"""
+def get_user_coverage_endpoint(db: Session, 
+                              employer_filter: str = None, sourced_to_filter: str = None, 
+                              project_filter: str = None, id_karyawan_filter: int = None,
+                              month_filter: int = None, year_filter: int = None) -> dict:
+    """Get user coverage metrics: total_eligible_employees, total_kasbon_requests, penetration_rate, total_first_borrow"""
     
     try:
-        # First, get the total eligible employees (same logic as get_user_coverage_summary)
+        # Build the eligible count query
+        eligible_count_query = """
+        SELECT COUNT(*)
+        FROM td_karyawan tk
+        LEFT JOIN tbl_gmc emp
+            ON tk.valdo_inc = emp.kode_gmc
+            AND emp.group_gmc = 'sub_client'
+            AND emp.aktif = 'Yes'
+            AND emp.keterangan3 = 1
+        LEFT JOIN tbl_gmc src
+            ON tk.placement = src.kode_gmc
+            AND src.group_gmc = 'placement_client'
+            AND src.aktif = 'Yes'
+            AND src.keterangan3 = 1
+        LEFT JOIN tbl_gmc prj
+            ON tk.project = prj.kode_gmc
+            AND prj.group_gmc = 'client_project'
+            AND prj.aktif = 'Yes'
+            AND prj.keterangan3 = 1
+        WHERE tk.status = '1' 
+        AND tk.loan_kasbon_eligible = '1'
+        """
+        
+        # Build the total kasbon requests query
+        total_requests_query = """
+        SELECT COUNT(*)
+        FROM td_loan l
+        LEFT JOIN td_karyawan tk
+            ON l.id_karyawan = tk.id_karyawan
+        LEFT JOIN tbl_gmc emp
+            ON tk.valdo_inc = emp.kode_gmc
+            AND emp.group_gmc = 'sub_client'
+            AND emp.aktif = 'Yes'
+            AND emp.keterangan3 = 1
+        LEFT JOIN tbl_gmc src
+            ON tk.placement = src.kode_gmc
+            AND src.group_gmc = 'placement_client'
+            AND src.aktif = 'Yes'
+            AND src.keterangan3 = 1
+        LEFT JOIN tbl_gmc prj
+            ON tk.project = prj.kode_gmc
+            AND prj.group_gmc = 'client_project'
+            AND prj.aktif = 'Yes'
+            AND prj.keterangan3 = 1
+        WHERE l.loan_status IN (0, 1, 2, 3, 4)
+        """
+        
+        # Build the first-time borrowers query
+        first_borrow_query = """
+        SELECT COUNT(DISTINCT l.id_karyawan)
+        FROM td_loan l
+        LEFT JOIN td_karyawan tk
+            ON l.id_karyawan = tk.id_karyawan
+        LEFT JOIN tbl_gmc emp
+            ON tk.valdo_inc = emp.kode_gmc
+            AND emp.group_gmc = 'sub_client'
+            AND emp.aktif = 'Yes'
+            AND emp.keterangan3 = 1
+        LEFT JOIN tbl_gmc src
+            ON tk.placement = src.kode_gmc
+            AND src.group_gmc = 'placement_client'
+            AND src.aktif = 'Yes'
+            AND src.keterangan3 = 1
+        LEFT JOIN tbl_gmc prj
+            ON tk.project = prj.kode_gmc
+            AND prj.group_gmc = 'client_project'
+            AND prj.aktif = 'Yes'
+            AND prj.keterangan3 = 1
+        WHERE l.loan_status IN (0, 1, 2, 3)
+        AND NOT EXISTS (
+            SELECT 1 
+            FROM td_loan l2 
+            WHERE l2.id_karyawan = l.id_karyawan 
+            AND l2.loan_status = 2 
+            AND l2.proses_date < l.proses_date
+        )
+        """
+        
+        # Build parameters dict for filters
+        params = {}
+        
+        # Add filters to all queries
+        if id_karyawan_filter:
+            eligible_count_query += " AND tk.id_karyawan = :id_karyawan"
+            total_requests_query += " AND l.id_karyawan = :id_karyawan"
+            first_borrow_query += " AND l.id_karyawan = :id_karyawan"
+            params['id_karyawan'] = id_karyawan_filter
+        if employer_filter:
+            eligible_count_query += " AND emp.keterangan = :employer"
+            total_requests_query += " AND emp.keterangan = :employer"
+            first_borrow_query += " AND emp.keterangan = :employer"
+            params['employer'] = employer_filter
+        if sourced_to_filter:
+            eligible_count_query += " AND src.keterangan = :sourced_to"
+            total_requests_query += " AND src.keterangan = :sourced_to"
+            first_borrow_query += " AND src.keterangan = :sourced_to"
+            params['sourced_to'] = sourced_to_filter
+        if project_filter:
+            eligible_count_query += " AND prj.keterangan = :project"
+            total_requests_query += " AND prj.keterangan = :project"
+            first_borrow_query += " AND prj.keterangan = :project"
+            params['project'] = project_filter
+        if month_filter:
+            total_requests_query += " AND MONTH(l.proses_date) = :month"
+            first_borrow_query += " AND MONTH(l.proses_date) = :month"
+            params['month'] = month_filter
+        if year_filter:
+            total_requests_query += " AND YEAR(l.proses_date) = :year"
+            first_borrow_query += " AND YEAR(l.proses_date) = :year"
+            params['year'] = year_filter
+
+        # Execute all queries
+        eligible_result = db.execute(text(eligible_count_query), params)
+        total_eligible = eligible_result.fetchone()[0]
+        
+        total_requests_result = db.execute(text(total_requests_query), params)
+        total_requests = total_requests_result.fetchone()[0]
+        
+        first_borrow_result = db.execute(text(first_borrow_query), params)
+        total_first_borrow = first_borrow_result.fetchone()[0]
+        
+        # Calculate penetration rate
+        penetration_rate = 0
+        if total_eligible > 0:
+            penetration_rate = total_requests / total_eligible
+        
+        print(f"📊 User coverage endpoint:")
+        print(f"   Total eligible employees: {total_eligible}")
+        print(f"   Total kasbon requests: {total_requests}")
+        print(f"   Penetration rate: {penetration_rate:.2%}")
+        print(f"   Total first-time borrowers: {total_first_borrow}")
+        
+        return {
+            "total_eligible_employees": total_eligible,
+            "total_kasbon_requests": total_requests,
+            "penetration_rate": penetration_rate,
+            "total_first_borrow": total_first_borrow
+        }
+        
+    except Exception as e:
+        print(f"❌ Error in user coverage endpoint: {e}")
+        print(f"   Error type: {type(e).__name__}")
+        import traceback
+        traceback.print_exc()
+        return {
+            "total_eligible_employees": 0,
+            "total_kasbon_requests": 0,
+            "penetration_rate": 0,
+            "total_first_borrow": 0
+        }
+
+
+def get_requests_endpoint(db: Session, 
+                         employer_filter: str = None, sourced_to_filter: str = None, 
+                         project_filter: str = None, id_karyawan_filter: int = None,
+                         month_filter: int = None, year_filter: int = None) -> dict:
+    """Get requests metrics: total_approved_requests, total_rejected_requests, approval_rate, average_approval_time"""
+    
+    try:
+        # Build the approved requests query
+        approved_requests_query = """
+        SELECT COUNT(*)
+        FROM td_loan l
+        LEFT JOIN td_karyawan tk
+            ON l.id_karyawan = tk.id_karyawan
+        LEFT JOIN tbl_gmc emp
+            ON tk.valdo_inc = emp.kode_gmc
+            AND emp.group_gmc = 'sub_client'
+            AND emp.aktif = 'Yes'
+            AND emp.keterangan3 = 1
+        LEFT JOIN tbl_gmc src
+            ON tk.placement = src.kode_gmc
+            AND src.group_gmc = 'placement_client'
+            AND src.aktif = 'Yes'
+            AND src.keterangan3 = 1
+        LEFT JOIN tbl_gmc prj
+            ON tk.project = prj.kode_gmc
+            AND prj.group_gmc = 'client_project'
+            AND prj.aktif = 'Yes'
+            AND prj.keterangan3 = 1
+        WHERE l.loan_status IN (1, 2, 4)
+        """
+        
+        # Build the rejected requests query
+        rejected_requests_query = """
+        SELECT COUNT(*)
+        FROM td_loan l
+        LEFT JOIN td_karyawan tk
+            ON l.id_karyawan = tk.id_karyawan
+        LEFT JOIN tbl_gmc emp
+            ON tk.valdo_inc = emp.kode_gmc
+            AND emp.group_gmc = 'sub_client'
+            AND emp.aktif = 'Yes'
+            AND emp.keterangan3 = 1
+        LEFT JOIN tbl_gmc src
+            ON tk.placement = src.kode_gmc
+            AND src.group_gmc = 'placement_client'
+            AND src.aktif = 'Yes'
+            AND src.keterangan3 = 1
+        LEFT JOIN tbl_gmc prj
+            ON tk.project = prj.kode_gmc
+            AND prj.group_gmc = 'client_project'
+            AND prj.aktif = 'Yes'
+            AND prj.keterangan3 = 1
+        WHERE l.loan_status = 3
+        """
+        
+        # Build the total processed requests query (for approval rate calculation)
+        total_processed_query = """
+        SELECT COUNT(*)
+        FROM td_loan l
+        LEFT JOIN td_karyawan tk
+            ON l.id_karyawan = tk.id_karyawan
+        LEFT JOIN tbl_gmc emp
+            ON tk.valdo_inc = emp.kode_gmc
+            AND emp.group_gmc = 'sub_client'
+            AND emp.aktif = 'Yes'
+            AND emp.keterangan3 = 1
+        LEFT JOIN tbl_gmc src
+            ON tk.placement = src.kode_gmc
+            AND src.group_gmc = 'placement_client'
+            AND src.aktif = 'Yes'
+            AND src.keterangan3 = 1
+        LEFT JOIN tbl_gmc prj
+            ON tk.project = prj.kode_gmc
+            AND prj.group_gmc = 'client_project'
+            AND prj.aktif = 'Yes'
+            AND prj.keterangan3 = 1
+        WHERE l.loan_status IN (1, 2, 3, 4)
+        """
+        
+        # Build the average approval time query
+        avg_approval_time_query = """
+        SELECT AVG(DATEDIFF(l.proses_date, l.received_date))
+        FROM td_loan l
+        LEFT JOIN td_karyawan tk
+            ON l.id_karyawan = tk.id_karyawan
+        LEFT JOIN tbl_gmc emp
+            ON tk.valdo_inc = emp.kode_gmc
+            AND emp.group_gmc = 'sub_client'
+            AND emp.aktif = 'Yes'
+            AND emp.keterangan3 = 1
+        LEFT JOIN tbl_gmc src
+            ON tk.placement = src.kode_gmc
+            AND src.group_gmc = 'placement_client'
+            AND src.aktif = 'Yes'
+            AND src.keterangan3 = 1
+        LEFT JOIN tbl_gmc prj
+            ON tk.project = prj.kode_gmc
+            AND prj.group_gmc = 'client_project'
+            AND prj.aktif = 'Yes'
+            AND prj.keterangan3 = 1
+        WHERE l.loan_status = 1
+        AND l.proses_date IS NOT NULL
+        AND l.received_date IS NOT NULL
+        """
+        
+        # Build parameters dict for filters
+        params = {}
+        
+        # Add filters to all queries
+        if id_karyawan_filter:
+            approved_requests_query += " AND l.id_karyawan = :id_karyawan"
+            rejected_requests_query += " AND l.id_karyawan = :id_karyawan"
+            total_processed_query += " AND l.id_karyawan = :id_karyawan"
+            avg_approval_time_query += " AND l.id_karyawan = :id_karyawan"
+            params['id_karyawan'] = id_karyawan_filter
+        if employer_filter:
+            approved_requests_query += " AND emp.keterangan = :employer"
+            rejected_requests_query += " AND emp.keterangan = :employer"
+            total_processed_query += " AND emp.keterangan = :employer"
+            avg_approval_time_query += " AND emp.keterangan = :employer"
+            params['employer'] = employer_filter
+        if sourced_to_filter:
+            approved_requests_query += " AND src.keterangan = :sourced_to"
+            rejected_requests_query += " AND src.keterangan = :sourced_to"
+            total_processed_query += " AND src.keterangan = :sourced_to"
+            avg_approval_time_query += " AND src.keterangan = :sourced_to"
+            params['sourced_to'] = sourced_to_filter
+        if project_filter:
+            approved_requests_query += " AND prj.keterangan = :project"
+            rejected_requests_query += " AND prj.keterangan = :project"
+            total_processed_query += " AND prj.keterangan = :project"
+            avg_approval_time_query += " AND prj.keterangan = :project"
+            params['project'] = project_filter
+        if month_filter:
+            approved_requests_query += " AND MONTH(l.proses_date) = :month"
+            rejected_requests_query += " AND MONTH(l.proses_date) = :month"
+            total_processed_query += " AND MONTH(l.proses_date) = :month"
+            avg_approval_time_query += " AND MONTH(l.proses_date) = :month"
+            params['month'] = month_filter
+        if year_filter:
+            approved_requests_query += " AND YEAR(l.proses_date) = :year"
+            rejected_requests_query += " AND YEAR(l.proses_date) = :year"
+            total_processed_query += " AND YEAR(l.proses_date) = :year"
+            avg_approval_time_query += " AND YEAR(l.proses_date) = :year"
+            params['year'] = year_filter
+
+        # Execute all queries
+        approved_result = db.execute(text(approved_requests_query), params)
+        total_approved = approved_result.fetchone()[0]
+        
+        rejected_result = db.execute(text(rejected_requests_query), params)
+        total_rejected = rejected_result.fetchone()[0]
+        
+        total_processed_result = db.execute(text(total_processed_query), params)
+        total_processed = total_processed_result.fetchone()[0]
+        
+        avg_approval_time_result = db.execute(text(avg_approval_time_query), params)
+        avg_approval_time = avg_approval_time_result.fetchone()[0] or 0
+        
+        # Calculate approval rate
+        approval_rate = 0
+        if total_processed > 0:
+            approval_rate = total_approved / total_processed
+        
+        print(f"📊 Requests endpoint:")
+        print(f"   Total approved requests: {total_approved}")
+        print(f"   Total rejected requests: {total_rejected}")
+        print(f"   Approval rate: {approval_rate:.2%}")
+        print(f"   Average approval time: {avg_approval_time:.1f} days")
+        
+        return {
+            "total_approved_requests": total_approved,
+            "total_rejected_requests": total_rejected,
+            "approval_rate": approval_rate,
+            "average_approval_time": avg_approval_time
+        }
+        
+    except Exception as e:
+        print(f"❌ Error in requests endpoint: {e}")
+        print(f"   Error type: {type(e).__name__}")
+        import traceback
+        traceback.print_exc()
+        return {
+            "total_approved_requests": 0,
+            "total_rejected_requests": 0,
+            "approval_rate": 0,
+            "average_approval_time": 0
+        }
+
+
+def get_disbursement_endpoint(db: Session, 
+                             employer_filter: str = None, sourced_to_filter: str = None, 
+                             project_filter: str = None, id_karyawan_filter: int = None,
+                             month_filter: int = None, year_filter: int = None) -> dict:
+    """Get disbursement metrics: total_disbursed_amount, average_disbursed_amount"""
+    
+    try:
+        # Build the total disbursed amount query
+        total_disbursed_amount_query = """
+        SELECT SUM(l.total_loan)
+        FROM td_loan l
+        LEFT JOIN td_karyawan tk
+            ON l.id_karyawan = tk.id_karyawan
+        LEFT JOIN tbl_gmc emp
+            ON tk.valdo_inc = emp.kode_gmc
+            AND emp.group_gmc = 'sub_client'
+            AND emp.aktif = 'Yes'
+            AND emp.keterangan3 = 1
+        LEFT JOIN tbl_gmc src
+            ON tk.placement = src.kode_gmc
+            AND src.group_gmc = 'placement_client'
+            AND src.aktif = 'Yes'
+            AND src.keterangan3 = 1
+        LEFT JOIN tbl_gmc prj
+            ON tk.project = prj.kode_gmc
+            AND prj.group_gmc = 'client_project'
+            AND prj.aktif = 'Yes'
+            AND prj.keterangan3 = 1
+        WHERE l.loan_status IN (1, 2, 4)
+        """
+        
+        # Build the total loan count query (for average calculation - count all loans, not unique borrowers)
+        total_loans_query = """
+        SELECT COUNT(*)
+        FROM td_loan l
+        LEFT JOIN td_karyawan tk
+            ON l.id_karyawan = tk.id_karyawan
+        LEFT JOIN tbl_gmc emp
+            ON tk.valdo_inc = emp.kode_gmc
+            AND emp.group_gmc = 'sub_client'
+            AND emp.aktif = 'Yes'
+            AND emp.keterangan3 = 1
+        LEFT JOIN tbl_gmc src
+            ON tk.placement = src.kode_gmc
+            AND src.group_gmc = 'placement_client'
+            AND src.aktif = 'Yes'
+            AND src.keterangan3 = 1
+        LEFT JOIN tbl_gmc prj
+            ON tk.project = prj.kode_gmc
+            AND prj.group_gmc = 'client_project'
+            AND prj.aktif = 'Yes'
+            AND prj.keterangan3 = 1
+        WHERE l.loan_status IN (1, 2, 4)
+        """
+        
+        # Build parameters dict for filters
+        params = {}
+        
+        # Add filters to all queries
+        if id_karyawan_filter:
+            total_disbursed_amount_query += " AND l.id_karyawan = :id_karyawan"
+            total_loans_query += " AND l.id_karyawan = :id_karyawan"
+            params['id_karyawan'] = id_karyawan_filter
+        if employer_filter:
+            total_disbursed_amount_query += " AND emp.keterangan = :employer"
+            total_loans_query += " AND emp.keterangan = :employer"
+            params['employer'] = employer_filter
+        if sourced_to_filter:
+            total_disbursed_amount_query += " AND src.keterangan = :sourced_to"
+            total_loans_query += " AND src.keterangan = :sourced_to"
+            params['sourced_to'] = sourced_to_filter
+        if project_filter:
+            total_disbursed_amount_query += " AND prj.keterangan = :project"
+            total_loans_query += " AND prj.keterangan = :project"
+            params['project'] = project_filter
+        if month_filter:
+            total_disbursed_amount_query += " AND MONTH(l.proses_date) = :month"
+            total_loans_query += " AND MONTH(l.proses_date) = :month"
+            params['month'] = month_filter
+        if year_filter:
+            total_disbursed_amount_query += " AND YEAR(l.proses_date) = :year"
+            total_loans_query += " AND YEAR(l.proses_date) = :year"
+            params['year'] = year_filter
+
+        # Execute all queries
+        total_disbursed_amount_result = db.execute(text(total_disbursed_amount_query), params)
+        total_disbursed_amount = total_disbursed_amount_result.fetchone()[0] or 0
+        
+        total_loans_result = db.execute(text(total_loans_query), params)
+        total_loans = total_loans_result.fetchone()[0] or 0
+        
+        # Calculate average disbursed amount (per loan, not per borrower)
+        average_disbursed_amount = 0
+        if total_loans > 0:
+            average_disbursed_amount = total_disbursed_amount / total_loans
+        
+        print(f"📊 Disbursement endpoint:")
+        print(f"   Total disbursed amount: {total_disbursed_amount}")
+        print(f"   Total loans: {total_loans}")
+        print(f"   Average disbursed amount: {average_disbursed_amount:.2f}")
+        
+        return {
+            "total_disbursed_amount": total_disbursed_amount,
+            "average_disbursed_amount": average_disbursed_amount
+        }
+        
+    except Exception as e:
+        print(f"❌ Error in disbursement endpoint: {e}")
+        print(f"   Error type: {type(e).__name__}")
+        import traceback
+        traceback.print_exc()
+        return {
+            "total_disbursed_amount": 0,
+            "average_disbursed_amount": 0
+        }
+
+
+def get_user_coverage_monthly_endpoint(db: Session, start_date: str, end_date: str,
+                                     employer_filter: str = None, sourced_to_filter: str = None, 
+                                     project_filter: str = None, id_karyawan_filter: int = None) -> dict:
+    """Get user coverage monthly data: eligible employees and kasbon applicants by month"""
+    
+    try:
+        # First, get the total eligible employees (same logic as get_user_coverage_endpoint)
         eligible_count_query = """
         SELECT COUNT(*)
         FROM td_karyawan tk
@@ -541,12 +1007,18 @@ def get_user_coverage_monthly_summary(db: Session, start_date: str, end_date: st
         eligible_result = db.execute(text(eligible_count_query), eligible_params)
         total_eligible_employees = eligible_result.fetchone()[0]
         
-        # Build the monthly loan requests query
+        # Build the monthly kasbon requests query
         monthly_query = """
         SELECT 
             DATE_FORMAT(l.proses_date, '%M %Y') as month_year,
-            COUNT(CASE WHEN l.loan_status IN (0, 1, 2, 3) THEN l.id END) as total_processed_kasbon_requests,
-            SUM(CASE WHEN l.loan_status IN (1, 2, 4) THEN l.total_loan ELSE 0 END) as total_disbursed_amount
+            COUNT(CASE WHEN l.loan_status IN (0, 1, 2, 3, 4) THEN l.id END) as total_kasbon_requests,
+            COUNT(CASE WHEN l.loan_status IN (0, 1, 2, 3) AND NOT EXISTS (
+                SELECT 1 
+                FROM td_loan l2 
+                WHERE l2.id_karyawan = l.id_karyawan 
+                AND l2.loan_status = 2 
+                AND l2.proses_date < l.proses_date
+            ) THEN 1 END) as total_first_borrow
         FROM td_loan l
         LEFT JOIN td_karyawan tk
             ON l.id_karyawan = tk.id_karyawan
@@ -594,7 +1066,7 @@ def get_user_coverage_monthly_summary(db: Session, start_date: str, end_date: st
         ORDER BY l.proses_date
         """
         
-        print(f"🔍 Executing monthly user coverage query with filters:")
+        print(f"🔍 Executing monthly user coverage endpoint query with filters:")
         print(f"   start_date: {start_date}")
         print(f"   end_date: {end_date}")
         print(f"   id_karyawan: {id_karyawan_filter}")
@@ -614,27 +1086,131 @@ def get_user_coverage_monthly_summary(db: Session, start_date: str, end_date: st
             if month_year is None:
                 continue
                 
-            total_processed = row[1] or 0
-            total_disbursed_amount = row[2] or 0
+            total_kasbon_requests = row[1] or 0
+            total_first_borrow = row[2] or 0
             
             # Calculate penetration rate using the total eligible employees
             penetration_rate = 0
             if total_eligible_employees > 0:
-                penetration_rate = total_processed / total_eligible_employees
+                penetration_rate = total_kasbon_requests / total_eligible_employees
             
             monthly_data[month_year] = {
                 "total_eligible_employees": total_eligible_employees,
-                "total_processed_kasbon_requests": total_processed,
-                "total_disbursed_amount": total_disbursed_amount,
+                "total_kasbon_requests": total_kasbon_requests,
+                "total_first_borrow": total_first_borrow,
                 "penetration_rate": penetration_rate
             }
         
-        print(f"📊 Monthly user coverage summary completed with {len(monthly_data)} months")
+        print(f"📊 Monthly user coverage endpoint completed with {len(monthly_data)} months")
         
         return monthly_data
         
     except Exception as e:
-        print(f"❌ Error in monthly user coverage query: {e}")
+        print(f"❌ Error in monthly user coverage endpoint: {e}")
+        print(f"   Error type: {type(e).__name__}")
+        import traceback
+        traceback.print_exc()
+        return {}
+
+
+def get_disbursement_monthly_endpoint(db: Session, start_date: str, end_date: str,
+                                    employer_filter: str = None, sourced_to_filter: str = None, 
+                                    project_filter: str = None, id_karyawan_filter: int = None) -> dict:
+    """Get disbursement monthly data: total disbursed amount and average disbursed amount by month"""
+    
+    try:
+        # Build the monthly disbursement query
+        monthly_query = """
+        SELECT 
+            DATE_FORMAT(l.proses_date, '%M %Y') as month_year,
+            SUM(CASE WHEN l.loan_status IN (1, 2, 4) THEN l.total_loan ELSE 0 END) as total_disbursed_amount,
+            COUNT(CASE WHEN l.loan_status IN (1, 2, 4) THEN 1 END) as total_loans
+        FROM td_loan l
+        LEFT JOIN td_karyawan tk
+            ON l.id_karyawan = tk.id_karyawan
+        LEFT JOIN tbl_gmc emp
+            ON tk.valdo_inc = emp.kode_gmc
+            AND emp.group_gmc = 'sub_client'
+            AND emp.aktif = 'Yes'
+            AND emp.keterangan3 = 1
+        LEFT JOIN tbl_gmc src
+            ON tk.placement = src.kode_gmc
+            AND src.group_gmc = 'placement_client'
+            AND src.aktif = 'Yes'
+            AND src.keterangan3 = 1
+        LEFT JOIN tbl_gmc prj
+            ON tk.project = prj.kode_gmc
+            AND prj.group_gmc = 'client_project'
+            AND prj.aktif = 'Yes'
+            AND prj.keterangan3 = 1
+        WHERE l.proses_date IS NOT NULL
+        AND l.proses_date BETWEEN :start_date AND :end_date
+        """
+        
+        # Build parameters dict for monthly query
+        monthly_params = {
+            'start_date': start_date,
+            'end_date': end_date
+        }
+        
+        # Add filters to monthly query
+        if id_karyawan_filter:
+            monthly_query += " AND l.id_karyawan = :id_karyawan"
+            monthly_params['id_karyawan'] = id_karyawan_filter
+        if employer_filter:
+            monthly_query += " AND emp.keterangan = :employer"
+            monthly_params['employer'] = employer_filter
+        if sourced_to_filter:
+            monthly_query += " AND src.keterangan = :sourced_to"
+            monthly_params['sourced_to'] = sourced_to_filter
+        if project_filter:
+            monthly_query += " AND prj.keterangan = :project"
+            monthly_params['project'] = project_filter
+        
+        monthly_query += """
+        GROUP BY DATE_FORMAT(l.proses_date, '%M %Y')
+        ORDER BY l.proses_date
+        """
+        
+        print(f"🔍 Executing monthly disbursement endpoint query with filters:")
+        print(f"   start_date: {start_date}")
+        print(f"   end_date: {end_date}")
+        print(f"   id_karyawan: {id_karyawan_filter}")
+        print(f"   employer: {employer_filter}")
+        print(f"   sourced_to: {sourced_to_filter}")
+        print(f"   project: {project_filter}")
+        
+        # Execute monthly query
+        result = db.execute(text(monthly_query), monthly_params)
+        rows = result.fetchall()
+        
+        # Process results
+        monthly_data = {}
+        for row in rows:
+            month_year = row[0]
+            if month_year is None:
+                continue
+                
+            total_disbursed_amount = row[1] or 0
+            total_loans = row[2] or 0
+            
+            # Calculate average disbursed amount
+            average_disbursed_amount = 0
+            if total_loans > 0:
+                average_disbursed_amount = total_disbursed_amount / total_loans
+            
+            monthly_data[month_year] = {
+                "total_disbursed_amount": total_disbursed_amount,
+                "total_loans": total_loans,
+                "average_disbursed_amount": average_disbursed_amount
+            }
+        
+        print(f"📊 Monthly disbursement endpoint completed with {len(monthly_data)} months")
+        
+        return monthly_data
+        
+    except Exception as e:
+        print(f"❌ Error in monthly disbursement endpoint: {e}")
         print(f"   Error type: {type(e).__name__}")
         import traceback
         traceback.print_exc()
@@ -994,15 +1570,7 @@ def get_loan_fees_summary(db: Session,
             fees_query += " AND YEAR(l.proses_date) = :year"
             params['year'] = year_filter
         
-        print(f"🔍 Executing loan fees query with filters:")
-        print(f"   id_karyawan: {id_karyawan_filter}")
-        print(f"   employer: {employer_filter}")
-        print(f"   sourced_to: {sourced_to_filter}")
-        print(f"   project: {project_filter}")
-        print(f"   loan_status: {loan_status_filter}")
-        print(f"   month: {month_filter}")
-        print(f"   year: {year_filter}")
-        
+
         # Execute the query
         result = db.execute(text(fees_query), params)
         record = result.fetchone()
@@ -1017,11 +1585,6 @@ def get_loan_fees_summary(db: Session,
         # Calculate admin_fee_profit: total_collected_admin_fee - total_failed_payment
         admin_fee_profit = total_collected - total_failed_payment
         
-        print(f"💰 Loan fees summary:")
-        print(f"   Expected admin fee: {total_expected} (from {expected_count} loans with status 1,4)")
-        print(f"   Collected admin fee: {total_collected} (from {collected_count} loans with status 2)")
-        print(f"   Total failed payment: {total_failed_payment} (from loans with status 4)")
-        print(f"   Admin fee profit: {admin_fee_profit}")
         
         return {
             "total_expected_admin_fee": total_expected,
@@ -1033,8 +1596,6 @@ def get_loan_fees_summary(db: Session,
         }
         
     except Exception as e:
-        print(f"❌ Error in loan fees query: {e}")
-        print(f"   Error type: {type(e).__name__}")
         import traceback
         traceback.print_exc()
         return {
@@ -1154,11 +1715,7 @@ def get_loan_fees_monthly_summary(db: Session,
                 "admin_fee_profit": admin_fee_profit
             }
         
-        print(f"💰 Monthly loan fees summary:")
-        print(f"   Found data for {len(monthly_data)} months")
-        for month, data in monthly_data.items():
-            print(f"   {month}: Expected={data['total_expected_admin_fee']}, Collected={data['total_collected_admin_fee']}")
-        
+    
         return monthly_data
         
     except Exception as e:
@@ -1255,11 +1812,7 @@ def get_loan_risk_summary(db: Session,
         if total_disbursed > 0:
             kasbon_principal_recovery_rate = total_paid / total_disbursed
         
-        print(f"📊 Loan risk summary:")
-        print(f"   Total unrecovered kasbon: {total_unrecovered_kasbon} (from {unrecovered_kasbon_count} loans)")
-        print(f"   Total expected repayment: {total_expected_repayment}")
-        print(f"   Kasbon principal recovery rate: {kasbon_principal_recovery_rate:.2%}")
-        
+    
         return {
             "total_unrecovered_kasbon": total_unrecovered_kasbon,
             "unrecovered_kasbon_count": unrecovered_kasbon_count,

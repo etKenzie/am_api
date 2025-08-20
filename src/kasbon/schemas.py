@@ -35,11 +35,82 @@ class SummaryResponse(BaseModel):
     total_approved_requests: int
     total_rejected_requests: int
     total_disbursed_amount: int
-    total_unique_requests: int
+    total_loans: int
     average_disbursed_amount: float
     approval_rate: float
     average_approval_time: float
     penetration_rate: float
+    message: Optional[str] = None
+
+    class Config:
+        from_attributes = True
+
+
+class UserCoverageResponse(BaseModel):
+    status: str
+    total_eligible_employees: int
+    total_kasbon_requests: int
+    penetration_rate: float
+    total_first_borrow: int
+    message: Optional[str] = None
+
+    class Config:
+        from_attributes = True
+
+
+class RequestsResponse(BaseModel):
+    status: str
+    total_approved_requests: int
+    total_rejected_requests: int
+    approval_rate: float
+    average_approval_time: float
+    message: Optional[str] = None
+
+    class Config:
+        from_attributes = True
+
+
+class DisbursementResponse(BaseModel):
+    status: str
+    total_disbursed_amount: int
+    average_disbursed_amount: float
+    message: Optional[str] = None
+
+    class Config:
+        from_attributes = True
+
+
+class MonthlyUserCoverageData(BaseModel):
+    total_eligible_employees: int
+    total_kasbon_requests: int
+    total_first_borrow: int
+    penetration_rate: float
+
+    class Config:
+        from_attributes = True
+
+
+class UserCoverageMonthlyResponse(BaseModel):
+    status: str
+    monthly_data: dict[str, MonthlyUserCoverageData]
+    message: Optional[str] = None
+
+    class Config:
+        from_attributes = True
+
+
+class MonthlyDisbursementData(BaseModel):
+    total_disbursed_amount: int
+    total_loans: int
+    average_disbursed_amount: float
+
+    class Config:
+        from_attributes = True
+
+
+class DisbursementMonthlyResponse(BaseModel):
+    status: str
+    monthly_data: dict[str, MonthlyDisbursementData]
     message: Optional[str] = None
 
     class Config:

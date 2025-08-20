@@ -90,7 +90,7 @@ async def get_summary(
             "total_approved_requests": coverage_summary["total_approved_requests"],
             "total_rejected_requests": coverage_summary["total_rejected_requests"],
             "total_disbursed_amount": coverage_summary["total_disbursed_amount"],
-            "total_unique_requests": coverage_summary["total_unique_requests"],
+            "total_loans": coverage_summary["total_loans"],
             "average_disbursed_amount": coverage_summary["average_disbursed_amount"],
             "approval_rate": coverage_summary["approval_rate"],
             "average_approval_time": coverage_summary["average_approval_time"],
@@ -110,11 +110,236 @@ async def get_summary(
             "total_approved_requests": 0,
             "total_rejected_requests": 0,
             "total_disbursed_amount": 0,
-            "total_unique_requests": 0,
+            "total_loans": 0,
             "average_disbursed_amount": 0,
             "approval_rate": 0,
             "average_approval_time": 0,
             "penetration_rate": 0
+        }
+
+
+@router.get("/user-coverage", response_model=schemas.UserCoverageResponse)
+async def get_user_coverage(
+    month: int = None,
+    year: int = None,
+    id_karyawan: int = None,
+    employer: str = None, 
+    sourced_to: str = None, 
+    project: str = None, 
+    db: Session = Depends(get_db)
+):
+    """Get user coverage metrics: total_eligible_employees, total_kasbon_requests, penetration_rate, total_first_borrow"""
+    try:
+        print(f"🔍 About to call crud.get_user_coverage_endpoint...")
+        coverage_data = crud.get_user_coverage_endpoint(
+            db, 
+            id_karyawan_filter=id_karyawan,
+            employer_filter=employer,
+            sourced_to_filter=sourced_to,
+            project_filter=project,
+            month_filter=month,
+            year_filter=year
+        )
+        
+        print(f"📊 User coverage endpoint completed")
+        
+        # Return structured response
+        return {
+            "status": "success",
+            "total_eligible_employees": coverage_data["total_eligible_employees"],
+            "total_kasbon_requests": coverage_data["total_kasbon_requests"],
+            "penetration_rate": coverage_data["penetration_rate"],
+            "total_first_borrow": coverage_data["total_first_borrow"]
+        }
+    except Exception as e:
+        print(f"❌ Error in user coverage endpoint: {e}")
+        print(f"   Error type: {type(e).__name__}")
+        # Return error response with status
+        return {
+            "status": "error",
+            "message": str(e),
+            "total_eligible_employees": 0,
+            "total_kasbon_requests": 0,
+            "penetration_rate": 0,
+            "total_first_borrow": 0
+        }
+
+
+@router.get("/requests", response_model=schemas.RequestsResponse)
+async def get_requests(
+    month: int = None,
+    year: int = None,
+    id_karyawan: int = None,
+    employer: str = None, 
+    sourced_to: str = None, 
+    project: str = None, 
+    db: Session = Depends(get_db)
+):
+    """Get requests metrics: total_approved_requests, total_rejected_requests, approval_rate, average_approval_time"""
+    try:
+        print(f"🔍 About to call crud.get_requests_endpoint...")
+        requests_data = crud.get_requests_endpoint(
+            db, 
+            id_karyawan_filter=id_karyawan,
+            employer_filter=employer,
+            sourced_to_filter=sourced_to,
+            project_filter=project,
+            month_filter=month,
+            year_filter=year
+        )
+        
+        print(f"📊 Requests endpoint completed")
+        
+        # Return structured response
+        return {
+            "status": "success",
+            "total_approved_requests": requests_data["total_approved_requests"],
+            "total_rejected_requests": requests_data["total_rejected_requests"],
+            "approval_rate": requests_data["approval_rate"],
+            "average_approval_time": requests_data["average_approval_time"]
+        }
+    except Exception as e:
+        print(f"❌ Error in requests endpoint: {e}")
+        print(f"   Error type: {type(e).__name__}")
+        # Return error response with status
+        return {
+            "status": "error",
+            "message": str(e),
+            "total_approved_requests": 0,
+            "total_rejected_requests": 0,
+            "approval_rate": 0,
+            "average_approval_time": 0
+        }
+
+
+@router.get("/disbursement", response_model=schemas.DisbursementResponse)
+async def get_disbursement(
+    month: int = None,
+    year: int = None,
+    id_karyawan: int = None,
+    employer: str = None, 
+    sourced_to: str = None, 
+    project: str = None, 
+    db: Session = Depends(get_db)
+):
+    """Get disbursement metrics: total_disbursed_amount, average_disbursed_amount"""
+    try:
+        print(f"🔍 About to call crud.get_disbursement_endpoint...")
+        disbursement_data = crud.get_disbursement_endpoint(
+            db, 
+            id_karyawan_filter=id_karyawan,
+            employer_filter=employer,
+            sourced_to_filter=sourced_to,
+            project_filter=project,
+            month_filter=month,
+            year_filter=year
+        )
+        
+        print(f"📊 Disbursement endpoint completed")
+        
+        # Return structured response
+        return {
+            "status": "success",
+            "total_disbursed_amount": disbursement_data["total_disbursed_amount"],
+            "average_disbursed_amount": disbursement_data["average_disbursed_amount"]
+        }
+    except Exception as e:
+        print(f"❌ Error in disbursement endpoint: {e}")
+        print(f"   Error type: {type(e).__name__}")
+        # Return error response with status
+        return {
+            "status": "error",
+            "message": str(e),
+            "total_disbursed_amount": 0,
+            "average_disbursed_amount": 0
+        }
+
+
+@router.get("/user-coverage-monthly", response_model=schemas.UserCoverageMonthlyResponse)
+async def get_user_coverage_monthly(
+    start_date: str,
+    end_date: str,
+    id_karyawan: int = None,
+    employer: str = None, 
+    sourced_to: str = None, 
+    project: str = None, 
+    db: Session = Depends(get_db)
+):
+    """Get user coverage monthly data: eligible employees and kasbon applicants by month"""
+    print(f"🌐 API endpoint /kasbon/user-coverage-monthly called")
+    print(f"🔍 Filters: start_date={start_date}, end_date={end_date}, id_karyawan={id_karyawan}, employer={employer}, sourced_to={sourced_to}, project={project}")
+    
+    try:
+        print(f"🔍 About to call crud.get_user_coverage_monthly_endpoint...")
+        monthly_coverage = crud.get_user_coverage_monthly_endpoint(
+            db, 
+            start_date=start_date,
+            end_date=end_date,
+            id_karyawan_filter=id_karyawan,
+            employer_filter=employer,
+            sourced_to_filter=sourced_to,
+            project_filter=project
+        )
+        
+        print(f"📊 Monthly user coverage endpoint completed")
+        
+        # Return structured response
+        return {
+            "status": "success",
+            "monthly_data": monthly_coverage
+        }
+    except Exception as e:
+        print(f"❌ Error in monthly user coverage endpoint: {e}")
+        print(f"   Error type: {type(e).__name__}")
+        # Return error response with status
+        return {
+            "status": "error",
+            "message": str(e),
+            "monthly_data": {}
+        }
+
+
+@router.get("/disbursement-monthly", response_model=schemas.DisbursementMonthlyResponse)
+async def get_disbursement_monthly(
+    start_date: str,
+    end_date: str,
+    id_karyawan: int = None,
+    employer: str = None, 
+    sourced_to: str = None, 
+    project: str = None, 
+    db: Session = Depends(get_db)
+):
+    """Get disbursement monthly data: total disbursed amount and average disbursed amount by month"""
+    print(f"🌐 API endpoint /kasbon/disbursement-monthly called")
+    print(f"🔍 Filters: start_date={start_date}, end_date={end_date}, id_karyawan={id_karyawan}, employer={employer}, sourced_to={sourced_to}, project={project}")
+    
+    try:
+        print(f"🔍 About to call crud.get_disbursement_monthly_endpoint...")
+        monthly_disbursement = crud.get_disbursement_monthly_endpoint(
+            db, 
+            start_date=start_date,
+            end_date=end_date,
+            id_karyawan_filter=id_karyawan,
+            employer_filter=employer,
+            sourced_to_filter=sourced_to,
+            project_filter=project
+        )
+        
+        print(f"📊 Monthly disbursement endpoint completed")
+        
+        # Return structured response
+        return {
+            "status": "success",
+            "monthly_data": monthly_disbursement
+        }
+    except Exception as e:
+        print(f"❌ Error in monthly disbursement endpoint: {e}")
+        print(f"   Error type: {type(e).__name__}")
+        # Return error response with status
+        return {
+            "status": "error",
+            "message": str(e),
+            "monthly_data": {}
         }
 
 
