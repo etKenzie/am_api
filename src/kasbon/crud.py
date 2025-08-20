@@ -149,6 +149,7 @@ def get_user_coverage_summary(db: Session,
             AND prj.keterangan3 = 1
         WHERE l.loan_status IN (1, 2, 3, 4)
         AND l.duration = 1
+        AND l.loan_id != 35
         """
         
         # Build the pending kasbon requests query
@@ -174,6 +175,7 @@ def get_user_coverage_summary(db: Session,
             AND prj.keterangan3 = 1
         WHERE l.loan_status = 0
         AND l.duration = 1
+        AND l.loan_id != 35
         """
         
         # Build the first-time borrowers query
@@ -205,8 +207,10 @@ def get_user_coverage_summary(db: Session,
             AND l2.loan_status = 2 
             AND l2.proses_date < l.proses_date
             AND l2.duration = 1
+            AND l2.loan_id != 35
         )
         AND l.duration = 1
+        AND l.loan_id != 35
         """
         
         # Build the approved requests query
@@ -232,6 +236,7 @@ def get_user_coverage_summary(db: Session,
             AND prj.keterangan3 = 1
         WHERE l.loan_status IN (1, 2, 4)
         AND l.duration = 1
+        AND l.loan_id != 35
         """
         
         # Build the rejected requests query
@@ -257,6 +262,7 @@ def get_user_coverage_summary(db: Session,
             AND prj.keterangan3 = 1
         WHERE l.loan_status = 3
         AND l.duration = 1
+        AND l.loan_id != 35
         """
         
         # Build the average approval time query
@@ -284,6 +290,7 @@ def get_user_coverage_summary(db: Session,
         AND l.proses_date IS NOT NULL
         AND l.received_date IS NOT NULL
         AND l.duration = 1
+        AND l.loan_id != 35
         """
         
         # Build the total disbursed amount query
@@ -309,6 +316,7 @@ def get_user_coverage_summary(db: Session,
             AND prj.keterangan3 = 1
         WHERE l.loan_status IN (1, 2, 4)
         AND l.duration = 1
+        AND l.loan_id != 35
         """
         
         # Build the total loans query (for average calculation - count all loans, not unique borrowers)
@@ -334,6 +342,7 @@ def get_user_coverage_summary(db: Session,
             AND prj.keterangan3 = 1
         WHERE l.loan_status IN (1, 2, 4)
         AND l.duration = 1
+        AND l.loan_id != 35
         """
         
         # Build parameters dict for filters
@@ -553,6 +562,7 @@ def get_user_coverage_endpoint(db: Session,
             AND prj.keterangan3 = 1
         WHERE l.loan_status IN (0, 1, 2, 3, 4)
         AND l.duration = 1
+        AND l.loan_id != 35
         """
         
         # Build the first-time borrowers query
@@ -584,8 +594,10 @@ def get_user_coverage_endpoint(db: Session,
             AND l2.loan_status = 2 
             AND l2.proses_date < l.proses_date
             AND l2.duration = 1
+            AND l2.loan_id != 35
         )
         AND l.duration = 1
+        AND l.loan_id != 35
         """
         
         # Build parameters dict for filters
@@ -692,6 +704,7 @@ def get_requests_endpoint(db: Session,
             AND prj.keterangan3 = 1
         WHERE l.loan_status IN (1, 2, 4)
         AND l.duration = 1
+        AND l.loan_id != 35
         """
         
         # Build the rejected requests query
@@ -717,6 +730,7 @@ def get_requests_endpoint(db: Session,
             AND prj.keterangan3 = 1
         WHERE l.loan_status = 3
         AND l.duration = 1
+        AND l.loan_id != 35
         """
         
         # Build the total processed requests query (for approval rate calculation)
@@ -742,6 +756,7 @@ def get_requests_endpoint(db: Session,
             AND prj.keterangan3 = 1
         WHERE l.loan_status IN (1, 2, 3, 4)
         AND l.duration = 1
+        AND l.loan_id != 35
         """
         
         # Build the average approval time query
@@ -769,6 +784,7 @@ def get_requests_endpoint(db: Session,
         AND l.proses_date IS NOT NULL
         AND l.received_date IS NOT NULL
         AND l.duration = 1
+        AND l.loan_id != 35
         """
         
         # Build parameters dict for filters
@@ -886,6 +902,7 @@ def get_disbursement_endpoint(db: Session,
             AND prj.keterangan3 = 1
         WHERE l.loan_status IN (1, 2, 4)
         AND l.duration = 1
+        AND l.loan_id != 35
         """
         
         # Build the total loan count query (for average calculation - count all loans, not unique borrowers)
@@ -911,6 +928,7 @@ def get_disbursement_endpoint(db: Session,
             AND prj.keterangan3 = 1
         WHERE l.loan_status IN (1, 2, 4)
         AND l.duration = 1
+        AND l.loan_id != 35
         """
         
         # Build parameters dict for filters
@@ -1037,6 +1055,7 @@ def get_user_coverage_monthly_endpoint(db: Session, start_date: str, end_date: s
                 AND l2.loan_status = 2 
                 AND l2.proses_date < l.proses_date
                 AND l2.duration = 1
+                AND l2.loan_id != 35
             ) THEN 1 END) as total_first_borrow
         FROM td_loan l
         LEFT JOIN td_karyawan tk
@@ -1059,6 +1078,7 @@ def get_user_coverage_monthly_endpoint(db: Session, start_date: str, end_date: s
         WHERE l.proses_date IS NOT NULL
         AND l.proses_date BETWEEN :start_date AND :end_date
         AND l.duration = 1
+        AND l.loan_id != 35
         """
         
         # Build parameters dict for monthly query
@@ -1166,6 +1186,7 @@ def get_disbursement_monthly_endpoint(db: Session, start_date: str, end_date: st
         WHERE l.proses_date IS NOT NULL
         AND l.proses_date BETWEEN :start_date AND :end_date
         AND l.duration = 1
+        AND l.loan_id != 35
         """
         
         # Build parameters dict for monthly query
@@ -1322,6 +1343,7 @@ def get_loans_with_karyawan(db: Session, limit: int = 1000000,
             AND prj.keterangan3 = 1
         WHERE 1=1
         AND l.duration = 1
+        AND l.loan_id != 35
         """
         
         # Build parameters dict for filters
@@ -1558,6 +1580,7 @@ def get_loan_fees_summary(db: Session,
             AND prj.keterangan3 = 1
         WHERE 1=1
         AND l.duration = 1
+        AND l.loan_id != 35
         """
         
         # Build parameters dict for filters
@@ -1668,6 +1691,7 @@ def get_loan_fees_monthly_summary(db: Session,
             AND prj.keterangan3 = 1
         WHERE l.proses_date IS NOT NULL
         AND l.duration = 1
+        AND l.loan_id != 35
         """
         
         # Build parameters dict for filters
@@ -1786,6 +1810,7 @@ def get_loan_risk_summary(db: Session,
             AND prj.keterangan3 = 1
         WHERE 1=1
         AND l.duration = 1
+        AND l.loan_id != 35
         """
         
         # Build parameters dict for filters
@@ -1895,6 +1920,7 @@ def get_loan_risk_monthly_summary(db: Session,
             AND prj.keterangan3 = 1
         WHERE l.proses_date IS NOT NULL
         AND l.duration = 1
+        AND l.loan_id != 35
         """
         
         # Build parameters dict for filters
@@ -2029,6 +2055,7 @@ def get_karyawan_overdue_summary(db: Session,
         WHERE l.loan_status = 4
         AND l.id_karyawan IS NOT NULL
         AND l.duration = 1
+        AND l.loan_id != 35
         """
         
         # Build parameters dict for filters
@@ -2145,6 +2172,7 @@ def get_loan_purpose_summary(db: Session,
             AND prj.keterangan3 = 1
         WHERE 1=1
         AND l.duration = 1
+        AND l.loan_id != 35
         """
         
         # Build parameters dict for filters
