@@ -244,6 +244,8 @@ class LoanRiskMonthlyResponse(BaseModel):
 class KaryawanOverdueResponse(BaseModel):
     """Response model for karyawan with overdue loans"""
     id_karyawan: Optional[int] = None
+    nik: Optional[str] = None
+    ktp: Optional[str] = None
     name: Optional[str] = None
     company: Optional[str] = None
     sourced_to: Optional[str] = None

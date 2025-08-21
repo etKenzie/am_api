@@ -2028,6 +2028,8 @@ def get_karyawan_overdue_summary(db: Session,
         overdue_query = """
         SELECT DISTINCT
             tk.id_karyawan,
+            tk.nik AS nik,
+            tk.ktp AS ktp,
             tk.nama AS name,
             emp.keterangan AS company,
             src.keterangan AS sourced_to,
@@ -2093,7 +2095,7 @@ def get_karyawan_overdue_summary(db: Session,
         
         # Group by karyawan and order by total amount owed (descending)
         overdue_query += """
-        GROUP BY tk.id_karyawan, tk.nama, emp.keterangan, src.keterangan, prj.keterangan, tk.rec_status
+        GROUP BY tk.id_karyawan, tk.nik, tk.ktp, tk.nama, emp.keterangan, src.keterangan, prj.keterangan, tk.rec_status
         ORDER BY total_amount_owed DESC
         """
         
@@ -2112,12 +2114,14 @@ def get_karyawan_overdue_summary(db: Session,
                 
             overdue_list.append({
                 "id_karyawan": record[0],
-                "name": record[1],
-                "company": record[2],
-                "sourced_to": record[3],
-                "project": record[4],
-                "rec_status": record[5],
-                "total_amount_owed": record[6] if record[6] is not None else 0
+                "nik": record[1],
+                "ktp": record[2],
+                "name": record[3],
+                "company": record[4],
+                "sourced_to": record[5],
+                "project": record[6],
+                "rec_status": record[7],
+                "total_amount_owed": record[8] if record[8] is not None else 0
             })
         
         print(f"📊 Karyawan overdue summary:")
