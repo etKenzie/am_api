@@ -540,7 +540,7 @@ def get_user_coverage_endpoint(db: Session,
             AND prj.group_gmc = 'client_project'
             AND prj.aktif = 'Yes'
             AND prj.keterangan3 = 1
-        WHERE l.loan_status IN (0, 1, 2, 3, 4)
+        WHERE l.loan_status IN (1, 2, 3, 4)
         AND l.duration = 1
         AND l.loan_id != 35
         """
@@ -3311,21 +3311,24 @@ def get_client_summary(db: Session, month_filter: int = None, year_filter: int =
     """Get comprehensive client summary with disbursement and other metrics"""
     
     try:
-        # Build the comprehensive client summary query
-        client_summary_query = """
-        SELECT 
+        # Build parameters dict for filters (needed for both queries)
+        params = {}
+        
+        # Add month and year filters to params
+        if month_filter is not None:
+            params['month'] = month_filter
+        if year_filter is not None:
+            params['year'] = year_filter
+        
+        # Get employee counts using the exact same approach as coverage utilization
+        # For each sourced_to and project combination, we'll run the same query as coverage utilization
+        employee_counts = {}
+        
+        # Get unique sourced_to and project combinations from the loan data first
+        combinations_query = """
+        SELECT DISTINCT
             src.keterangan as sourced_to,
-            prj.keterangan as project,
-            SUM(CASE WHEN l.loan_status IN (1, 2, 4) THEN l.total_loan ELSE 0 END) as total_disbursement,
-            COUNT(CASE WHEN l.loan_status IN (1, 2, 3, 4) THEN 1 END) as total_requests,
-            COUNT(CASE WHEN l.loan_status IN (1, 2, 4) THEN 1 END) as approved_requests,
-            SUM(CASE WHEN l.loan_status = 2 THEN l.admin_fee ELSE 0 END) as total_admin_fee_collected,
-            SUM(CASE WHEN l.loan_status IN (1, 4) THEN l.total_payment ELSE 0 END) as total_unrecovered_payment,
-            CASE 
-                WHEN SUM(CASE WHEN l.loan_status IN (1, 2, 4) THEN l.total_payment ELSE 0 END) > 0 
-                THEN SUM(CASE WHEN l.loan_status IN (1, 4) THEN l.total_payment ELSE 0 END) / SUM(CASE WHEN l.loan_status IN (1, 2, 4) THEN l.total_payment ELSE 0 END)
-                ELSE 0 
-            END as delinquency_rate
+            prj.keterangan as project
         FROM td_loan l
         LEFT JOIN td_karyawan tk
             ON l.id_karyawan = tk.id_karyawan
@@ -3349,39 +3352,24 @@ def get_client_summary(db: Session, month_filter: int = None, year_filter: int =
         AND src.keterangan IS NOT NULL
         """
         
-        # Build parameters dict for filters
-        params = {}
-        
-        # Add month and year filters
         if month_filter is not None:
-            client_summary_query += " AND MONTH(l.proses_date) = :month"
-            params['month'] = month_filter
-            
+            combinations_query += " AND MONTH(l.proses_date) = :month"
         if year_filter is not None:
-            client_summary_query += " AND YEAR(l.proses_date) = :year"
-            params['year'] = year_filter
+            combinations_query += " AND YEAR(l.proses_date) = :year"
         
-        # Group by sourced_to and project
-        client_summary_query += """
-        GROUP BY src.keterangan, prj.keterangan
-        ORDER BY src.keterangan, prj.keterangan
-        """
-        
-        # Execute query
-        result = db.execute(text(client_summary_query), params)
-        records = result.fetchall()
-        
-        # Get eligible and active employees counts for each sourced_to and project combination
-        employee_counts = {}
-        for record in records:
-            sourced_to = record[0] if record[0] else "Unknown"
-            project = record[1] if record[1] else "Unknown"
-            key = f"{sourced_to}_{project}"
+        try:
+            combinations_result = db.execute(text(combinations_query), params)
+            combinations = combinations_result.fetchall()
             
-            if key not in employee_counts:
-                # Query eligible employees count
-                eligible_query = """
-                SELECT COUNT(DISTINCT tk.id_karyawan)
+            # For each combination, get employee counts using the exact same query as coverage utilization
+            for combo in combinations:
+                sourced_to = combo[0] if combo[0] else "Unknown"
+                project = combo[1] if combo[1] else "Unknown"
+                key = f"{sourced_to}_{project}"
+                
+                # Use the exact same eligible count query as coverage utilization (only filter by sourced_to)
+                eligible_count_query = """
+                SELECT COUNT(*)
                 FROM td_karyawan tk
                 LEFT JOIN tbl_gmc emp
                     ON tk.valdo_inc = emp.kode_gmc
@@ -3401,12 +3389,16 @@ def get_client_summary(db: Session, month_filter: int = None, year_filter: int =
                 WHERE tk.status = '1' 
                 AND tk.loan_kasbon_eligible = '1'
                 AND src.keterangan = :sourced_to
-                AND prj.keterangan = :project
                 """
                 
-                # Query active employees count
-                active_query = """
-                SELECT COUNT(DISTINCT tk.id_karyawan)
+                # Execute the eligible count query for this combination
+                eligible_params = {"sourced_to": sourced_to}
+                eligible_result = db.execute(text(eligible_count_query), eligible_params)
+                eligible_count = eligible_result.fetchone()[0] or 0
+                
+                # For active employees, we'll use the same approach but without loan_kasbon_eligible filter
+                active_count_query = """
+                SELECT COUNT(*)
                 FROM td_karyawan tk
                 LEFT JOIN tbl_gmc emp
                     ON tk.valdo_inc = emp.kode_gmc
@@ -3425,46 +3417,102 @@ def get_client_summary(db: Session, month_filter: int = None, year_filter: int =
                     AND prj.keterangan3 = 1
                 WHERE tk.status = '1'
                 AND src.keterangan = :sourced_to
-                AND prj.keterangan = :project
                 """
                 
-                # Note: Employee counts are current counts, not filtered by date
-                # Date filtering is only applied to loan-related metrics
-                
-                # Execute queries
-                eligible_params = {"sourced_to": sourced_to, "project": project}
-                active_params = {"sourced_to": sourced_to, "project": project}
-                
-                eligible_result = db.execute(text(eligible_query), eligible_params)
-                active_result = db.execute(text(active_query), active_params)
-                
-                eligible_count = eligible_result.fetchone()[0] or 0
+                active_result = db.execute(text(active_count_query), eligible_params)
                 active_count = active_result.fetchone()[0] or 0
                 
                 employee_counts[key] = {
                     "eligible": eligible_count,
                     "active": active_count
                 }
+                
+        except Exception as e:
+            print(f"Warning: Employee counts query failed: {e}")
+            # Fallback: return empty employee counts
+            employee_counts = {}
+        
+        # Build the main loan summary query (without correlated subqueries)
+        client_summary_query = """
+        SELECT 
+            src.keterangan as sourced_to,
+            prj.keterangan as project,
+            SUM(CASE WHEN l.loan_status IN (1, 2, 4) THEN l.total_loan ELSE 0 END) as total_disbursement,
+            COUNT(CASE WHEN l.loan_status IN (1, 2, 3, 4) THEN 1 END) as total_requests,
+            COUNT(CASE WHEN l.loan_status IN (1, 2, 4) THEN 1 END) as approved_requests,
+            SUM(CASE WHEN l.loan_status = 2 THEN l.admin_fee ELSE 0 END) as total_admin_fee_collected,
+            SUM(CASE WHEN l.loan_status IN (1, 4) THEN l.total_payment ELSE 0 END) as total_unrecovered_payment,
+            CASE 
+                WHEN SUM(CASE WHEN l.loan_status IN (1, 2, 4) THEN l.total_payment ELSE 0 END) > 0 
+                THEN SUM(CASE WHEN l.loan_status IN (1, 4) THEN l.total_payment ELSE 0 END) / SUM(CASE WHEN l.loan_status IN (1, 2, 4) THEN l.total_payment ELSE 0 END)
+                ELSE 0 
+            END as delinquency_rate,
+            COUNT(DISTINCT CASE WHEN l.loan_status IN (1, 2, 3, 4) THEN l.id_karyawan END) as unique_requesting_employees
+        FROM td_loan l
+        LEFT JOIN td_karyawan tk
+            ON l.id_karyawan = tk.id_karyawan
+        LEFT JOIN tbl_gmc emp
+            ON tk.valdo_inc = emp.kode_gmc
+            AND emp.group_gmc = 'sub_client'
+            AND emp.aktif = 'Yes'
+            AND emp.keterangan3 = 1
+        LEFT JOIN tbl_gmc src
+            ON tk.placement = src.kode_gmc
+            AND src.group_gmc = 'placement_client'
+            AND src.aktif = 'Yes'
+            AND src.keterangan3 = 1
+        LEFT JOIN tbl_gmc prj
+            ON tk.project = prj.kode_gmc
+            AND prj.group_gmc = 'client_project'
+            AND prj.aktif = 'Yes'
+            AND prj.keterangan3 = 1
+        WHERE l.duration = 1
+        AND l.loan_id != 35
+        AND src.keterangan IS NOT NULL
+        """
+        
+        # Add month and year filters to the main query (params already defined above)
+        if month_filter is not None:
+            client_summary_query += " AND MONTH(l.proses_date) = :month"
+            
+        if year_filter is not None:
+            client_summary_query += " AND YEAR(l.proses_date) = :year"
+        
+        # Group by sourced_to and project
+        client_summary_query += """
+        GROUP BY src.keterangan, prj.keterangan
+        ORDER BY src.keterangan, prj.keterangan
+        """
+        
+        # Execute main query
+        result = db.execute(text(client_summary_query), params)
+        records = result.fetchall()
         
         # Format results
-        client_disbursements = [
-            {
-                "sourced_to": record[0] if record[0] else "Unknown",
-                "project": record[1] if record[1] else "Unknown",
+        client_disbursements = []
+        for record in records:
+            sourced_to = record[0] if record[0] else "Unknown"
+            project = record[1] if record[1] else "Unknown"
+            key = f"{sourced_to}_{project}"
+            
+            # Get employee counts from the pre-calculated dictionary
+            employee_data = employee_counts.get(key, {"eligible": 0, "active": 0})
+            
+            client_disbursements.append({
+                "sourced_to": sourced_to,
+                "project": project,
                 "total_disbursement": float(record[2]) if record[2] else 0,
                 "total_requests": int(record[3]) if record[3] else 0,
                 "approved_requests": int(record[4]) if record[4] else 0,
-                "eligible_employees": employee_counts[f"{record[0] if record[0] else 'Unknown'}_{record[1] if record[1] else 'Unknown'}"]["eligible"],
-                "active_employees": employee_counts[f"{record[0] if record[0] else 'Unknown'}_{record[1] if record[1] else 'Unknown'}"]["active"],
-                "eligible_rate": (employee_counts[f"{record[0] if record[0] else 'Unknown'}_{record[1] if record[1] else 'Unknown'}"]["eligible"] / employee_counts[f"{record[0] if record[0] else 'Unknown'}_{record[1] if record[1] else 'Unknown'}"]["active"]) if employee_counts[f"{record[0] if record[0] else 'Unknown'}_{record[1] if record[1] else 'Unknown'}"]["active"] > 0 else 0,
-                "penetration_rate": (float(record[3]) / employee_counts[f"{record[0] if record[0] else 'Unknown'}_{record[1] if record[1] else 'Unknown'}"]["eligible"]) if employee_counts[f"{record[0] if record[0] else 'Unknown'}_{record[1] if record[1] else 'Unknown'}"]["eligible"] > 0 else 0,
+                "eligible_employees": employee_data["eligible"],
+                "active_employees": employee_data["active"],
+                "eligible_rate": (employee_data["eligible"] / employee_data["active"]) if employee_data["active"] > 0 else 0,
+                "penetration_rate": (int(record[8]) / employee_data["eligible"]) if employee_data["eligible"] > 0 else 0,  # unique_requesting_employees / eligible_employees
                 "total_admin_fee_collected": float(record[5]) if record[5] else 0,
                 "total_unrecovered_payment": float(record[6]) if record[6] else 0,
-                "admin_fee_profit": float(record[5]) - float(record[6]) if record[5] and record[6] else 0,
+                "admin_fee_profit": (float(record[5]) if record[5] else 0) - (float(record[6]) if record[6] else 0),
                 "delinquency_rate": float(record[7]) if record[7] else 0,
-            }
-            for record in records
-        ]
+            })
         
         return client_disbursements
         
