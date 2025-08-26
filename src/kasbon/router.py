@@ -54,6 +54,37 @@ async def get_karyawan(
         }
 
 
+
+
+
+@router.get("/client-summary")
+async def get_client_summary(
+    month: int = None,
+    year: int = None,
+    db: Session = Depends(get_db)
+):
+    """Get comprehensive client summary with disbursement and other metrics"""
+    try:
+        client_summaries = crud.get_client_summary(
+            db, 
+            month_filter=month,
+            year_filter=year
+        )
+        
+        return {
+            "status": "success",
+            "count": len(client_summaries),
+            "results": client_summaries
+        }
+    except Exception as e:
+        return {
+            "status": "error",
+            "message": str(e),
+            "count": 0,
+            "results": []
+        }
+
+
 @router.get("/summary", response_model=schemas.SummaryResponse)
 async def get_summary(
     month: int,
@@ -697,11 +728,8 @@ async def get_repayment_risk(
     db: Session = Depends(get_db)
 ):
     """Get repayment risk summary with various repayment and risk metrics"""
-    print(f"🌐 API endpoint /kasbon/repayment-risk called")
-    print(f"🔍 Filters: employer={employer}, sourced_to={sourced_to}, project={project}, loan_status={loan_status}, id_karyawan={id_karyawan}, month={month}, year={year}")
     
     try:
-        print(f"🔍 About to call crud.get_repayment_risk_summary...")
         repayment_risk_summary = crud.get_repayment_risk_summary(
             db, 
             employer_filter=employer,
@@ -713,7 +741,6 @@ async def get_repayment_risk(
             year_filter=year
         )
         
-        print(f"📊 Returning repayment risk summary to client")
         
         # Return structured response
         return {
@@ -729,8 +756,6 @@ async def get_repayment_risk(
             "admin_fee_profit": repayment_risk_summary["admin_fee_profit"]
         }
     except Exception as e:
-        print(f"❌ Error in repayment risk endpoint: {e}")
-        print(f"   Error type: {type(e).__name__}")
         # Return error response with status
         return {
             "status": "error",
@@ -764,11 +789,8 @@ async def get_repayment_risk_monthly(
     - start_date: Start date in YYYY-MM-DD format (e.g., "2024-01-01")
     - end_date: End date in YYYY-MM-DD format (e.g., "2024-12-31")
     """
-    print(f"🌐 API endpoint /kasbon/repayment-risk-monthly called")
-    print(f"🔍 Filters: employer={employer}, sourced_to={sourced_to}, project={project}, loan_status={loan_status}, id_karyawan={id_karyawan}, start_date={start_date}, end_date={end_date}")
     
     try:
-        print(f"🔍 About to call crud.get_repayment_risk_monthly_summary...")
         monthly_repayment_risk_summary = crud.get_repayment_risk_monthly_summary(
             db, 
             employer_filter=employer,
@@ -780,7 +802,6 @@ async def get_repayment_risk_monthly(
             end_date=end_date
         )
         
-        print(f"📊 Returning monthly repayment risk summary to client")
         
         # Return structured response
         return {
@@ -788,8 +809,6 @@ async def get_repayment_risk_monthly(
             "monthly_data": monthly_repayment_risk_summary
         }
     except Exception as e:
-        print(f"❌ Error in monthly repayment risk endpoint: {e}")
-        print(f"   Error type: {type(e).__name__}")
         # Return error response with status
         return {
             "status": "error",
@@ -810,11 +829,8 @@ async def get_coverage_utilization(
     db: Session = Depends(get_db)
 ):
     """Get comprehensive coverage and utilization summary combining multiple metrics"""
-    print(f"🌐 API endpoint /kasbon/coverage-utilization called")
-    print(f"🔍 Filters: employer={employer}, sourced_to={sourced_to}, project={project}, loan_status={loan_status}, id_karyawan={id_karyawan}, month={month}, year={year}")
     
     try:
-        print(f"🔍 About to call crud.get_coverage_utilization_summary...")
         coverage_utilization_summary = crud.get_coverage_utilization_summary(
             db, 
             employer_filter=employer,
@@ -826,7 +842,6 @@ async def get_coverage_utilization(
             year_filter=year
         )
         
-        print(f"📊 Returning coverage utilization summary to client")
         
         # Return structured response
         return {
@@ -843,8 +858,6 @@ async def get_coverage_utilization(
             "average_disbursed_amount": coverage_utilization_summary["average_disbursed_amount"]
         }
     except Exception as e:
-        print(f"❌ Error in coverage utilization endpoint: {e}")
-        print(f"   Error type: {type(e).__name__}")
         # Return error response with status
         return {
             "status": "error",
@@ -879,11 +892,8 @@ async def get_coverage_utilization_monthly(
     - start_date: Start date in YYYY-MM-DD format (e.g., "2024-01-01")
     - end_date: End date in YYYY-MM-DD format (e.g., "2024-12-31")
     """
-    print(f"🌐 API endpoint /kasbon/coverage-utilization-monthly called")
-    print(f"🔍 Filters: employer={employer}, sourced_to={sourced_to}, project={project}, loan_status={loan_status}, id_karyawan={id_karyawan}, start_date={start_date}, end_date={end_date}")
     
     try:
-        print(f"🔍 About to call crud.get_coverage_utilization_monthly_summary...")
         monthly_coverage_utilization_summary = crud.get_coverage_utilization_monthly_summary(
             db, 
             employer_filter=employer,
@@ -895,7 +905,6 @@ async def get_coverage_utilization_monthly(
             end_date=end_date
         )
         
-        print(f"📊 Returning monthly coverage utilization summary to client")
         
         # Return structured response
         return {
@@ -903,8 +912,6 @@ async def get_coverage_utilization_monthly(
             "monthly_data": monthly_coverage_utilization_summary
         }
     except Exception as e:
-        print(f"❌ Error in monthly coverage utilization endpoint: {e}")
-        print(f"   Error type: {type(e).__name__}")
         # Return error response with status
         return {
             "status": "error",

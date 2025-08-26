@@ -246,16 +246,14 @@ class LoanRiskMonthlyResponse(BaseModel):
 class KaryawanOverdueResponse(BaseModel):
     """Response model for karyawan with overdue loans"""
     id_karyawan: Optional[int] = None
-    nik: Optional[str] = None
     ktp: Optional[str] = None
     name: Optional[str] = None
-    ktp: Optional[str] = None
     company: Optional[str] = None
     sourced_to: Optional[str] = None
     project: Optional[str] = None
-    rec_status: Optional[str] = None
     total_amount_owed: int
     repayment_date: Optional[str] = None
+    days_overdue: int
 
     class Config:
         from_attributes = True
