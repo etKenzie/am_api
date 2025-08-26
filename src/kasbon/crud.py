@@ -61,17 +61,13 @@ def get_enhanced_karyawan(db: Session, limit: int = 1000000,
         # Add limit
         base_query += f" LIMIT {limit}"
         
-        print(f"🔍 Executing enhanced query with filters:")
-        print(f"   id_karyawan: {id_karyawan_filter}")
-        print(f"   employer: {employer_filter}")
-        print(f"   sourced_to: {sourced_to_filter}")
-        print(f"   project: {project_filter}")
+
         
         # Execute the main query
         result = db.execute(text(base_query), params)
         records = result.fetchall()
         
-        print(f"✅ Enhanced query returned {len(records)} records")
+
         
         # Convert to list of dictionaries
         karyawan_list = []
@@ -89,8 +85,6 @@ def get_enhanced_karyawan(db: Session, limit: int = 1000000,
         return karyawan_list
         
     except Exception as e:
-        print(f"❌ Error in enhanced karyawan query: {e}")
-        print(f"   Error type: {type(e).__name__}")
         import traceback
         traceback.print_exc()
         return []
@@ -148,6 +142,8 @@ def get_user_coverage_summary(db: Session,
             AND prj.aktif = 'Yes'
             AND prj.keterangan3 = 1
         WHERE l.loan_status IN (1, 2, 3, 4)
+        AND l.duration = 1
+        AND l.loan_id != 35
         """
         
         # Build the pending kasbon requests query
@@ -172,6 +168,8 @@ def get_user_coverage_summary(db: Session,
             AND prj.aktif = 'Yes'
             AND prj.keterangan3 = 1
         WHERE l.loan_status = 0
+        AND l.duration = 1
+        AND l.loan_id != 35
         """
         
         # Build the first-time borrowers query
@@ -202,7 +200,11 @@ def get_user_coverage_summary(db: Session,
             WHERE l2.id_karyawan = l.id_karyawan 
             AND l2.loan_status = 2 
             AND l2.proses_date < l.proses_date
+            AND l2.duration = 1
+            AND l2.loan_id != 35
         )
+        AND l.duration = 1
+        AND l.loan_id != 35
         """
         
         # Build the approved requests query
@@ -227,6 +229,8 @@ def get_user_coverage_summary(db: Session,
             AND prj.aktif = 'Yes'
             AND prj.keterangan3 = 1
         WHERE l.loan_status IN (1, 2, 4)
+        AND l.duration = 1
+        AND l.loan_id != 35
         """
         
         # Build the rejected requests query
@@ -251,6 +255,8 @@ def get_user_coverage_summary(db: Session,
             AND prj.aktif = 'Yes'
             AND prj.keterangan3 = 1
         WHERE l.loan_status = 3
+        AND l.duration = 1
+        AND l.loan_id != 35
         """
         
         # Build the average approval time query
@@ -277,6 +283,8 @@ def get_user_coverage_summary(db: Session,
         WHERE l.loan_status = 1
         AND l.proses_date IS NOT NULL
         AND l.received_date IS NOT NULL
+        AND l.duration = 1
+        AND l.loan_id != 35
         """
         
         # Build the total disbursed amount query
@@ -301,6 +309,8 @@ def get_user_coverage_summary(db: Session,
             AND prj.aktif = 'Yes'
             AND prj.keterangan3 = 1
         WHERE l.loan_status IN (1, 2, 4)
+        AND l.duration = 1
+        AND l.loan_id != 35
         """
         
         # Build the total loans query (for average calculation - count all loans, not unique borrowers)
@@ -325,6 +335,8 @@ def get_user_coverage_summary(db: Session,
             AND prj.aktif = 'Yes'
             AND prj.keterangan3 = 1
         WHERE l.loan_status IN (1, 2, 4)
+        AND l.duration = 1
+        AND l.loan_id != 35
         """
         
         # Build parameters dict for filters
@@ -441,19 +453,7 @@ def get_user_coverage_summary(db: Session,
         if total_loans > 0:
             average_disbursed_amount = total_disbursed_amount / total_loans
         
-        print(f"📊 User coverage summary:")
-        print(f"   Total eligible employees: {total_eligible}")
-        print(f"   Total processed kasbon requests: {total_processed}")
-        print(f"   Total pending kasbon requests: {total_pending}")
-        print(f"   Total first-time borrowers: {total_first_borrow}")
-        print(f"   Total approved requests: {total_approved}")
-        print(f"   Total rejected requests: {total_rejected}")
-        print(f"   Total disbursed amount: {total_disbursed_amount}")
-        print(f"   Total loans: {total_loans}")
-        print(f"   Average disbursed amount: {average_disbursed_amount:.2f}")
-        print(f"   Penetration rate: {penetration_rate:.2%}")
-        print(f"   Approval rate: {approval_rate:.2%}")
-        print(f"   Average approval time: {avg_approval_time:.1f} days")
+
         
         return {
             "total_eligible_employees": total_eligible,
@@ -471,8 +471,6 @@ def get_user_coverage_summary(db: Session,
         }
         
     except Exception as e:
-        print(f"❌ Error in user coverage query: {e}")
-        print(f"   Error type: {type(e).__name__}")
         import traceback
         traceback.print_exc()
         return {
@@ -543,6 +541,8 @@ def get_user_coverage_endpoint(db: Session,
             AND prj.aktif = 'Yes'
             AND prj.keterangan3 = 1
         WHERE l.loan_status IN (0, 1, 2, 3, 4)
+        AND l.duration = 1
+        AND l.loan_id != 35
         """
         
         # Build the first-time borrowers query
@@ -573,7 +573,11 @@ def get_user_coverage_endpoint(db: Session,
             WHERE l2.id_karyawan = l.id_karyawan 
             AND l2.loan_status = 2 
             AND l2.proses_date < l.proses_date
+            AND l2.duration = 1
+            AND l2.loan_id != 35
         )
+        AND l.duration = 1
+        AND l.loan_id != 35
         """
         
         # Build parameters dict for filters
@@ -624,11 +628,7 @@ def get_user_coverage_endpoint(db: Session,
         if total_eligible > 0:
             penetration_rate = total_requests / total_eligible
         
-        print(f"📊 User coverage endpoint:")
-        print(f"   Total eligible employees: {total_eligible}")
-        print(f"   Total kasbon requests: {total_requests}")
-        print(f"   Penetration rate: {penetration_rate:.2%}")
-        print(f"   Total first-time borrowers: {total_first_borrow}")
+
         
         return {
             "total_eligible_employees": total_eligible,
@@ -638,8 +638,6 @@ def get_user_coverage_endpoint(db: Session,
         }
         
     except Exception as e:
-        print(f"❌ Error in user coverage endpoint: {e}")
-        print(f"   Error type: {type(e).__name__}")
         import traceback
         traceback.print_exc()
         return {
@@ -679,6 +677,8 @@ def get_requests_endpoint(db: Session,
             AND prj.aktif = 'Yes'
             AND prj.keterangan3 = 1
         WHERE l.loan_status IN (1, 2, 4)
+        AND l.duration = 1
+        AND l.loan_id != 35
         """
         
         # Build the rejected requests query
@@ -703,6 +703,8 @@ def get_requests_endpoint(db: Session,
             AND prj.aktif = 'Yes'
             AND prj.keterangan3 = 1
         WHERE l.loan_status = 3
+        AND l.duration = 1
+        AND l.loan_id != 35
         """
         
         # Build the total processed requests query (for approval rate calculation)
@@ -727,6 +729,8 @@ def get_requests_endpoint(db: Session,
             AND prj.aktif = 'Yes'
             AND prj.keterangan3 = 1
         WHERE l.loan_status IN (1, 2, 3, 4)
+        AND l.duration = 1
+        AND l.loan_id != 35
         """
         
         # Build the average approval time query
@@ -753,6 +757,8 @@ def get_requests_endpoint(db: Session,
         WHERE l.loan_status = 1
         AND l.proses_date IS NOT NULL
         AND l.received_date IS NOT NULL
+        AND l.duration = 1
+        AND l.loan_id != 35
         """
         
         # Build parameters dict for filters
@@ -814,11 +820,7 @@ def get_requests_endpoint(db: Session,
         if total_processed > 0:
             approval_rate = total_approved / total_processed
         
-        print(f"📊 Requests endpoint:")
-        print(f"   Total approved requests: {total_approved}")
-        print(f"   Total rejected requests: {total_rejected}")
-        print(f"   Approval rate: {approval_rate:.2%}")
-        print(f"   Average approval time: {avg_approval_time:.1f} days")
+
         
         return {
             "total_approved_requests": total_approved,
@@ -828,8 +830,6 @@ def get_requests_endpoint(db: Session,
         }
         
     except Exception as e:
-        print(f"❌ Error in requests endpoint: {e}")
-        print(f"   Error type: {type(e).__name__}")
         import traceback
         traceback.print_exc()
         return {
@@ -869,6 +869,8 @@ def get_disbursement_endpoint(db: Session,
             AND prj.aktif = 'Yes'
             AND prj.keterangan3 = 1
         WHERE l.loan_status IN (1, 2, 4)
+        AND l.duration = 1
+        AND l.loan_id != 35
         """
         
         # Build the total loan count query (for average calculation - count all loans, not unique borrowers)
@@ -893,6 +895,8 @@ def get_disbursement_endpoint(db: Session,
             AND prj.aktif = 'Yes'
             AND prj.keterangan3 = 1
         WHERE l.loan_status IN (1, 2, 4)
+        AND l.duration = 1
+        AND l.loan_id != 35
         """
         
         # Build parameters dict for filters
@@ -936,10 +940,7 @@ def get_disbursement_endpoint(db: Session,
         if total_loans > 0:
             average_disbursed_amount = total_disbursed_amount / total_loans
         
-        print(f"📊 Disbursement endpoint:")
-        print(f"   Total disbursed amount: {total_disbursed_amount}")
-        print(f"   Total loans: {total_loans}")
-        print(f"   Average disbursed amount: {average_disbursed_amount:.2f}")
+
         
         return {
             "total_disbursed_amount": total_disbursed_amount,
@@ -947,8 +948,6 @@ def get_disbursement_endpoint(db: Session,
         }
         
     except Exception as e:
-        print(f"❌ Error in disbursement endpoint: {e}")
-        print(f"   Error type: {type(e).__name__}")
         import traceback
         traceback.print_exc()
         return {
@@ -1018,6 +1017,8 @@ def get_user_coverage_monthly_endpoint(db: Session, start_date: str, end_date: s
                 WHERE l2.id_karyawan = l.id_karyawan 
                 AND l2.loan_status = 2 
                 AND l2.proses_date < l.proses_date
+                AND l2.duration = 1
+                AND l2.loan_id != 35
             ) THEN 1 END) as total_first_borrow,
             COUNT(CASE WHEN l.loan_status IN (1, 2, 4) THEN l.id END) as total_approved_requests,
             SUM(CASE WHEN l.loan_status IN (1, 2, 4) THEN l.total_loan ELSE 0 END) as total_disbursed_amount
@@ -1041,6 +1042,8 @@ def get_user_coverage_monthly_endpoint(db: Session, start_date: str, end_date: s
             AND prj.keterangan3 = 1
         WHERE l.proses_date IS NOT NULL
         AND l.proses_date BETWEEN :start_date AND :end_date
+        AND l.duration = 1
+        AND l.loan_id != 35
         """
         
         # Build parameters dict for monthly query
@@ -1068,14 +1071,7 @@ def get_user_coverage_monthly_endpoint(db: Session, start_date: str, end_date: s
         ORDER BY l.proses_date
         """
         
-        print(f"🔍 Executing monthly user coverage endpoint query with filters:")
-        print(f"   start_date: {start_date}")
-        print(f"   end_date: {end_date}")
-        print(f"   id_karyawan: {id_karyawan_filter}")
-        print(f"   employer: {employer_filter}")
-        print(f"   sourced_to: {sourced_to_filter}")
-        print(f"   project: {project_filter}")
-        print(f"   Total eligible employees: {total_eligible_employees}")
+
         
         # Execute monthly query
         result = db.execute(text(monthly_query), monthly_params)
@@ -1107,13 +1103,11 @@ def get_user_coverage_monthly_endpoint(db: Session, start_date: str, end_date: s
                 "penetration_rate": penetration_rate
             }
         
-        print(f"📊 Monthly user coverage endpoint completed with {len(monthly_data)} months")
+
         
         return monthly_data
         
     except Exception as e:
-        print(f"❌ Error in monthly user coverage endpoint: {e}")
-        print(f"   Error type: {type(e).__name__}")
         import traceback
         traceback.print_exc()
         return {}
@@ -1151,6 +1145,8 @@ def get_disbursement_monthly_endpoint(db: Session, start_date: str, end_date: st
             AND prj.keterangan3 = 1
         WHERE l.proses_date IS NOT NULL
         AND l.proses_date BETWEEN :start_date AND :end_date
+        AND l.duration = 1
+        AND l.loan_id != 35
         """
         
         # Build parameters dict for monthly query
@@ -1178,13 +1174,7 @@ def get_disbursement_monthly_endpoint(db: Session, start_date: str, end_date: st
         ORDER BY l.proses_date
         """
         
-        print(f"🔍 Executing monthly disbursement endpoint query with filters:")
-        print(f"   start_date: {start_date}")
-        print(f"   end_date: {end_date}")
-        print(f"   id_karyawan: {id_karyawan_filter}")
-        print(f"   employer: {employer_filter}")
-        print(f"   sourced_to: {sourced_to_filter}")
-        print(f"   project: {project_filter}")
+
         
         # Execute monthly query
         result = db.execute(text(monthly_query), monthly_params)
@@ -1211,13 +1201,11 @@ def get_disbursement_monthly_endpoint(db: Session, start_date: str, end_date: st
                 "average_disbursed_amount": average_disbursed_amount
             }
         
-        print(f"📊 Monthly disbursement endpoint completed with {len(monthly_data)} months")
+
         
         return monthly_data
         
     except Exception as e:
-        print(f"❌ Error in monthly disbursement endpoint: {e}")
-        print(f"   Error type: {type(e).__name__}")
         import traceback
         traceback.print_exc()
         return {}
@@ -1231,37 +1219,32 @@ def get_loans_with_karyawan(db: Session, limit: int = 1000000,
     
     try:
         # First, let's check if the loans table exists and see its structure
-        print("🔍 Checking if loans table exists...")
+
         try:
             table_check = db.execute(text("SHOW TABLES LIKE 'td_loan'"))
             if not table_check.fetchone():
-                print("❌ Table 'loans' not found!")
+        
                 return []
-            print("✅ Table 'td_loan' exists")
+    
         except Exception as e:
-            print(f"❌ Error checking td_loan table: {e}")
+    
             return []
         
         # Check loans table structure
         try:
             structure_result = db.execute(text("DESCRIBE td_loan"))
             columns = structure_result.fetchall()
-            print("📋 td_loan table structure:")
-            for col in columns:
-                print(f"   {col[0]} - {col[1]}")
+            
         except Exception as e:
-            print(f"❌ Error getting td_loan table structure: {e}")
+            pass
         
         # Check if td_karyawan has the required columns for joining
         try:
             karyawan_structure = db.execute(text("DESCRIBE td_karyawan"))
             karyawan_columns = karyawan_structure.fetchall()
-            print("📋 td_karyawan table structure (key columns):")
-            for col in karyawan_columns:
-                if col[0] in ['id_karyawan', 'valdo_inc', 'placement', 'project']:
-                    print(f"   {col[0]} - {col[1]}")
+
         except Exception as e:
-            print(f"❌ Error getting td_karyawan table structure: {e}")
+            pass
         
         # Build the base query with joins to get karyawan and codes data
         base_query = """
@@ -1306,6 +1289,8 @@ def get_loans_with_karyawan(db: Session, limit: int = 1000000,
             AND prj.aktif = 'Yes'
             AND prj.keterangan3 = 1
         WHERE 1=1
+        AND l.duration = 1
+        AND l.loan_id != 35
         """
         
         # Build parameters dict for filters
@@ -1335,18 +1320,13 @@ def get_loans_with_karyawan(db: Session, limit: int = 1000000,
         # Add limit
         base_query += f" LIMIT {limit}"
         
-        print(f"🔍 Executing loans query with filters:")
-        print(f"   id_karyawan: {id_karyawan_filter}")
-        print(f"   employer: {employer_filter}")
-        print(f"   sourced_to: {sourced_to_filter}")
-        print(f"   project: {project_filter}")
-        print(f"   loan_status: {loan_status_filter}")
+
         
         # Execute the query
         result = db.execute(text(base_query), params)
         records = result.fetchall()
         
-        print(f"✅ Loans query returned {len(records)} records")
+
         
         # Convert to list of dictionaries
         loans_list = []
@@ -1378,8 +1358,6 @@ def get_loans_with_karyawan(db: Session, limit: int = 1000000,
         return loans_list
         
     except Exception as e:
-        print(f"❌ Error in loans query: {e}")
-        print(f"   Error type: {type(e).__name__}")
         import traceback
         traceback.print_exc()
         return []
@@ -1483,10 +1461,7 @@ def get_available_filter_values(db: Session, employer_filter: str = None, placem
         placements = [row[0] for row in db.execute(text(placement_query), placement_params).fetchall()]
         projects = [row[0] for row in db.execute(text(project_query), project_params).fetchall()]
         
-        print(f"🔍 Filter values retrieved:")
-        print(f"   Employers: {len(employers)} options")
-        print(f"   Placements: {len(placements)} options (filtered by employer: {employer_filter})")
-        print(f"   Projects: {len(projects)} options (filtered by employer: {employer_filter}, placement: {placement_filter})")
+
         
         return {
             "employers": employers,
@@ -1495,8 +1470,6 @@ def get_available_filter_values(db: Session, employer_filter: str = None, placem
         }
         
     except Exception as e:
-        print(f"❌ Error getting filter values: {e}")
-        print(f"   Error type: {type(e).__name__}")
         import traceback
         traceback.print_exc()
         return {
@@ -1541,6 +1514,8 @@ def get_loan_fees_summary(db: Session,
             AND prj.aktif = 'Yes'
             AND prj.keterangan3 = 1
         WHERE 1=1
+        AND l.duration = 1
+        AND l.loan_id != 35
         """
         
         # Build parameters dict for filters
@@ -1650,6 +1625,8 @@ def get_loan_fees_monthly_summary(db: Session,
             AND prj.aktif = 'Yes'
             AND prj.keterangan3 = 1
         WHERE l.proses_date IS NOT NULL
+        AND l.duration = 1
+        AND l.loan_id != 35
         """
         
         # Build parameters dict for filters
@@ -1725,8 +1702,6 @@ def get_loan_fees_monthly_summary(db: Session,
         return monthly_data
         
     except Exception as e:
-        print(f"❌ Error in monthly loan fees query: {e}")
-        print(f"   Error type: {type(e).__name__}")
         import traceback
         traceback.print_exc()
         return {}
@@ -1767,6 +1742,8 @@ def get_loan_risk_summary(db: Session,
             AND prj.aktif = 'Yes'
             AND prj.keterangan3 = 1
         WHERE 1=1
+        AND l.duration = 1
+        AND l.loan_id != 35
         """
         
         # Build parameters dict for filters
@@ -1827,8 +1804,6 @@ def get_loan_risk_summary(db: Session,
         }
         
     except Exception as e:
-        print(f"❌ Error in loan risk query: {e}")
-        print(f"   Error type: {type(e).__name__}")
         import traceback
         traceback.print_exc()
         return {
@@ -1875,6 +1850,8 @@ def get_loan_risk_monthly_summary(db: Session,
             AND prj.aktif = 'Yes'
             AND prj.keterangan3 = 1
         WHERE l.proses_date IS NOT NULL
+        AND l.duration = 1
+        AND l.loan_id != 35
         """
         
         # Build parameters dict for filters
@@ -1916,14 +1893,7 @@ def get_loan_risk_monthly_summary(db: Session,
         ORDER BY MIN(l.proses_date)
         """
         
-        print(f"🔍 Executing monthly loan risk query with filters:")
-        print(f"   id_karyawan: {id_karyawan_filter}")
-        print(f"   employer: {employer_filter}")
-        print(f"   sourced_to: {sourced_to_filter}")
-        print(f"   project: {project_filter}")
-        print(f"   loan_status: {loan_status_filter}")
-        print(f"   start_date: {start_date}")
-        print(f"   end_date: {end_date}")
+
         
         # Execute the query
         result = db.execute(text(risk_query), params)
@@ -1955,16 +1925,11 @@ def get_loan_risk_monthly_summary(db: Session,
                 "kasbon_principal_recovery_rate": kasbon_principal_recovery_rate
             }
         
-        print(f"📊 Monthly loan risk summary:")
-        print(f"   Found data for {len(monthly_data)} months")
-        for month, data in monthly_data.items():
-            print(f"   {month}: Unrecovered={data['total_unrecovered_kasbon']}, Recovery Rate={data['kasbon_principal_recovery_rate']:.2%}")
+
         
         return monthly_data
         
     except Exception as e:
-        print(f"❌ Error in monthly loan risk query: {e}")
-        print(f"   Error type: {type(e).__name__}")
         import traceback
         traceback.print_exc()
         return {}
@@ -1982,6 +1947,8 @@ def get_karyawan_overdue_summary(db: Session,
         overdue_query = """
         SELECT DISTINCT
             tk.id_karyawan,
+            tk.nik AS nik,
+            tk.ktp AS ktp,
             tk.nama AS name,
             tk.ktp AS ktp,
             emp.keterangan AS company,
@@ -2010,6 +1977,8 @@ def get_karyawan_overdue_summary(db: Session,
             AND prj.keterangan3 = 1
         WHERE l.loan_status = 4
         AND l.id_karyawan IS NOT NULL
+        AND l.duration = 1
+        AND l.loan_id != 35
         """
         
         # Build parameters dict for filters
@@ -2076,16 +2045,11 @@ def get_karyawan_overdue_summary(db: Session,
                 "repayment_date": str(record[8]) if record[8] else None
             })
         
-        print(f"📊 Karyawan overdue summary:")
-        print(f"   Found {len(overdue_list)} karyawan with overdue loans")
-        for item in overdue_list[:5]:  # Show first 5 for logging
-            print(f"   {item['name']}: {item['total_amount_owed']} owed")
+
         
         return overdue_list
         
     except Exception as e:
-        print(f"❌ Error in karyawan overdue query: {e}")
-        print(f"   Error type: {type(e).__name__}")
         import traceback
         traceback.print_exc()
         return []
@@ -2127,6 +2091,8 @@ def get_loan_purpose_summary(db: Session,
             AND prj.aktif = 'Yes'
             AND prj.keterangan3 = 1
         WHERE 1=1
+        AND l.duration = 1
+        AND l.loan_id != 35
         """
         
         # Build parameters dict for filters
@@ -2168,14 +2134,6 @@ def get_loan_purpose_summary(db: Session,
         ORDER BY total_amount DESC
         """
         
-        print(f"🔍 Executing loan purpose summary query with filters:")
-        print(f"   id_karyawan: {id_karyawan_filter}")
-        print(f"   employer: {employer_filter}")
-        print(f"   sourced_to: {sourced_to_filter}")
-        print(f"   project: {project_filter}")
-        print(f"   loan_status: {loan_status_filter}")
-        print(f"   month: {month_filter}")
-        print(f"   year: {year_filter}")
         
         # Execute the query
         result = db.execute(text(purpose_query), params)
@@ -2191,16 +2149,9 @@ def get_loan_purpose_summary(db: Session,
                 "total_amount": record[3] if record[3] is not None else 0
             })
         
-        print(f"📊 Loan purpose summary:")
-        print(f"   Found {len(purpose_list)} unique purposes")
-        for item in purpose_list[:5]:  # Show first 5 for logging
-            print(f"   {item['purpose_name']}: {item['total_count']} loans, {item['total_amount']} total")
-        
         return purpose_list
         
     except Exception as e:
-        print(f"❌ Error in loan purpose summary query: {e}")
-        print(f"   Error type: {type(e).__name__}")
         import traceback
         traceback.print_exc()
         return []
