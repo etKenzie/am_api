@@ -84,6 +84,8 @@ class MonthlyUserCoverageData(BaseModel):
     total_eligible_employees: int
     total_kasbon_requests: int
     total_first_borrow: int
+    total_approved_requests: int
+    total_disbursed_amount: int
     penetration_rate: float
 
     class Config:
@@ -245,11 +247,13 @@ class KaryawanOverdueResponse(BaseModel):
     """Response model for karyawan with overdue loans"""
     id_karyawan: Optional[int] = None
     name: Optional[str] = None
+    ktp: Optional[str] = None
     company: Optional[str] = None
     sourced_to: Optional[str] = None
     project: Optional[str] = None
     rec_status: Optional[str] = None
     total_amount_owed: int
+    repayment_date: Optional[str] = None
 
     class Config:
         from_attributes = True
@@ -280,6 +284,88 @@ class LoanPurposeSummaryListResponse(BaseModel):
     status: str
     count: int
     results: List[LoanPurposeSummaryResponse]
+    message: Optional[str] = None
+
+    class Config:
+        from_attributes = True 
+
+
+class RepaymentRiskResponse(BaseModel):
+    """Response model for repayment risk summary data"""
+    status: str
+    total_expected_repayment: int
+    total_kasbon_principal_collected: int
+    total_admin_fee_collected: int
+    total_unrecovered_repayment: int
+    total_unrecovered_kasbon_principal: int
+    total_unrecovered_admin_fee: int
+    repayment_recovery_rate: float
+    delinquencies_rate: float
+    admin_fee_profit: int
+    message: Optional[str] = None
+
+    class Config:
+        from_attributes = True 
+
+
+class MonthlyRepaymentRiskData(BaseModel):
+    """Monthly data for repayment risk summary"""
+    repayment_recovery_rate: float
+    total_expected_repayment: int
+    total_kasbon_principal_collected: int
+    total_unrecovered_repayment: int
+    admin_fee_profit: int
+
+    class Config:
+        from_attributes = True
+
+
+class RepaymentRiskMonthlyResponse(BaseModel):
+    """Response model for monthly repayment risk summary data"""
+    status: str
+    monthly_data: dict[str, MonthlyRepaymentRiskData]
+    message: Optional[str] = None
+
+    class Config:
+        from_attributes = True 
+
+
+class CoverageUtilizationResponse(BaseModel):
+    """Response model for coverage utilization summary data"""
+    status: str
+    total_eligible_employees: int
+    total_loan_requests: int
+    penetration_rate: float
+    total_approved_requests: int
+    total_rejected_requests: int
+    approval_rate: float
+    total_new_borrowers: int
+    average_approval_time: float
+    total_disbursed_amount: int
+    average_disbursed_amount: float
+    message: Optional[str] = None
+
+    class Config:
+        from_attributes = True 
+
+
+class MonthlyCoverageUtilizationData(BaseModel):
+    """Monthly data for coverage utilization summary"""
+    total_first_borrow: int
+    total_loan_requests: int
+    total_approved_requests: int
+    total_rejected_requests: int
+    penetration_rate: float
+    total_disbursed_amount: int
+
+    class Config:
+        from_attributes = True
+
+
+class CoverageUtilizationMonthlyResponse(BaseModel):
+    """Response model for monthly coverage utilization summary data"""
+    status: str
+    monthly_data: dict[str, MonthlyCoverageUtilizationData]
     message: Optional[str] = None
 
     class Config:

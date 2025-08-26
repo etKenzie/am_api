@@ -764,3 +764,231 @@ async def get_karyawan_overdue(
             "count": 0,
             "results": []
         }
+
+
+@router.get("/repayment-risk", response_model=schemas.RepaymentRiskResponse)
+async def get_repayment_risk(
+    month: int = None,
+    year: int = None,
+    employer: str = None, 
+    sourced_to: str = None, 
+    project: str = None,
+    loan_status: int = None,
+    id_karyawan: int = None,
+    db: Session = Depends(get_db)
+):
+    """Get repayment risk summary with various repayment and risk metrics"""
+    print(f"🌐 API endpoint /kasbon/repayment-risk called")
+    print(f"🔍 Filters: employer={employer}, sourced_to={sourced_to}, project={project}, loan_status={loan_status}, id_karyawan={id_karyawan}, month={month}, year={year}")
+    
+    try:
+        print(f"🔍 About to call crud.get_repayment_risk_summary...")
+        repayment_risk_summary = crud.get_repayment_risk_summary(
+            db, 
+            employer_filter=employer,
+            sourced_to_filter=sourced_to,
+            project_filter=project,
+            loan_status_filter=loan_status,
+            id_karyawan_filter=id_karyawan,
+            month_filter=month,
+            year_filter=year
+        )
+        
+        print(f"📊 Returning repayment risk summary to client")
+        
+        # Return structured response
+        return {
+            "status": "success",
+            "total_expected_repayment": repayment_risk_summary["total_expected_repayment"],
+            "total_kasbon_principal_collected": repayment_risk_summary["total_kasbon_principal_collected"],
+            "total_admin_fee_collected": repayment_risk_summary["total_admin_fee_collected"],
+            "total_unrecovered_repayment": repayment_risk_summary["total_unrecovered_repayment"],
+            "total_unrecovered_kasbon_principal": repayment_risk_summary["total_unrecovered_kasbon_principal"],
+            "total_unrecovered_admin_fee": repayment_risk_summary["total_unrecovered_admin_fee"],
+            "repayment_recovery_rate": repayment_risk_summary["repayment_recovery_rate"],
+            "delinquencies_rate": repayment_risk_summary["delinquencies_rate"],
+            "admin_fee_profit": repayment_risk_summary["admin_fee_profit"]
+        }
+    except Exception as e:
+        print(f"❌ Error in repayment risk endpoint: {e}")
+        print(f"   Error type: {type(e).__name__}")
+        # Return error response with status
+        return {
+            "status": "error",
+            "message": str(e),
+            "total_expected_repayment": 0,
+            "total_kasbon_principal_collected": 0,
+            "total_admin_fee_collected": 0,
+            "total_unrecovered_repayment": 0,
+            "total_unrecovered_kasbon_principal": 0,
+            "total_unrecovered_admin_fee": 0,
+            "repayment_recovery_rate": 0,
+            "delinquencies_rate": 0,
+            "admin_fee_profit": 0
+        }
+
+
+@router.get("/repayment-risk-monthly", response_model=schemas.RepaymentRiskMonthlyResponse)
+async def get_repayment_risk_monthly(
+    start_date: str,
+    end_date: str,
+    employer: str = None, 
+    sourced_to: str = None, 
+    project: str = None,
+    loan_status: int = None,
+    id_karyawan: int = None,
+    db: Session = Depends(get_db)
+):
+    """Get repayment risk summary separated by months within a date range
+    
+    Required parameters:
+    - start_date: Start date in YYYY-MM-DD format (e.g., "2024-01-01")
+    - end_date: End date in YYYY-MM-DD format (e.g., "2024-12-31")
+    """
+    print(f"🌐 API endpoint /kasbon/repayment-risk-monthly called")
+    print(f"🔍 Filters: employer={employer}, sourced_to={sourced_to}, project={project}, loan_status={loan_status}, id_karyawan={id_karyawan}, start_date={start_date}, end_date={end_date}")
+    
+    try:
+        print(f"🔍 About to call crud.get_repayment_risk_monthly_summary...")
+        monthly_repayment_risk_summary = crud.get_repayment_risk_monthly_summary(
+            db, 
+            employer_filter=employer,
+            sourced_to_filter=sourced_to,
+            project_filter=project,
+            loan_status_filter=loan_status,
+            id_karyawan_filter=id_karyawan,
+            start_date=start_date,
+            end_date=end_date
+        )
+        
+        print(f"📊 Returning monthly repayment risk summary to client")
+        
+        # Return structured response
+        return {
+            "status": "success",
+            "monthly_data": monthly_repayment_risk_summary
+        }
+    except Exception as e:
+        print(f"❌ Error in monthly repayment risk endpoint: {e}")
+        print(f"   Error type: {type(e).__name__}")
+        # Return error response with status
+        return {
+            "status": "error",
+            "message": str(e),
+            "monthly_data": {}
+        }
+
+
+@router.get("/coverage-utilization", response_model=schemas.CoverageUtilizationResponse)
+async def get_coverage_utilization(
+    month: int = None,
+    year: int = None,
+    employer: str = None, 
+    sourced_to: str = None, 
+    project: str = None,
+    loan_status: int = None,
+    id_karyawan: int = None,
+    db: Session = Depends(get_db)
+):
+    """Get comprehensive coverage and utilization summary combining multiple metrics"""
+    print(f"🌐 API endpoint /kasbon/coverage-utilization called")
+    print(f"🔍 Filters: employer={employer}, sourced_to={sourced_to}, project={project}, loan_status={loan_status}, id_karyawan={id_karyawan}, month={month}, year={year}")
+    
+    try:
+        print(f"🔍 About to call crud.get_coverage_utilization_summary...")
+        coverage_utilization_summary = crud.get_coverage_utilization_summary(
+            db, 
+            employer_filter=employer,
+            sourced_to_filter=sourced_to,
+            project_filter=project,
+            loan_status_filter=loan_status,
+            id_karyawan_filter=id_karyawan,
+            month_filter=month,
+            year_filter=year
+        )
+        
+        print(f"📊 Returning coverage utilization summary to client")
+        
+        # Return structured response
+        return {
+            "status": "success",
+            "total_eligible_employees": coverage_utilization_summary["total_eligible_employees"],
+            "total_loan_requests": coverage_utilization_summary["total_loan_requests"],
+            "penetration_rate": coverage_utilization_summary["penetration_rate"],
+            "total_approved_requests": coverage_utilization_summary["total_approved_requests"],
+            "total_rejected_requests": coverage_utilization_summary["total_rejected_requests"],
+            "approval_rate": coverage_utilization_summary["approval_rate"],
+            "total_new_borrowers": coverage_utilization_summary["total_new_borrowers"],
+            "average_approval_time": coverage_utilization_summary["average_approval_time"],
+            "total_disbursed_amount": coverage_utilization_summary["total_disbursed_amount"],
+            "average_disbursed_amount": coverage_utilization_summary["average_disbursed_amount"]
+        }
+    except Exception as e:
+        print(f"❌ Error in coverage utilization endpoint: {e}")
+        print(f"   Error type: {type(e).__name__}")
+        # Return error response with status
+        return {
+            "status": "error",
+            "message": str(e),
+            "total_eligible_employees": 0,
+            "total_loan_requests": 0,
+            "penetration_rate": 0,
+            "total_approved_requests": 0,
+            "total_rejected_requests": 0,
+            "approval_rate": 0,
+            "total_new_borrowers": 0,
+            "average_approval_time": 0,
+            "total_disbursed_amount": 0,
+            "average_disbursed_amount": 0
+        }
+
+
+@router.get("/coverage-utilization-monthly", response_model=schemas.CoverageUtilizationMonthlyResponse)
+async def get_coverage_utilization_monthly(
+    start_date: str,
+    end_date: str,
+    employer: str = None, 
+    sourced_to: str = None, 
+    project: str = None,
+    loan_status: int = None,
+    id_karyawan: int = None,
+    db: Session = Depends(get_db)
+):
+    """Get coverage utilization summary separated by months within a date range
+    
+    Required parameters:
+    - start_date: Start date in YYYY-MM-DD format (e.g., "2024-01-01")
+    - end_date: End date in YYYY-MM-DD format (e.g., "2024-12-31")
+    """
+    print(f"🌐 API endpoint /kasbon/coverage-utilization-monthly called")
+    print(f"🔍 Filters: employer={employer}, sourced_to={sourced_to}, project={project}, loan_status={loan_status}, id_karyawan={id_karyawan}, start_date={start_date}, end_date={end_date}")
+    
+    try:
+        print(f"🔍 About to call crud.get_coverage_utilization_monthly_summary...")
+        monthly_coverage_utilization_summary = crud.get_coverage_utilization_monthly_summary(
+            db, 
+            employer_filter=employer,
+            sourced_to_filter=sourced_to,
+            project_filter=project,
+            loan_status_filter=loan_status,
+            id_karyawan_filter=id_karyawan,
+            start_date=start_date,
+            end_date=end_date
+        )
+        
+        print(f"📊 Returning monthly coverage utilization summary to client")
+        
+        # Return structured response
+        return {
+            "status": "success",
+            "monthly_data": monthly_coverage_utilization_summary
+        }
+    except Exception as e:
+        print(f"❌ Error in monthly coverage utilization endpoint: {e}")
+        print(f"   Error type: {type(e).__name__}")
+        # Return error response with status
+        return {
+            "status": "error",
+            "message": str(e),
+            "monthly_data": {}
+        }
