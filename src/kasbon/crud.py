@@ -1376,81 +1376,57 @@ def get_available_filter_values(db: Session, employer_filter: str = None, placem
     """Get available filter values from tbl_gmc table for different categories with cascading filters"""
     
     try:
-        # Get employers (sub_client) - always show all
+        # Get employers (sub_client) - restricted to only PT Valdo Sumber Daya Mandiri and PT Valdo International
         employer_query = """
         SELECT DISTINCT keterangan 
         FROM tbl_gmc 
         WHERE group_gmc = 'sub_client' 
         AND aktif = 'Yes' 
         AND keterangan3 = 1
+        AND keterangan IN ('PT Valdo Sumber Daya Mandiri', 'PT Valdo International')
         ORDER BY keterangan
         """
         
-        # Get placement clients - filtered by employer if provided
+        # Get placement clients - filtered by employer if provided, but only show those related to the two allowed companies
         placement_query = """
         SELECT DISTINCT src.keterangan 
         FROM tbl_gmc src
+        INNER JOIN td_karyawan tk ON src.kode_gmc = tk.placement
+        INNER JOIN tbl_gmc emp ON tk.valdo_inc = emp.kode_gmc
+        WHERE emp.keterangan IN ('PT Valdo Sumber Daya Mandiri', 'PT Valdo International')
+        AND emp.group_gmc = 'sub_client'
+        AND emp.aktif = 'Yes'
+        AND emp.keterangan3 = 1
+        AND src.group_gmc = 'placement_client'
+        AND src.aktif = 'Yes'
+        AND src.keterangan3 = 1
         """
         
         if employer_filter:
-            placement_query += """
-            INNER JOIN td_karyawan tk ON src.kode_gmc = tk.placement
-            INNER JOIN tbl_gmc emp ON tk.valdo_inc = emp.kode_gmc
-            WHERE emp.keterangan = :employer
-            AND emp.group_gmc = 'sub_client'
-            AND emp.aktif = 'Yes'
-            AND emp.keterangan3 = 1
-            AND src.group_gmc = 'placement_client'
-            AND src.aktif = 'Yes'
-            AND src.keterangan3 = 1
-            """
-        else:
-            placement_query += """
-            WHERE src.group_gmc = 'placement_client' 
-            AND src.aktif = 'Yes' 
-            AND src.keterangan3 = 1
-            """
+            placement_query += " AND emp.keterangan = :employer"
         
         placement_query += " ORDER BY src.keterangan"
         
-        # Get projects - filtered by employer and/or placement if provided
+        # Get projects - filtered by employer and/or placement if provided, but only show those related to the two allowed companies
         project_query = """
         SELECT DISTINCT prj.keterangan 
         FROM tbl_gmc prj
+        INNER JOIN td_karyawan tk ON prj.kode_gmc = tk.project
+        INNER JOIN tbl_gmc emp ON tk.valdo_inc = emp.kode_gmc
+        WHERE emp.keterangan IN ('PT Valdo Sumber Daya Mandiri', 'PT Valdo International')
+        AND emp.group_gmc = 'sub_client'
+        AND emp.aktif = 'Yes'
+        AND emp.keterangan3 = 1
+        AND prj.group_gmc = 'client_project'
+        AND prj.aktif = 'Yes'
+        AND prj.keterangan3 = 1
         """
         
-        if employer_filter or placement_filter:
-            project_query += """
-            INNER JOIN td_karyawan tk ON prj.kode_gmc = tk.project
-            """
+        if employer_filter:
+            project_query += " AND emp.keterangan = :employer"
             
-            if employer_filter:
-                project_query += """
-                INNER JOIN tbl_gmc emp ON tk.valdo_inc = emp.kode_gmc
-                """
-            
-            if placement_filter:
-                project_query += """
-                INNER JOIN tbl_gmc src ON tk.placement = src.kode_gmc
-                """
-            
-            project_query += " WHERE "
-            conditions = []
-            
-            if employer_filter:
-                conditions.append("emp.keterangan = :employer AND emp.group_gmc = 'sub_client' AND emp.aktif = 'Yes' AND emp.keterangan3 = 1")
-            
-            if placement_filter:
-                conditions.append("src.keterangan = :placement AND src.group_gmc = 'placement_client' AND src.aktif = 'Yes' AND src.keterangan3 = 1")
-            
-            project_query += " AND ".join(conditions)
-            project_query += " AND prj.group_gmc = 'client_project' AND prj.aktif = 'Yes' AND prj.keterangan3 = 1"
-        else:
-            project_query += """
-            WHERE prj.group_gmc = 'client_project' 
-            AND prj.aktif = 'Yes' 
-            AND prj.keterangan3 = 1
-            """
+        if placement_filter:
+            project_query += " AND EXISTS (SELECT 1 FROM tbl_gmc src INNER JOIN td_karyawan tk2 ON src.kode_gmc = tk2.placement WHERE tk2.id_karyawan = tk.id_karyawan AND src.keterangan = :placement AND src.group_gmc = 'placement_client' AND src.aktif = 'Yes' AND src.keterangan3 = 1)"
         
         project_query += " ORDER BY prj.keterangan"
         
@@ -2228,7 +2204,11 @@ def get_repayment_risk_summary(db: Session,
             risk_query += " AND l.id_karyawan = :id_karyawan"
             params['id_karyawan'] = id_karyawan_filter
             
-        if employer_filter:
+        # Restrict to only PT Valdo Sumber Daya Mandiri and PT Valdo International
+        risk_query += " AND emp.keterangan IN ('PT Valdo Sumber Daya Mandiri', 'PT Valdo International')"
+        
+        # If employer_filter is provided and it's one of the allowed companies, filter further
+        if employer_filter and employer_filter in ['PT Valdo Sumber Daya Mandiri', 'PT Valdo International']:
             risk_query += " AND emp.keterangan = :employer"
             params['employer'] = employer_filter
             
@@ -2351,7 +2331,11 @@ def get_repayment_risk_monthly_summary(db: Session,
             risk_query += " AND l.id_karyawan = :id_karyawan"
             params['id_karyawan'] = id_karyawan_filter
             
-        if employer_filter:
+        # Restrict to only PT Valdo Sumber Daya Mandiri and PT Valdo International
+        risk_query += " AND emp.keterangan IN ('PT Valdo Sumber Daya Mandiri', 'PT Valdo International')"
+        
+        # If employer_filter is provided and it's one of the allowed companies, filter further
+        if employer_filter and employer_filter in ['PT Valdo Sumber Daya Mandiri', 'PT Valdo International']:
             risk_query += " AND emp.keterangan = :employer"
             params['employer'] = employer_filter
             
@@ -2671,7 +2655,18 @@ def get_coverage_utilization_summary(db: Session,
             first_borrow_query += " AND l.id_karyawan = :id_karyawan"
             params['id_karyawan'] = id_karyawan_filter
             
-        if employer_filter:
+        # Restrict to only PT Valdo Sumber Daya Mandiri and PT Valdo International
+        eligible_count_query += " AND emp.keterangan IN ('PT Valdo Sumber Daya Mandiri', 'PT Valdo International')"
+        processed_requests_query += " AND emp.keterangan IN ('PT Valdo Sumber Daya Mandiri', 'PT Valdo International')"
+        approved_requests_query += " AND emp.keterangan IN ('PT Valdo Sumber Daya Mandiri', 'PT Valdo International')"
+        rejected_requests_query += " AND emp.keterangan IN ('PT Valdo Sumber Daya Mandiri', 'PT Valdo International')"
+        avg_approval_time_query += " AND emp.keterangan IN ('PT Valdo Sumber Daya Mandiri', 'PT Valdo International')"
+        total_disbursed_amount_query += " AND emp.keterangan IN ('PT Valdo Sumber Daya Mandiri', 'PT Valdo International')"
+        total_loans_query += " AND emp.keterangan IN ('PT Valdo Sumber Daya Mandiri', 'PT Valdo International')"
+        first_borrow_query += " AND emp.keterangan IN ('PT Valdo Sumber Daya Mandiri', 'PT Valdo International')"
+        
+        # If employer_filter is provided and it's one of the allowed companies, filter further
+        if employer_filter and employer_filter in ['PT Valdo Sumber Daya Mandiri', 'PT Valdo International']:
             eligible_count_query += " AND emp.keterangan = :employer"
             processed_requests_query += " AND emp.keterangan = :employer"
             approved_requests_query += " AND emp.keterangan = :employer"
@@ -2996,7 +2991,16 @@ def get_coverage_utilization_monthly_summary(db: Session,
             first_borrow_query += " AND l.id_karyawan = :id_karyawan"
             params['id_karyawan'] = id_karyawan_filter
             
-        if employer_filter:
+        # Restrict to only PT Valdo Sumber Daya Mandiri and PT Valdo International
+        eligible_count_query += " AND emp.keterangan IN ('PT Valdo Sumber Daya Mandiri', 'PT Valdo International')"
+        processed_requests_query += " AND emp.keterangan IN ('PT Valdo Sumber Daya Mandiri', 'PT Valdo International')"
+        approved_requests_query += " AND emp.keterangan IN ('PT Valdo Sumber Daya Mandiri', 'PT Valdo International')"
+        rejected_requests_query += " AND emp.keterangan IN ('PT Valdo Sumber Daya Mandiri', 'PT Valdo International')"
+        total_disbursed_amount_query += " AND emp.keterangan IN ('PT Valdo Sumber Daya Mandiri', 'PT Valdo International')"
+        first_borrow_query += " AND emp.keterangan IN ('PT Valdo Sumber Daya Mandiri', 'PT Valdo International')"
+        
+        # If employer_filter is provided and it's one of the allowed companies, filter further
+        if employer_filter and employer_filter in ['PT Valdo Sumber Daya Mandiri', 'PT Valdo International']:
             eligible_count_query += " AND emp.keterangan = :employer"
             processed_requests_query += " AND emp.keterangan = :employer"
             approved_requests_query += " AND emp.keterangan = :employer"
@@ -3353,6 +3357,7 @@ def get_client_summary(db: Session, month_filter: int = None, year_filter: int =
         WHERE l.duration = 1
         AND l.loan_id != 35
         AND src.keterangan IS NOT NULL
+        AND emp.keterangan IN ('PT Valdo Sumber Daya Mandiri', 'PT Valdo International')
         """
         
         if month_filter is not None:
@@ -3392,6 +3397,7 @@ def get_client_summary(db: Session, month_filter: int = None, year_filter: int =
                 WHERE tk.status = '1' 
                 AND tk.loan_kasbon_eligible = '1'
                 AND src.keterangan = :sourced_to
+                AND emp.keterangan IN ('PT Valdo Sumber Daya Mandiri', 'PT Valdo International')
                 """
                 
                 # Execute the eligible count query for this combination
@@ -3420,6 +3426,7 @@ def get_client_summary(db: Session, month_filter: int = None, year_filter: int =
                     AND prj.keterangan3 = 1
                 WHERE tk.status = '1'
                 AND src.keterangan = :sourced_to
+                AND emp.keterangan IN ('PT Valdo Sumber Daya Mandiri', 'PT Valdo International')
                 """
                 
                 active_result = db.execute(text(active_count_query), eligible_params)
@@ -3472,6 +3479,7 @@ def get_client_summary(db: Session, month_filter: int = None, year_filter: int =
         WHERE l.duration = 1
         AND l.loan_id != 35
         AND src.keterangan IS NOT NULL
+        AND emp.keterangan IN ('PT Valdo Sumber Daya Mandiri', 'PT Valdo International')
         """
         
         # Add month and year filters to the main query (params already defined above)
