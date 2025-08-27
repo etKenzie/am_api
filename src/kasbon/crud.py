@@ -2195,9 +2195,9 @@ def get_repayment_risk_summary(db: Session,
             SUM(CASE WHEN l.loan_status IN (1, 2, 4) THEN l.total_payment ELSE 0 END) as total_expected_repayment,
             SUM(CASE WHEN l.loan_status = 2 THEN l.total_loan ELSE 0 END) as total_kasbon_principal_collected,
             SUM(CASE WHEN l.loan_status = 2 THEN l.admin_fee ELSE 0 END) as total_admin_fee_collected,
-            SUM(CASE WHEN l.loan_status IN (1, 4) THEN l.total_payment ELSE 0 END) as total_unrecovered_repayment,
-            SUM(CASE WHEN l.loan_status IN (1, 4) THEN l.total_loan ELSE 0 END) as total_unrecovered_kasbon_principal,
-            SUM(CASE WHEN l.loan_status IN (1, 4) THEN l.admin_fee ELSE 0 END) as total_unrecovered_admin_fee
+            SUM(CASE WHEN l.loan_status IN (4) THEN l.total_payment ELSE 0 END) as total_unrecovered_repayment,
+            SUM(CASE WHEN l.loan_status IN (4) THEN l.total_loan ELSE 0 END) as total_unrecovered_kasbon_principal,
+            SUM(CASE WHEN l.loan_status IN (4) THEN l.admin_fee ELSE 0 END) as total_unrecovered_admin_fee
         FROM td_loan l
         LEFT JOIN td_karyawan tk
             ON l.id_karyawan = tk.id_karyawan
@@ -2216,7 +2216,8 @@ def get_repayment_risk_summary(db: Session,
             AND prj.group_gmc = 'client_project'
             AND prj.aktif = 'Yes'
             AND prj.keterangan3 = 1
-        WHERE 1=1
+        WHERE l.duration = 1
+        AND l.loan_id != 35
         """
         
         # Build parameters dict for filters
@@ -2338,6 +2339,8 @@ def get_repayment_risk_monthly_summary(db: Session,
             AND prj.aktif = 'Yes'
             AND prj.keterangan3 = 1
         WHERE l.proses_date IS NOT NULL
+        AND l.duration = 1
+        AND l.loan_id != 35
         """
         
         # Build parameters dict for filters
