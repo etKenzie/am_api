@@ -1938,7 +1938,9 @@ def get_karyawan_overdue_summary(db: Session,
             src.keterangan AS sourced_to,
             prj.keterangan AS project,
             SUM(l.total_loan) as total_amount_owed,
-            MAX(l.repayment_date) as repayment_date
+            MAX(l.repayment_date) as repayment_date,
+            SUM(l.admin_fee) as total_admin_fee,
+            SUM(l.total_payment) as total_payment
         FROM td_loan l
         LEFT JOIN td_karyawan tk
             ON l.id_karyawan = tk.id_karyawan
@@ -2042,7 +2044,9 @@ def get_karyawan_overdue_summary(db: Session,
                 "project": record[5],
                 "total_amount_owed": record[6] if record[6] is not None else 0,
                 "repayment_date": str(record[7]) if record[7] else None,
-                "days_overdue": days_overdue
+                "days_overdue": days_overdue,
+                "admin_fee": record[8] if record[8] is not None else 0,
+                "total_payment": record[9] if record[9] is not None else 0
             })
         
 
@@ -2439,6 +2443,28 @@ def get_coverage_utilization_summary(db: Session,
         AND tk.loan_kasbon_eligible = '1'
         """
         
+        # Build the active employees count query (same as eligible but without loan_kasbon_eligible filter)
+        active_count_query = """
+        SELECT COUNT(*)
+        FROM td_karyawan tk
+        LEFT JOIN tbl_gmc emp
+            ON tk.valdo_inc = emp.kode_gmc
+            AND emp.group_gmc = 'sub_client'
+            AND emp.aktif = 'Yes'
+            AND emp.keterangan3 = 1
+        LEFT JOIN tbl_gmc src
+            ON tk.placement = src.kode_gmc
+            AND src.group_gmc = 'placement_client'
+            AND src.aktif = 'Yes'
+            AND src.keterangan3 = 1
+        LEFT JOIN tbl_gmc prj
+            ON tk.project = prj.kode_gmc
+            AND prj.group_gmc = 'client_project'
+            AND prj.aktif = 'Yes'
+            AND prj.keterangan3 = 1
+        WHERE tk.status = '1'
+        """
+        
         # Build the processed kasbon requests query (exactly as in get_user_coverage_summary)
         processed_requests_query = """
         SELECT COUNT(*)
@@ -2646,6 +2672,7 @@ def get_coverage_utilization_summary(db: Session,
         # Add filters to all queries (exactly as in get_user_coverage_summary)
         if id_karyawan_filter:
             eligible_count_query += " AND tk.id_karyawan = :id_karyawan"
+            active_count_query += " AND tk.id_karyawan = :id_karyawan"
             processed_requests_query += " AND l.id_karyawan = :id_karyawan"
             approved_requests_query += " AND l.id_karyawan = :id_karyawan"
             rejected_requests_query += " AND l.id_karyawan = :id_karyawan"
@@ -2657,6 +2684,7 @@ def get_coverage_utilization_summary(db: Session,
             
         # Restrict to only PT Valdo Sumber Daya Mandiri and PT Valdo International
         eligible_count_query += " AND emp.keterangan IN ('PT Valdo Sumber Daya Mandiri', 'PT Valdo International')"
+        active_count_query += " AND emp.keterangan IN ('PT Valdo Sumber Daya Mandiri', 'PT Valdo International')"
         processed_requests_query += " AND emp.keterangan IN ('PT Valdo Sumber Daya Mandiri', 'PT Valdo International')"
         approved_requests_query += " AND emp.keterangan IN ('PT Valdo Sumber Daya Mandiri', 'PT Valdo International')"
         rejected_requests_query += " AND emp.keterangan IN ('PT Valdo Sumber Daya Mandiri', 'PT Valdo International')"
@@ -2668,6 +2696,7 @@ def get_coverage_utilization_summary(db: Session,
         # If employer_filter is provided and it's one of the allowed companies, filter further
         if employer_filter and employer_filter in ['PT Valdo Sumber Daya Mandiri', 'PT Valdo International']:
             eligible_count_query += " AND emp.keterangan = :employer"
+            active_count_query += " AND emp.keterangan = :employer"
             processed_requests_query += " AND emp.keterangan = :employer"
             approved_requests_query += " AND emp.keterangan = :employer"
             rejected_requests_query += " AND emp.keterangan = :employer"
@@ -2679,6 +2708,7 @@ def get_coverage_utilization_summary(db: Session,
             
         if sourced_to_filter:
             eligible_count_query += " AND src.keterangan = :sourced_to"
+            active_count_query += " AND src.keterangan = :sourced_to"
             processed_requests_query += " AND src.keterangan = :sourced_to"
             approved_requests_query += " AND src.keterangan = :sourced_to"
             rejected_requests_query += " AND src.keterangan = :sourced_to"
@@ -2690,6 +2720,7 @@ def get_coverage_utilization_summary(db: Session,
             
         if project_filter:
             eligible_count_query += " AND prj.keterangan = :project"
+            active_count_query += " AND prj.keterangan = :project"
             processed_requests_query += " AND prj.keterangan = :project"
             approved_requests_query += " AND prj.keterangan = :project"
             rejected_requests_query += " AND prj.keterangan = :project"
@@ -2733,6 +2764,12 @@ def get_coverage_utilization_summary(db: Session,
         # Execute all queries (exactly as in get_user_coverage_summary)
         eligible_result = db.execute(text(eligible_count_query), params)
         total_eligible_employees = eligible_result.fetchone()[0] or 0
+        
+        active_result = db.execute(text(active_count_query), params)
+        total_active_employees = active_result.fetchone()[0] or 0
+        
+        # Calculate eligible rate
+        eligible_rate = (total_eligible_employees / total_active_employees) if total_active_employees > 0 else 0.0
         
         processed_result = db.execute(text(processed_requests_query), params)
         total_loan_requests = processed_result.fetchone()[0] or 0
@@ -2780,8 +2817,10 @@ def get_coverage_utilization_summary(db: Session,
         
         return {
             "total_eligible_employees": total_eligible_employees,
+            "total_active_employees": total_active_employees,
             "total_loan_requests": total_loan_requests,
             "penetration_rate": penetration_rate,
+            "eligible_rate": eligible_rate,
             "total_approved_requests": total_approved_requests,
             "total_rejected_requests": total_rejected_requests,
             "approval_rate": approval_rate,
@@ -2796,8 +2835,10 @@ def get_coverage_utilization_summary(db: Session,
         traceback.print_exc()
         return {
             "total_eligible_employees": 0,
+            "total_active_employees": 0,
             "total_loan_requests": 0,
             "penetration_rate": 0,
+            "eligible_rate": 0.0,
             "total_approved_requests": 0,
             "total_rejected_requests": 0,
             "approval_rate": 0,
@@ -3450,6 +3491,7 @@ def get_client_summary(db: Session, month_filter: int = None, year_filter: int =
             SUM(CASE WHEN l.loan_status IN (1, 2, 4) THEN l.total_loan ELSE 0 END) as total_disbursement,
             COUNT(CASE WHEN l.loan_status IN (1, 2, 3, 4) THEN 1 END) as total_requests,
             COUNT(CASE WHEN l.loan_status IN (1, 2, 4) THEN 1 END) as approved_requests,
+            COUNT(CASE WHEN l.loan_status IN (1, 4) THEN 1 END) as delinquent_requests,
             SUM(CASE WHEN l.loan_status = 2 THEN l.admin_fee ELSE 0 END) as total_admin_fee_collected,
             SUM(CASE WHEN l.loan_status IN (1, 4) THEN l.total_payment ELSE 0 END) as total_unrecovered_payment,
             CASE 
@@ -3515,14 +3557,15 @@ def get_client_summary(db: Session, month_filter: int = None, year_filter: int =
                 "total_disbursement": float(record[2]) if record[2] else 0,
                 "total_requests": int(record[3]) if record[3] else 0,
                 "approved_requests": int(record[4]) if record[4] else 0,
+                "delinquent_requests": int(record[5]) if record[5] else 0,
                 "eligible_employees": employee_data["eligible"],
                 "active_employees": employee_data["active"],
                 "eligible_rate": (employee_data["eligible"] / employee_data["active"]) if employee_data["active"] > 0 else 0,
-                "penetration_rate": (int(record[8]) / employee_data["eligible"]) if employee_data["eligible"] > 0 else 0,  # unique_requesting_employees / eligible_employees
-                "total_admin_fee_collected": float(record[5]) if record[5] else 0,
-                "total_unrecovered_payment": float(record[6]) if record[6] else 0,
-                "admin_fee_profit": (float(record[5]) if record[5] else 0) - (float(record[6]) if record[6] else 0),
-                "delinquency_rate": float(record[7]) if record[7] else 0,
+                "penetration_rate": (int(record[9]) / employee_data["eligible"]) if employee_data["eligible"] > 0 else 0,  # unique_requesting_employees / eligible_employees
+                "total_admin_fee_collected": float(record[6]) if record[6] else 0,
+                "total_unrecovered_payment": float(record[7]) if record[7] else 0,
+                "admin_fee_profit": (float(record[6]) if record[6] else 0) - (float(record[7]) if record[7] else 0),
+                "delinquency_rate": float(record[8]) if record[8] else 0,
             })
         
         return client_disbursements

@@ -254,6 +254,8 @@ class KaryawanOverdueResponse(BaseModel):
     total_amount_owed: int
     repayment_date: Optional[str] = None
     days_overdue: int
+    admin_fee: int
+    total_payment: int
 
     class Config:
         from_attributes = True
@@ -334,8 +336,10 @@ class CoverageUtilizationResponse(BaseModel):
     """Response model for coverage utilization summary data"""
     status: str
     total_eligible_employees: int
+    total_active_employees: int
     total_loan_requests: int
     penetration_rate: float
+    eligible_rate: float
     total_approved_requests: int
     total_rejected_requests: int
     approval_rate: float
