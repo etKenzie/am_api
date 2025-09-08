@@ -2,6 +2,10 @@ from sqlalchemy.orm import Session
 from sqlalchemy import text
 from typing import List
 
+# Loan type constants
+KASBON_LOAN_CONDITIONS = "l.duration = 1 AND l.loan_id != 35"
+EXTRADANA_LOAN_CONDITIONS = "l.duration != 1 AND l.disbursement != 4"
+
 
 def get_enhanced_karyawan(db: Session, limit: int = 1000000, 
                           employer_filter: str = None, sourced_to_filter: str = None, 
@@ -142,9 +146,8 @@ def get_user_coverage_summary(db: Session,
             AND prj.aktif = 'Yes'
             AND prj.keterangan3 = 1
         WHERE l.loan_status IN (1, 2, 3, 4)
-        AND l.duration = 1
-        AND l.loan_id != 35
-        """
+        AND {loan_conditions}
+        """.format(loan_conditions=loan_conditions)
         
         # Build the pending kasbon requests query
         pending_requests_query = """
@@ -168,9 +171,8 @@ def get_user_coverage_summary(db: Session,
             AND prj.aktif = 'Yes'
             AND prj.keterangan3 = 1
         WHERE l.loan_status = 0
-        AND l.duration = 1
-        AND l.loan_id != 35
-        """
+        AND {loan_conditions}
+        """.format(loan_conditions=loan_conditions)
         
         # Build the first-time borrowers query
         first_borrow_query = """
@@ -200,12 +202,10 @@ def get_user_coverage_summary(db: Session,
             WHERE l2.id_karyawan = l.id_karyawan 
             AND l2.loan_status = 2 
             AND l2.proses_date < l.proses_date
-            AND l2.duration = 1
-            AND l2.loan_id != 35
+            AND {loan_conditions}
         )
-        AND l.duration = 1
-        AND l.loan_id != 35
-        """
+        AND {loan_conditions}
+        """.format(loan_conditions=loan_conditions)
         
         # Build the approved requests query
         approved_requests_query = """
@@ -229,9 +229,8 @@ def get_user_coverage_summary(db: Session,
             AND prj.aktif = 'Yes'
             AND prj.keterangan3 = 1
         WHERE l.loan_status IN (1, 2, 4)
-        AND l.duration = 1
-        AND l.loan_id != 35
-        """
+        AND {loan_conditions}
+        """.format(loan_conditions=loan_conditions)
         
         # Build the rejected requests query
         rejected_requests_query = """
@@ -255,9 +254,8 @@ def get_user_coverage_summary(db: Session,
             AND prj.aktif = 'Yes'
             AND prj.keterangan3 = 1
         WHERE l.loan_status = 3
-        AND l.duration = 1
-        AND l.loan_id != 35
-        """
+        AND {loan_conditions}
+        """.format(loan_conditions=loan_conditions)
         
         # Build the average approval time query
         avg_approval_time_query = """
@@ -283,9 +281,8 @@ def get_user_coverage_summary(db: Session,
         WHERE l.loan_status = 1
         AND l.proses_date IS NOT NULL
         AND l.received_date IS NOT NULL
-        AND l.duration = 1
-        AND l.loan_id != 35
-        """
+        AND {loan_conditions}
+        """.format(loan_conditions=loan_conditions)
         
         # Build the total disbursed amount query
         total_disbursed_amount_query = """
@@ -309,9 +306,8 @@ def get_user_coverage_summary(db: Session,
             AND prj.aktif = 'Yes'
             AND prj.keterangan3 = 1
         WHERE l.loan_status IN (1, 2, 4)
-        AND l.duration = 1
-        AND l.loan_id != 35
-        """
+        AND {loan_conditions}
+        """.format(loan_conditions=loan_conditions)
         
         # Build the total loans query (for average calculation - count all loans, not unique borrowers)
         total_loans_query = """
@@ -335,9 +331,8 @@ def get_user_coverage_summary(db: Session,
             AND prj.aktif = 'Yes'
             AND prj.keterangan3 = 1
         WHERE l.loan_status IN (1, 2, 4)
-        AND l.duration = 1
-        AND l.loan_id != 35
-        """
+        AND {loan_conditions}
+        """.format(loan_conditions=loan_conditions)
         
         # Build parameters dict for filters
         params = {}
@@ -541,9 +536,8 @@ def get_user_coverage_endpoint(db: Session,
             AND prj.aktif = 'Yes'
             AND prj.keterangan3 = 1
         WHERE l.loan_status IN (1, 2, 3, 4)
-        AND l.duration = 1
-        AND l.loan_id != 35
-        """
+        AND {loan_conditions}
+        """.format(loan_conditions=loan_conditions)
         
         # Build the first-time borrowers query
         first_borrow_query = """
@@ -573,12 +567,10 @@ def get_user_coverage_endpoint(db: Session,
             WHERE l2.id_karyawan = l.id_karyawan 
             AND l2.loan_status = 2 
             AND l2.proses_date < l.proses_date
-            AND l2.duration = 1
-            AND l2.loan_id != 35
+            AND {loan_conditions}
         )
-        AND l.duration = 1
-        AND l.loan_id != 35
-        """
+        AND {loan_conditions}
+        """.format(loan_conditions=loan_conditions)
         
         # Build parameters dict for filters
         params = {}
@@ -677,9 +669,8 @@ def get_requests_endpoint(db: Session,
             AND prj.aktif = 'Yes'
             AND prj.keterangan3 = 1
         WHERE l.loan_status IN (1, 2, 4)
-        AND l.duration = 1
-        AND l.loan_id != 35
-        """
+        AND {loan_conditions}
+        """.format(loan_conditions=loan_conditions)
         
         # Build the rejected requests query
         rejected_requests_query = """
@@ -703,9 +694,8 @@ def get_requests_endpoint(db: Session,
             AND prj.aktif = 'Yes'
             AND prj.keterangan3 = 1
         WHERE l.loan_status = 3
-        AND l.duration = 1
-        AND l.loan_id != 35
-        """
+        AND {loan_conditions}
+        """.format(loan_conditions=loan_conditions)
         
         # Build the total processed requests query (for approval rate calculation)
         total_processed_query = """
@@ -729,9 +719,8 @@ def get_requests_endpoint(db: Session,
             AND prj.aktif = 'Yes'
             AND prj.keterangan3 = 1
         WHERE l.loan_status IN (1, 2, 3, 4)
-        AND l.duration = 1
-        AND l.loan_id != 35
-        """
+        AND {loan_conditions}
+        """.format(loan_conditions=loan_conditions)
         
         # Build the average approval time query
         avg_approval_time_query = """
@@ -765,9 +754,8 @@ def get_requests_endpoint(db: Session,
             AND prj.aktif = 'Yes'
             AND prj.keterangan3 = 1
         WHERE l.loan_status = 1
-        AND l.duration = 1
-        AND l.loan_id != 35
-        """
+        AND {loan_conditions}
+        """.format(loan_conditions=loan_conditions)
         
         # Build parameters dict for filters
         params = {}
@@ -878,9 +866,8 @@ def get_disbursement_endpoint(db: Session,
             AND prj.aktif = 'Yes'
             AND prj.keterangan3 = 1
         WHERE l.loan_status IN (1, 2, 4)
-        AND l.duration = 1
-        AND l.loan_id != 35
-        """
+        AND {loan_conditions}
+        """.format(loan_conditions=loan_conditions)
         
         # Build the total loan count query (for average calculation - count all loans, not unique borrowers)
         total_loans_query = """
@@ -904,9 +891,8 @@ def get_disbursement_endpoint(db: Session,
             AND prj.aktif = 'Yes'
             AND prj.keterangan3 = 1
         WHERE l.loan_status IN (1, 2, 4)
-        AND l.duration = 1
-        AND l.loan_id != 35
-        """
+        AND {loan_conditions}
+        """.format(loan_conditions=loan_conditions)
         
         # Build parameters dict for filters
         params = {}
@@ -1051,9 +1037,8 @@ def get_user_coverage_monthly_endpoint(db: Session, start_date: str, end_date: s
             AND prj.keterangan3 = 1
         WHERE l.proses_date IS NOT NULL
         AND l.proses_date BETWEEN :start_date AND :end_date
-        AND l.duration = 1
-        AND l.loan_id != 35
-        """
+        AND {loan_conditions}
+        """.format(loan_conditions=loan_conditions)
         
         # Build parameters dict for monthly query
         monthly_params = {
@@ -1154,9 +1139,8 @@ def get_disbursement_monthly_endpoint(db: Session, start_date: str, end_date: st
             AND prj.keterangan3 = 1
         WHERE l.proses_date IS NOT NULL
         AND l.proses_date BETWEEN :start_date AND :end_date
-        AND l.duration = 1
-        AND l.loan_id != 35
-        """
+        AND {loan_conditions}
+        """.format(loan_conditions=loan_conditions)
         
         # Build parameters dict for monthly query
         monthly_params = {
@@ -1298,9 +1282,8 @@ def get_loans_with_karyawan(db: Session, limit: int = 1000000,
             AND prj.aktif = 'Yes'
             AND prj.keterangan3 = 1
         WHERE 1=1
-        AND l.duration = 1
-        AND l.loan_id != 35
-        """
+        AND {loan_conditions}
+        """.format(loan_conditions=loan_conditions)
         
         # Build parameters dict for filters
         params = {}
@@ -1372,7 +1355,7 @@ def get_loans_with_karyawan(db: Session, limit: int = 1000000,
         return []
 
 
-def get_available_filter_values(db: Session, employer_filter: str = None, placement_filter: str = None) -> dict:
+def get_available_filter_values(db: Session, employer_filter: str = None, placement_filter: str = None, loan_type: str = "kasbon") -> dict:
     """Get available filter values from tbl_gmc table for different categories with cascading filters"""
     
     try:
@@ -1499,9 +1482,8 @@ def get_loan_fees_summary(db: Session,
             AND prj.aktif = 'Yes'
             AND prj.keterangan3 = 1
         WHERE 1=1
-        AND l.duration = 1
-        AND l.loan_id != 35
-        """
+        AND {loan_conditions}
+        """.format(loan_conditions=loan_conditions)
         
         # Build parameters dict for filters
         params = {}
@@ -1610,9 +1592,8 @@ def get_loan_fees_monthly_summary(db: Session,
             AND prj.aktif = 'Yes'
             AND prj.keterangan3 = 1
         WHERE l.proses_date IS NOT NULL
-        AND l.duration = 1
-        AND l.loan_id != 35
-        """
+        AND {loan_conditions}
+        """.format(loan_conditions=loan_conditions)
         
         # Build parameters dict for filters
         params = {}
@@ -1727,9 +1708,8 @@ def get_loan_risk_summary(db: Session,
             AND prj.aktif = 'Yes'
             AND prj.keterangan3 = 1
         WHERE 1=1
-        AND l.duration = 1
-        AND l.loan_id != 35
-        """
+        AND {loan_conditions}
+        """.format(loan_conditions=loan_conditions)
         
         # Build parameters dict for filters
         params = {}
@@ -1835,9 +1815,8 @@ def get_loan_risk_monthly_summary(db: Session,
             AND prj.aktif = 'Yes'
             AND prj.keterangan3 = 1
         WHERE l.proses_date IS NOT NULL
-        AND l.duration = 1
-        AND l.loan_id != 35
-        """
+        AND {loan_conditions}
+        """.format(loan_conditions=loan_conditions)
         
         # Build parameters dict for filters
         params = {}
@@ -1924,10 +1903,18 @@ def get_karyawan_overdue_summary(db: Session,
                                  employer_filter: str = None, sourced_to_filter: str = None, 
                                  project_filter: str = None, loan_status_filter: int = None,
                                  id_karyawan_filter: int = None, month_filter: int = None,
-                                 year_filter: int = None) -> List[dict]:
+                                 year_filter: int = None, loan_type: str = "kasbon") -> List[dict]:
     """Get karyawan data for those with overdue loans (status 4)"""
     
     try:
+        # Determine loan conditions based on loan type
+        if loan_type == "kasbon":
+            loan_conditions = KASBON_LOAN_CONDITIONS
+        elif loan_type == "extradana":
+            loan_conditions = EXTRADANA_LOAN_CONDITIONS
+        else:
+            loan_conditions = KASBON_LOAN_CONDITIONS  # default to kasbon
+        
         # Build the query to get karyawan with overdue loans
         overdue_query = """
         SELECT DISTINCT
@@ -1961,9 +1948,8 @@ def get_karyawan_overdue_summary(db: Session,
             AND prj.keterangan3 = 1
         WHERE l.loan_status = 4
         AND l.id_karyawan IS NOT NULL
-        AND l.duration = 1
-        AND l.loan_id != 35
-        """
+        AND {loan_conditions}
+        """.format(loan_conditions=loan_conditions).format(loan_conditions=loan_conditions)
         
         # Build parameters dict for filters
         params = {}
@@ -2063,10 +2049,19 @@ def get_loan_purpose_summary(db: Session,
                             employer_filter: str = None, sourced_to_filter: str = None, 
                             project_filter: str = None, loan_status_filter: int = None,
                             id_karyawan_filter: int = None, month_filter: int = None, 
-                            year_filter: int = None) -> List[dict]:
+                            year_filter: int = None, loan_type: str = "kasbon") -> List[dict]:
     """Get loan summary grouped by purpose with filters"""
     
+
     try:
+        # Determine loan conditions based on loan type
+        if loan_type == "kasbon":
+            loan_conditions = KASBON_LOAN_CONDITIONS
+        elif loan_type == "extradana":
+            loan_conditions = EXTRADANA_LOAN_CONDITIONS
+        else:
+            loan_conditions = KASBON_LOAN_CONDITIONS  
+
         # Build the query to analyze loans by purpose
         purpose_query = """
         SELECT
@@ -2095,9 +2090,8 @@ def get_loan_purpose_summary(db: Session,
             AND prj.aktif = 'Yes'
             AND prj.keterangan3 = 1
         WHERE 1=1
-        AND l.duration = 1
-        AND l.loan_id != 35
-        """
+        AND {loan_conditions}
+        """.format(loan_conditions=loan_conditions)
         
         # Build parameters dict for filters
         params = {}
@@ -2165,10 +2159,18 @@ def get_repayment_risk_summary(db: Session,
                                employer_filter: str = None, sourced_to_filter: str = None, 
                                project_filter: str = None, loan_status_filter: int = None,
                                id_karyawan_filter: int = None, month_filter: int = None,
-                               year_filter: int = None) -> dict:
+                               year_filter: int = None, loan_type: str = "kasbon") -> dict:
     """Get repayment risk summary with various repayment and risk metrics"""
     
     try:
+        # Determine loan conditions based on loan type
+        if loan_type == "kasbon":
+            loan_conditions = KASBON_LOAN_CONDITIONS
+        elif loan_type == "extradana":
+            loan_conditions = EXTRADANA_LOAN_CONDITIONS
+        else:
+            loan_conditions = KASBON_LOAN_CONDITIONS  # default to kasbon
+        
         # Build the query to calculate repayment risk metrics
         risk_query = """
         SELECT
@@ -2196,9 +2198,8 @@ def get_repayment_risk_summary(db: Session,
             AND prj.group_gmc = 'client_project'
             AND prj.aktif = 'Yes'
             AND prj.keterangan3 = 1
-        WHERE l.duration = 1
-        AND l.loan_id != 35
-        """
+        WHERE {loan_conditions}
+        """.format(loan_conditions=loan_conditions)
         
         # Build parameters dict for filters
         params = {}
@@ -2292,10 +2293,18 @@ def get_repayment_risk_monthly_summary(db: Session,
                                        employer_filter: str = None, sourced_to_filter: str = None, 
                                        project_filter: str = None, loan_status_filter: int = None,
                                        id_karyawan_filter: int = None, start_date: str = None,
-                                       end_date: str = None) -> dict:
+                                       end_date: str = None, loan_type: str = "kasbon") -> dict:
     """Get repayment risk summary separated by months within a date range"""
     
     try:
+        # Determine loan conditions based on loan type
+        if loan_type == "kasbon":
+            loan_conditions = KASBON_LOAN_CONDITIONS
+        elif loan_type == "extradana":
+            loan_conditions = EXTRADANA_LOAN_CONDITIONS
+        else:
+            loan_conditions = KASBON_LOAN_CONDITIONS  # default to kasbon
+        
         # Build the query to calculate repayment risk metrics by month
         risk_query = """
         SELECT
@@ -2323,9 +2332,8 @@ def get_repayment_risk_monthly_summary(db: Session,
             AND prj.aktif = 'Yes'
             AND prj.keterangan3 = 1
         WHERE l.proses_date IS NOT NULL
-        AND l.duration = 1
-        AND l.loan_id != 35
-        """
+        AND {loan_conditions}
+        """.format(loan_conditions=loan_conditions).format(loan_conditions=loan_conditions)
         
         # Build parameters dict for filters
         params = {}
@@ -2416,10 +2424,19 @@ def get_coverage_utilization_summary(db: Session,
                                     employer_filter: str = None, sourced_to_filter: str = None, 
                                     project_filter: str = None, loan_status_filter: int = None,
                                     id_karyawan_filter: int = None, month_filter: int = None,
-                                    year_filter: int = None) -> dict:
+                                    year_filter: int = None, loan_type: str = "kasbon") -> dict:
     """Get comprehensive coverage and utilization summary combining multiple metrics"""
     
     try:
+        # Determine loan conditions based on loan type
+        if loan_type == "kasbon":
+            loan_conditions = KASBON_LOAN_CONDITIONS
+        elif loan_type == "extradana":
+            print("here")
+            loan_conditions = EXTRADANA_LOAN_CONDITIONS
+        else:
+            loan_conditions = KASBON_LOAN_CONDITIONS  # default to kasbon
+        
         # Build the eligible count query (exactly as in get_user_coverage_summary)
         eligible_count_query = """
         SELECT COUNT(*)
@@ -2487,9 +2504,8 @@ def get_coverage_utilization_summary(db: Session,
             AND prj.aktif = 'Yes'
             AND prj.keterangan3 = 1
         WHERE l.loan_status IN (1, 2, 3, 4)
-        AND l.duration = 1
-        AND l.loan_id != 35
-        """
+        AND {loan_conditions}
+        """.format(loan_conditions=loan_conditions)
         
         # Build the approved requests query (exactly as in get_user_coverage_summary)
         approved_requests_query = """
@@ -2513,9 +2529,8 @@ def get_coverage_utilization_summary(db: Session,
             AND prj.aktif = 'Yes'
             AND prj.keterangan3 = 1
         WHERE l.loan_status IN (1, 2, 4)
-        AND l.duration = 1
-        AND l.loan_id != 35
-        """
+        AND {loan_conditions}
+        """.format(loan_conditions=loan_conditions)
         
         # Build the rejected requests query (exactly as in get_user_coverage_summary)
         rejected_requests_query = """
@@ -2539,9 +2554,8 @@ def get_coverage_utilization_summary(db: Session,
             AND prj.aktif = 'Yes'
             AND prj.keterangan3 = 1
         WHERE l.loan_status = 3
-        AND l.duration = 1
-        AND l.loan_id != 35
-        """
+        AND {loan_conditions}
+        """.format(loan_conditions=loan_conditions)
         
         # Build the average approval time query (exactly as in get_user_coverage_summary)
         avg_approval_time_query = """
@@ -2575,9 +2589,8 @@ def get_coverage_utilization_summary(db: Session,
             AND prj.aktif = 'Yes'
             AND prj.keterangan3 = 1
         WHERE l.loan_status IN (1, 2, 4)
-        AND l.duration = 1
-        AND l.loan_id != 35
-        """
+        AND {loan_conditions}
+        """.format(loan_conditions=loan_conditions)
         
         # Build the total disbursed amount query (exactly as in get_user_coverage_summary)
         total_disbursed_amount_query = """
@@ -2601,9 +2614,8 @@ def get_coverage_utilization_summary(db: Session,
             AND prj.aktif = 'Yes'
             AND prj.keterangan3 = 1
         WHERE l.loan_status IN (1, 2, 4)
-        AND l.duration = 1
-        AND l.loan_id != 35
-        """
+        AND {loan_conditions}
+        """.format(loan_conditions=loan_conditions)
         
         # Build the total loans query (exactly as in get_user_coverage_summary)
         total_loans_query = """
@@ -2627,9 +2639,8 @@ def get_coverage_utilization_summary(db: Session,
             AND prj.aktif = 'Yes'
             AND prj.keterangan3 = 1
         WHERE l.loan_status IN (1, 2, 4)
-        AND l.duration = 1
-        AND l.loan_id != 35
-        """
+        AND {loan_conditions}
+        """.format(loan_conditions=loan_conditions)
         
         # Build the first-time borrowers query (using the same logic as get_user_coverage_summary)
         first_borrow_query = """
@@ -2659,12 +2670,10 @@ def get_coverage_utilization_summary(db: Session,
             WHERE l2.id_karyawan = l.id_karyawan 
             AND l2.loan_status = 2 
             AND l2.proses_date < l.proses_date
-            AND l2.duration = 1
-            AND l2.loan_id != 35
+            AND {loan_conditions}
         )
-        AND l.duration = 1
-        AND l.loan_id != 35
-        """
+        AND {loan_conditions}
+        """.format(loan_conditions=loan_conditions)
         
         # Build parameters dict for filters
         params = {}
@@ -2853,10 +2862,18 @@ def get_coverage_utilization_monthly_summary(db: Session,
                                             employer_filter: str = None, sourced_to_filter: str = None, 
                                             project_filter: str = None, loan_status_filter: int = None,
                                             id_karyawan_filter: int = None, start_date: str = None,
-                                            end_date: str = None) -> dict:
+                                            end_date: str = None, loan_type: str = "kasbon") -> dict:
     """Get coverage utilization summary separated by months within a date range"""
     
     try:
+        # Determine loan conditions based on loan type
+        if loan_type == "kasbon":
+            loan_conditions = KASBON_LOAN_CONDITIONS
+        elif loan_type == "extradana":
+            loan_conditions = EXTRADANA_LOAN_CONDITIONS
+        else:
+            loan_conditions = KASBON_LOAN_CONDITIONS  # default to kasbon
+        
         # Build the eligible count query (exactly as in get_user_coverage_summary)
         eligible_count_query = """
         SELECT COUNT(*)
@@ -2902,9 +2919,8 @@ def get_coverage_utilization_monthly_summary(db: Session,
             AND prj.aktif = 'Yes'
             AND prj.keterangan3 = 1
         WHERE l.loan_status IN (1, 2, 3, 4)
-        AND l.duration = 1
-        AND l.loan_id != 35
-        """
+        AND {loan_conditions}
+        """.format(loan_conditions=loan_conditions)
         
         # Build the approved requests query (exactly as in get_user_coverage_summary)
         approved_requests_query = """
@@ -2928,9 +2944,8 @@ def get_coverage_utilization_monthly_summary(db: Session,
             AND prj.aktif = 'Yes'
             AND prj.keterangan3 = 1
         WHERE l.loan_status IN (1, 2, 4)
-        AND l.duration = 1
-        AND l.loan_id != 35
-        """
+        AND {loan_conditions}
+        """.format(loan_conditions=loan_conditions)
         
         # Build the rejected requests query (exactly as in get_user_coverage_summary)
         rejected_requests_query = """
@@ -2954,9 +2969,8 @@ def get_coverage_utilization_monthly_summary(db: Session,
             AND prj.aktif = 'Yes'
             AND prj.keterangan3 = 1
         WHERE l.loan_status = 3
-        AND l.duration = 1
-        AND l.loan_id != 35
-        """
+        AND {loan_conditions}
+        """.format(loan_conditions=loan_conditions)
         
         # Build the total disbursed amount query (exactly as in get_user_coverage_summary)
         total_disbursed_amount_query = """
@@ -2980,9 +2994,8 @@ def get_coverage_utilization_monthly_summary(db: Session,
             AND prj.aktif = 'Yes'
             AND prj.keterangan3 = 1
         WHERE l.loan_status IN (1, 2, 4)
-        AND l.duration = 1
-        AND l.loan_id != 35
-        """
+        AND {loan_conditions}
+        """.format(loan_conditions=loan_conditions)
         
         # Build the first-time borrowers query (exactly as in get_user_coverage_summary)
         first_borrow_query = """
@@ -3012,12 +3025,10 @@ def get_coverage_utilization_monthly_summary(db: Session,
             WHERE l2.id_karyawan = l.id_karyawan 
             AND l2.loan_status = 2 
             AND l2.proses_date < l.proses_date
-            AND l2.duration = 1
-            AND l2.loan_id != 35
+            AND {loan_conditions}
         )
-        AND l.duration = 1
-        AND l.loan_id != 35
-        """
+        AND {loan_conditions}
+        """.format(loan_conditions=loan_conditions)
         
         # Build parameters dict for filters
         params = {}
@@ -3117,9 +3128,8 @@ def get_coverage_utilization_monthly_summary(db: Session,
             AND prj.aktif = 'Yes'
             AND prj.keterangan3 = 1
         WHERE l.loan_status IN (1, 2, 3, 4)
-        AND l.duration = 1
-        AND l.loan_id != 35
-        """
+        AND {loan_conditions}
+        """.format(loan_conditions=loan_conditions)
         
         monthly_approved_query = """
         SELECT 
@@ -3144,9 +3154,8 @@ def get_coverage_utilization_monthly_summary(db: Session,
             AND prj.aktif = 'Yes'
             AND prj.keterangan3 = 1
         WHERE l.loan_status IN (1, 2, 4)
-        AND l.duration = 1
-        AND l.loan_id != 35
-        """
+        AND {loan_conditions}
+        """.format(loan_conditions=loan_conditions)
         
         monthly_rejected_query = """
         SELECT 
@@ -3171,9 +3180,8 @@ def get_coverage_utilization_monthly_summary(db: Session,
             AND prj.aktif = 'Yes'
             AND prj.keterangan3 = 1
         WHERE l.loan_status = 3
-        AND l.duration = 1
-        AND l.loan_id != 35
-        """
+        AND {loan_conditions}
+        """.format(loan_conditions=loan_conditions)
         
         monthly_disbursed_query = """
         SELECT 
@@ -3198,9 +3206,8 @@ def get_coverage_utilization_monthly_summary(db: Session,
             AND prj.aktif = 'Yes'
             AND prj.keterangan3 = 1
         WHERE l.loan_status IN (1, 2, 4)
-        AND l.duration = 1
-        AND l.loan_id != 35
-        """
+        AND {loan_conditions}
+        """.format(loan_conditions=loan_conditions)
         
         monthly_first_borrow_query = """
         SELECT 
@@ -3231,12 +3238,10 @@ def get_coverage_utilization_monthly_summary(db: Session,
             WHERE l2.id_karyawan = l.id_karyawan 
             AND l2.loan_status = 2 
             AND l2.proses_date < l.proses_date
-            AND l2.duration = 1
-            AND l2.loan_id != 35
+            AND {loan_conditions}
         )
-        AND l.duration = 1
-        AND l.loan_id != 35
-        """
+        AND {loan_conditions}
+        """.format(loan_conditions=loan_conditions)
         
         # Add filters to monthly queries
         if id_karyawan_filter:
@@ -3355,10 +3360,19 @@ def get_coverage_utilization_monthly_summary(db: Session,
         }
 
 
-def get_client_summary(db: Session, month_filter: int = None, year_filter: int = None) -> list:
+def get_client_summary(db: Session, month_filter: int = None, year_filter: int = None, loan_type: str = "kasbon") -> list:
     """Get comprehensive client summary with disbursement and other metrics"""
     
     try:
+        # Determine loan conditions based on loan type
+        if loan_type == "kasbon":
+            loan_conditions = KASBON_LOAN_CONDITIONS
+        elif loan_type == "extradana":
+            
+            loan_conditions = EXTRADANA_LOAN_CONDITIONS
+        else:
+            loan_conditions = KASBON_LOAN_CONDITIONS  # default to kasbon
+        
         # Build parameters dict for filters (needed for both queries)
         params = {}
         
@@ -3395,11 +3409,10 @@ def get_client_summary(db: Session, month_filter: int = None, year_filter: int =
             AND prj.group_gmc = 'client_project'
             AND prj.aktif = 'Yes'
             AND prj.keterangan3 = 1
-        WHERE l.duration = 1
-        AND l.loan_id != 35
+        WHERE {loan_conditions}
         AND src.keterangan IS NOT NULL
         AND emp.keterangan IN ('PT Valdo Sumber Daya Mandiri', 'PT Valdo International')
-        """
+        """.format(loan_conditions=loan_conditions)
         
         if month_filter is not None:
             combinations_query += " AND MONTH(l.proses_date) = :month"
@@ -3518,11 +3531,10 @@ def get_client_summary(db: Session, month_filter: int = None, year_filter: int =
             AND prj.group_gmc = 'client_project'
             AND prj.aktif = 'Yes'
             AND prj.keterangan3 = 1
-        WHERE l.duration = 1
-        AND l.loan_id != 35
+        WHERE {loan_conditions}
         AND src.keterangan IS NOT NULL
         AND emp.keterangan IN ('PT Valdo Sumber Daya Mandiri', 'PT Valdo International')
-        """
+        """.format(loan_conditions=loan_conditions)
         
         # Add month and year filters to the main query (params already defined above)
         if month_filter is not None:
@@ -3567,7 +3579,7 @@ def get_client_summary(db: Session, month_filter: int = None, year_filter: int =
                 "admin_fee_profit": (float(record[6]) if record[6] else 0) - (float(record[7]) if record[7] else 0),
                 "delinquency_rate": float(record[8]) if record[8] else 0,
             })
-        
+         
         return client_disbursements
         
     except Exception as e:

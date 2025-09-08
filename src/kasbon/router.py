@@ -61,6 +61,7 @@ async def get_karyawan(
 async def get_client_summary(
     month: int = None,
     year: int = None,
+    loan_type: str = "kasbon",
     db: Session = Depends(get_db)
 ):
     """Get comprehensive client summary with disbursement and other metrics"""
@@ -68,7 +69,8 @@ async def get_client_summary(
         client_summaries = crud.get_client_summary(
             db, 
             month_filter=month,
-            year_filter=year
+            year_filter=year,
+            loan_type=loan_type
         )
         
         return {
@@ -464,7 +466,8 @@ async def get_loan_purpose_summary(
 @router.get("/filters")
 async def get_available_filters(
     employer: str = None, 
-    placement: str = None, 
+    placement: str = None,
+    loan_type: str = "kasbon",
     db: Session = Depends(get_db)
 ):
     """Get available filter values for enhanced karyawan queries with cascading filters"""
@@ -473,7 +476,8 @@ async def get_available_filters(
         filter_values = crud.get_available_filter_values(
             db, 
             employer_filter=employer,
-            placement_filter=placement
+            placement_filter=placement,
+            loan_type=loan_type
         )
         
         return {
@@ -683,6 +687,7 @@ async def get_karyawan_overdue(
     id_karyawan: int = None,
     month: int = None,
     year: int = None,
+    loan_type: str = "kasbon",
     db: Session = Depends(get_db)
 ):
     """Get karyawan data for those with overdue loans (status 4)"""
@@ -696,7 +701,8 @@ async def get_karyawan_overdue(
             loan_status_filter=loan_status,
             id_karyawan_filter=id_karyawan,
             month_filter=month,
-            year_filter=year
+            year_filter=year,
+            loan_type=loan_type
         )
         
         
@@ -725,6 +731,7 @@ async def get_repayment_risk(
     project: str = None,
     loan_status: int = None,
     id_karyawan: int = None,
+    loan_type: str = "kasbon",
     db: Session = Depends(get_db)
 ):
     """Get repayment risk summary with various repayment and risk metrics"""
@@ -738,7 +745,8 @@ async def get_repayment_risk(
             loan_status_filter=loan_status,
             id_karyawan_filter=id_karyawan,
             month_filter=month,
-            year_filter=year
+            year_filter=year,
+            loan_type=loan_type
         )
         
         
@@ -781,6 +789,7 @@ async def get_repayment_risk_monthly(
     project: str = None,
     loan_status: int = None,
     id_karyawan: int = None,
+    loan_type: str = "kasbon",
     db: Session = Depends(get_db)
 ):
     """Get repayment risk summary separated by months within a date range
@@ -799,7 +808,8 @@ async def get_repayment_risk_monthly(
             loan_status_filter=loan_status,
             id_karyawan_filter=id_karyawan,
             start_date=start_date,
-            end_date=end_date
+            end_date=end_date,
+            loan_type=loan_type
         )
         
         
@@ -826,6 +836,7 @@ async def get_coverage_utilization(
     project: str = None,
     loan_status: int = None,
     id_karyawan: int = None,
+    loan_type: str = "kasbon",
     db: Session = Depends(get_db)
 ):
     """Get comprehensive coverage and utilization summary combining multiple metrics"""
@@ -839,7 +850,8 @@ async def get_coverage_utilization(
             loan_status_filter=loan_status,
             id_karyawan_filter=id_karyawan,
             month_filter=month,
-            year_filter=year
+            year_filter=year,
+            loan_type=loan_type
         )
         
         
@@ -888,6 +900,7 @@ async def get_coverage_utilization_monthly(
     project: str = None,
     loan_status: int = None,
     id_karyawan: int = None,
+    loan_type: str = "kasbon",
     db: Session = Depends(get_db)
 ):
     """Get coverage utilization summary separated by months within a date range
@@ -906,7 +919,8 @@ async def get_coverage_utilization_monthly(
             loan_status_filter=loan_status,
             id_karyawan_filter=id_karyawan,
             start_date=start_date,
-            end_date=end_date
+            end_date=end_date,
+            loan_type=loan_type
         )
         
         
