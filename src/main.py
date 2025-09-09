@@ -42,6 +42,8 @@ app.add_middleware(
         "http://127.0.0.1:3001",
         "http://127.0.0.1:8080",
         "http://127.0.0.1:4200",
+        "http://193.194.1.6:8000",     # Alternative localhost
+        "http://193.194.1.6:8888",  
         "*"                           # Allow all origins (for development - remove in production)
     ],
     allow_credentials=True,
@@ -53,7 +55,7 @@ app.include_router(process_router)
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=8000)
+    uvicorn.run(app, host="193.194.1.6", port=8888)
 
 
 # 
