@@ -1,12 +1,20 @@
 import asyncio
 import json
+import sys
 from datetime import datetime
 from dataclasses import dataclass
 from typing import List
 from pydantic import BaseModel, Field
 from openai import AsyncOpenAI
 import os
+import agents
 from agents import Agent, Runner, function_tool, RunContextWrapper
+
+# Print environment information for debugging
+print(f"Python version: {sys.version}")
+print(f"Agents library version: {getattr(agents, '__version__', 'Unknown')}")
+print(f"Runner type: {type(Runner)}")
+print(f"Runner.run type: {type(Runner.run)}")
 
 
 # Load environment variables
@@ -63,6 +71,51 @@ class ResumeScore(BaseModel):
 class FinalOutput(BaseModel):
     reasoning: str = Field(description="A reasoning of why the evaluation makes sense or not")
     score: ResumeScore 
+
+# --- Helper Functions ---
+
+async def safe_runner_run(agent, input_data):
+    """
+    Safely run an agent with proper async/await handling.
+    Handles both sync and async Runner.run() implementations.
+    """
+    try:
+        print(f"Running agent: {agent.name}")
+        result = Runner.run(agent, input_data)
+        
+        # Check if the result is awaitable (async)
+        if hasattr(result, '__await__'):
+            print(f"Agent {agent.name} returned awaitable result, awaiting...")
+            return await result
+        else:
+            # Result is already resolved (sync)
+            print(f"Agent {agent.name} returned sync result")
+            return result
+    except Exception as e:
+        print(f"Error in safe_runner_run for agent {agent.name}: {str(e)}")
+        print(f"Input data type: {type(input_data)}")
+        print(f"Input data preview: {str(input_data)[:200]}...")
+        
+        # Check if it's the specific "object dict can't be used in 'await' expression" error
+        if "object dict can't be used in 'await' expression" in str(e):
+            print("Detected the await expression error. This suggests Runner.run() returned a dict instead of awaitable.")
+            print("Attempting to handle this as a sync result...")
+            try:
+                # Try to run it without await
+                result = Runner.run(agent, input_data)
+                if isinstance(result, dict):
+                    print("Runner.run() returned a dict directly. This is likely a sync implementation.")
+                    # Create a mock result object that matches the expected structure
+                    class MockResult:
+                        def __init__(self, data):
+                            self.final_output = data
+                    return MockResult(result)
+                return result
+            except Exception as fallback_error:
+                print(f"Fallback also failed: {str(fallback_error)}")
+                raise e  # Re-raise the original error
+        
+        raise
 
 # --- Context Class ---
 
@@ -380,7 +433,7 @@ async def score_resume(
             "target_skills": target_skills
         })
 
-        skill_extraction_result = await Runner.run(
+        skill_extraction_result = await safe_runner_run(
             skill_extractor_agent,
             skill_extraction_input
         )
@@ -405,7 +458,7 @@ async def score_resume(
             "job_description": job_description
         })
 
-        experience_score_result = await Runner.run(
+        experience_score_result = await safe_runner_run(
             experience_scoring_agent,
             experience_input
         )
@@ -424,7 +477,7 @@ async def score_resume(
             "job_description": job_description
         })
 
-        education_score_result = await Runner.run(
+        education_score_result = await safe_runner_run(
             education_scoring_agent,
             education_input
         )
@@ -447,7 +500,7 @@ async def score_resume(
             "job_description": job_description
         })
 
-        final_score_result = await Runner.run(
+        final_score_result = await safe_runner_run(
             final_scoring_agent,
             final_scoring_input
         )
@@ -470,7 +523,7 @@ async def score_resume(
             "education_score": education_score.model_dump()
         })
 
-        resume_evaluation = await Runner.run(
+        resume_evaluation = await safe_runner_run(
             resume_scoring_agent,
             evaluation_input
         )
@@ -489,6 +542,9 @@ async def score_resume(
 
     except Exception as e:
         print(f"\nError scoring resume: {str(e)}")
+        print(f"Error type: {type(e).__name__}")
+        import traceback
+        print(f"Traceback: {traceback.format_exc()}")
         raise 
 
 
@@ -519,7 +575,7 @@ async def score_pdf(
             "target_skills": target_skills
         })
 
-        skill_extraction_result = await Runner.run(
+        skill_extraction_result = await safe_runner_run(
             skill_extractor_agent,
             skill_extraction_input
         )
@@ -544,7 +600,7 @@ async def score_pdf(
             "job_description": job_description
         })
 
-        experience_score_result = await Runner.run(
+        experience_score_result = await safe_runner_run(
             experience_scoring_agent,
             experience_input
         )
@@ -563,7 +619,7 @@ async def score_pdf(
             "job_description": job_description
         })
 
-        education_score_result = await Runner.run(
+        education_score_result = await safe_runner_run(
             education_scoring_agent,
             education_input
         )
@@ -586,7 +642,7 @@ async def score_pdf(
             "job_description": job_description
         })
 
-        final_score_result = await Runner.run(
+        final_score_result = await safe_runner_run(
             final_scoring_agent,
             final_scoring_input
         )
@@ -609,7 +665,7 @@ async def score_pdf(
             "education_score": education_score.model_dump()
         })
 
-        resume_evaluation = await Runner.run(
+        resume_evaluation = await safe_runner_run(
             resume_scoring_agent,
             evaluation_input
         )
@@ -628,4 +684,7 @@ async def score_pdf(
 
     except Exception as e:
         print(f"\nError scoring resume: {str(e)}")
+        print(f"Error type: {type(e).__name__}")
+        import traceback
+        print(f"Traceback: {traceback.format_exc()}")
         raise
