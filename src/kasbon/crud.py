@@ -1366,7 +1366,7 @@ def get_available_filter_values(db: Session, employer_filter: str = None, placem
         WHERE group_gmc = 'sub_client' 
         AND aktif = 'Yes' 
         AND keterangan3 = 1
-        AND keterangan IN ('PT Valdo Sumber Daya Mandiri', 'PT Valdo International')
+        AND keterangan IN ('PT Valdo Sumber Daya Mandiri', 'PT Valdo International', 'PT Tokopandai')
         ORDER BY keterangan
         """
         
@@ -1376,7 +1376,7 @@ def get_available_filter_values(db: Session, employer_filter: str = None, placem
         FROM tbl_gmc src
         INNER JOIN td_karyawan tk ON src.kode_gmc = tk.placement
         INNER JOIN tbl_gmc emp ON tk.valdo_inc = emp.kode_gmc
-        WHERE emp.keterangan IN ('PT Valdo Sumber Daya Mandiri', 'PT Valdo International')
+        WHERE emp.keterangan IN ('PT Valdo Sumber Daya Mandiri', 'PT Valdo International', 'PT Tokopandai')
         AND emp.group_gmc = 'sub_client'
         AND emp.aktif = 'Yes'
         AND emp.keterangan3 = 1
@@ -1396,7 +1396,7 @@ def get_available_filter_values(db: Session, employer_filter: str = None, placem
         FROM tbl_gmc prj
         INNER JOIN td_karyawan tk ON prj.kode_gmc = tk.project
         INNER JOIN tbl_gmc emp ON tk.valdo_inc = emp.kode_gmc
-        WHERE emp.keterangan IN ('PT Valdo Sumber Daya Mandiri', 'PT Valdo International')
+        WHERE emp.keterangan IN ('PT Valdo Sumber Daya Mandiri', 'PT Valdo International', 'PT Tokopandai')
         AND emp.group_gmc = 'sub_client'
         AND emp.aktif = 'Yes'
         AND emp.keterangan3 = 1
@@ -2210,10 +2210,10 @@ def get_repayment_risk_summary(db: Session,
             params['id_karyawan'] = id_karyawan_filter
             
         # Restrict to only PT Valdo Sumber Daya Mandiri and PT Valdo International
-        risk_query += " AND emp.keterangan IN ('PT Valdo Sumber Daya Mandiri', 'PT Valdo International')"
+        risk_query += " AND emp.keterangan IN ('PT Valdo Sumber Daya Mandiri', 'PT Valdo International', 'PT Tokopandai')"
         
         # If employer_filter is provided and it's one of the allowed companies, filter further
-        if employer_filter and employer_filter in ['PT Valdo Sumber Daya Mandiri', 'PT Valdo International']:
+        if employer_filter and employer_filter in ['PT Valdo Sumber Daya Mandiri', 'PT Valdo International', 'PT Tokopandai']:
             risk_query += " AND emp.keterangan = :employer"
             params['employer'] = employer_filter
             
@@ -2344,10 +2344,10 @@ def get_repayment_risk_monthly_summary(db: Session,
             params['id_karyawan'] = id_karyawan_filter
             
         # Restrict to only PT Valdo Sumber Daya Mandiri and PT Valdo International
-        risk_query += " AND emp.keterangan IN ('PT Valdo Sumber Daya Mandiri', 'PT Valdo International')"
+        risk_query += " AND emp.keterangan IN ('PT Valdo Sumber Daya Mandiri', 'PT Valdo International', 'PT Tokopandai')"
         
         # If employer_filter is provided and it's one of the allowed companies, filter further
-        if employer_filter and employer_filter in ['PT Valdo Sumber Daya Mandiri', 'PT Valdo International']:
+        if employer_filter and employer_filter in ['PT Valdo Sumber Daya Mandiri', 'PT Valdo International', 'PT Tokopandai']:
             risk_query += " AND emp.keterangan = :employer"
             params['employer'] = employer_filter
             
@@ -2692,18 +2692,18 @@ def get_coverage_utilization_summary(db: Session,
             params['id_karyawan'] = id_karyawan_filter
             
         # Restrict to only PT Valdo Sumber Daya Mandiri and PT Valdo International
-        eligible_count_query += " AND emp.keterangan IN ('PT Valdo Sumber Daya Mandiri', 'PT Valdo International')"
-        active_count_query += " AND emp.keterangan IN ('PT Valdo Sumber Daya Mandiri', 'PT Valdo International')"
-        processed_requests_query += " AND emp.keterangan IN ('PT Valdo Sumber Daya Mandiri', 'PT Valdo International')"
-        approved_requests_query += " AND emp.keterangan IN ('PT Valdo Sumber Daya Mandiri', 'PT Valdo International')"
-        rejected_requests_query += " AND emp.keterangan IN ('PT Valdo Sumber Daya Mandiri', 'PT Valdo International')"
-        avg_approval_time_query += " AND emp.keterangan IN ('PT Valdo Sumber Daya Mandiri', 'PT Valdo International')"
-        total_disbursed_amount_query += " AND emp.keterangan IN ('PT Valdo Sumber Daya Mandiri', 'PT Valdo International')"
-        total_loans_query += " AND emp.keterangan IN ('PT Valdo Sumber Daya Mandiri', 'PT Valdo International')"
-        first_borrow_query += " AND emp.keterangan IN ('PT Valdo Sumber Daya Mandiri', 'PT Valdo International')"
+        eligible_count_query += " AND emp.keterangan IN ('PT Valdo Sumber Daya Mandiri', 'PT Valdo International', 'PT Tokopandai')"
+        active_count_query += " AND emp.keterangan IN ('PT Valdo Sumber Daya Mandiri', 'PT Valdo International', 'PT Tokopandai')"
+        processed_requests_query += " AND emp.keterangan IN ('PT Valdo Sumber Daya Mandiri', 'PT Valdo International', 'PT Tokopandai')"
+        approved_requests_query += " AND emp.keterangan IN ('PT Valdo Sumber Daya Mandiri', 'PT Valdo International', 'PT Tokopandai')"
+        rejected_requests_query += " AND emp.keterangan IN ('PT Valdo Sumber Daya Mandiri', 'PT Valdo International', 'PT Tokopandai')"
+        avg_approval_time_query += " AND emp.keterangan IN ('PT Valdo Sumber Daya Mandiri', 'PT Valdo International', 'PT Tokopandai')"
+        total_disbursed_amount_query += " AND emp.keterangan IN ('PT Valdo Sumber Daya Mandiri', 'PT Valdo International', 'PT Tokopandai')"
+        total_loans_query += " AND emp.keterangan IN ('PT Valdo Sumber Daya Mandiri', 'PT Valdo International', 'PT Tokopandai')"
+        first_borrow_query += " AND emp.keterangan IN ('PT Valdo Sumber Daya Mandiri', 'PT Valdo International', 'PT Tokopandai')"
         
         # If employer_filter is provided and it's one of the allowed companies, filter further
-        if employer_filter and employer_filter in ['PT Valdo Sumber Daya Mandiri', 'PT Valdo International']:
+        if employer_filter and employer_filter in ['PT Valdo Sumber Daya Mandiri', 'PT Valdo International', 'PT Tokopandai']:
             eligible_count_query += " AND emp.keterangan = :employer"
             active_count_query += " AND emp.keterangan = :employer"
             processed_requests_query += " AND emp.keterangan = :employer"
@@ -3044,15 +3044,15 @@ def get_coverage_utilization_monthly_summary(db: Session,
             params['id_karyawan'] = id_karyawan_filter
             
         # Restrict to only PT Valdo Sumber Daya Mandiri and PT Valdo International
-        eligible_count_query += " AND emp.keterangan IN ('PT Valdo Sumber Daya Mandiri', 'PT Valdo International')"
-        processed_requests_query += " AND emp.keterangan IN ('PT Valdo Sumber Daya Mandiri', 'PT Valdo International')"
-        approved_requests_query += " AND emp.keterangan IN ('PT Valdo Sumber Daya Mandiri', 'PT Valdo International')"
-        rejected_requests_query += " AND emp.keterangan IN ('PT Valdo Sumber Daya Mandiri', 'PT Valdo International')"
-        total_disbursed_amount_query += " AND emp.keterangan IN ('PT Valdo Sumber Daya Mandiri', 'PT Valdo International')"
-        first_borrow_query += " AND emp.keterangan IN ('PT Valdo Sumber Daya Mandiri', 'PT Valdo International')"
+        eligible_count_query += " AND emp.keterangan IN ('PT Valdo Sumber Daya Mandiri', 'PT Valdo International', 'PT Tokopandai')"
+        processed_requests_query += " AND emp.keterangan IN ('PT Valdo Sumber Daya Mandiri', 'PT Valdo International', 'PT Tokopandai')"
+        approved_requests_query += " AND emp.keterangan IN ('PT Valdo Sumber Daya Mandiri', 'PT Valdo International', 'PT Tokopandai')"
+        rejected_requests_query += " AND emp.keterangan IN ('PT Valdo Sumber Daya Mandiri', 'PT Valdo International', 'PT Tokopandai')"
+        total_disbursed_amount_query += " AND emp.keterangan IN ('PT Valdo Sumber Daya Mandiri', 'PT Valdo International', 'PT Tokopandai')"
+        first_borrow_query += " AND emp.keterangan IN ('PT Valdo Sumber Daya Mandiri', 'PT Valdo International', 'PT Tokopandai')"
         
         # If employer_filter is provided and it's one of the allowed companies, filter further
-        if employer_filter and employer_filter in ['PT Valdo Sumber Daya Mandiri', 'PT Valdo International']:
+        if employer_filter and employer_filter in ['PT Valdo Sumber Daya Mandiri', 'PT Valdo International', 'PT Tokopandai']:
             eligible_count_query += " AND emp.keterangan = :employer"
             processed_requests_query += " AND emp.keterangan = :employer"
             approved_requests_query += " AND emp.keterangan = :employer"
@@ -3411,7 +3411,7 @@ def get_client_summary(db: Session, month_filter: int = None, year_filter: int =
             AND prj.keterangan3 = 1
         WHERE {loan_conditions}
         AND src.keterangan IS NOT NULL
-        AND emp.keterangan IN ('PT Valdo Sumber Daya Mandiri', 'PT Valdo International')
+        AND emp.keterangan IN ('PT Valdo Sumber Daya Mandiri', 'PT Valdo International', 'PT Tokopandai')
         """.format(loan_conditions=loan_conditions)
         
         if month_filter is not None:
@@ -3451,7 +3451,7 @@ def get_client_summary(db: Session, month_filter: int = None, year_filter: int =
                 WHERE tk.status = '1' 
                 AND tk.loan_kasbon_eligible = '1'
                 AND src.keterangan = :sourced_to
-                AND emp.keterangan IN ('PT Valdo Sumber Daya Mandiri', 'PT Valdo International')
+                AND emp.keterangan IN ('PT Valdo Sumber Daya Mandiri', 'PT Valdo International', 'PT Tokopandai')
                 """
                 
                 # Execute the eligible count query for this combination
@@ -3480,7 +3480,7 @@ def get_client_summary(db: Session, month_filter: int = None, year_filter: int =
                     AND prj.keterangan3 = 1
                 WHERE tk.status = '1'
                 AND src.keterangan = :sourced_to
-                AND emp.keterangan IN ('PT Valdo Sumber Daya Mandiri', 'PT Valdo International')
+                AND emp.keterangan IN ('PT Valdo Sumber Daya Mandiri', 'PT Valdo International', 'PT Tokopandai')
                 """
                 
                 active_result = db.execute(text(active_count_query), eligible_params)
@@ -3533,7 +3533,7 @@ def get_client_summary(db: Session, month_filter: int = None, year_filter: int =
             AND prj.keterangan3 = 1
         WHERE {loan_conditions}
         AND src.keterangan IS NOT NULL
-        AND emp.keterangan IN ('PT Valdo Sumber Daya Mandiri', 'PT Valdo International')
+        AND emp.keterangan IN ('PT Valdo Sumber Daya Mandiri', 'PT Valdo International', 'PT Tokopandai')
         """.format(loan_conditions=loan_conditions)
         
         # Add month and year filters to the main query (params already defined above)
