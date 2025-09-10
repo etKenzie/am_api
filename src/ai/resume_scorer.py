@@ -15,6 +15,18 @@ print(f"Python version: {sys.version}")
 print(f"Agents library version: {getattr(agents, '__version__', 'Unknown')}")
 print(f"Runner type: {type(Runner)}")
 print(f"Runner.run type: {type(Runner.run)}")
+print(f"Runner.run callable: {callable(Runner.run)}")
+
+# Test Runner.run behavior
+try:
+    print("Testing Runner.run behavior...")
+    # Create a simple test to see what Runner.run returns
+    test_agent = Agent(name="Test", instructions="Test", model="gpt-3.5-turbo")
+    test_result = Runner.run(test_agent, "test input")
+    print(f"Test Runner.run returned: {type(test_result)}")
+    print(f"Test result has __await__: {hasattr(test_result, '__await__')}")
+except Exception as e:
+    print(f"Error testing Runner.run: {str(e)}")
 
 
 # Load environment variables
@@ -79,42 +91,45 @@ async def safe_runner_run(agent, input_data):
     Safely run an agent with proper async/await handling.
     Handles both sync and async Runner.run() implementations.
     """
+    print(f"Running agent: {agent.name}")
+    
     try:
-        print(f"Running agent: {agent.name}")
         result = Runner.run(agent, input_data)
+        print(f"Agent {agent.name} - Runner.run() returned: {type(result)}")
         
-        # Check if the result is awaitable (async)
-        if hasattr(result, '__await__'):
-            print(f"Agent {agent.name} returned awaitable result, awaiting...")
-            return await result
-        else:
-            # Result is already resolved (sync)
-            print(f"Agent {agent.name} returned sync result")
-            return result
-    except Exception as e:
-        print(f"Error in safe_runner_run for agent {agent.name}: {str(e)}")
-        print(f"Input data type: {type(input_data)}")
-        print(f"Input data preview: {str(input_data)[:200]}...")
+        # Check if result is a dictionary (sync implementation)
+        if isinstance(result, dict):
+            print(f"Agent {agent.name} - Result is dict (sync implementation)")
+            # Create a mock result object that matches the expected structure
+            class MockResult:
+                def __init__(self, data):
+                    self.final_output = data
+            return MockResult(result)
         
-        # Check if it's the specific "object dict can't be used in 'await' expression" error
-        if "object dict can't be used in 'await' expression" in str(e):
-            print("Detected the await expression error. This suggests Runner.run() returned a dict instead of awaitable.")
-            print("Attempting to handle this as a sync result...")
+        # Check if result has __await__ method (async implementation)
+        elif hasattr(result, '__await__'):
+            print(f"Agent {agent.name} - Result is awaitable (async implementation)")
             try:
-                # Try to run it without await
-                result = Runner.run(agent, input_data)
-                if isinstance(result, dict):
-                    print("Runner.run() returned a dict directly. This is likely a sync implementation.")
-                    # Create a mock result object that matches the expected structure
-                    class MockResult:
-                        def __init__(self, data):
-                            self.final_output = data
-                    return MockResult(result)
-                return result
-            except Exception as fallback_error:
-                print(f"Fallback also failed: {str(fallback_error)}")
-                raise e  # Re-raise the original error
+                awaited_result = await result
+                print(f"Agent {agent.name} - Successfully awaited result")
+                return awaited_result
+            except TypeError as te:
+                if "object dict can't be used in 'await' expression" in str(te):
+                    print(f"Agent {agent.name} - Caught await error: {str(te)}")
+                    print(f"Agent {agent.name} - Treating as sync result")
+                    return result
+                else:
+                    print(f"Agent {agent.name} - Different TypeError: {str(te)}")
+                    raise te
         
+        # If it's neither dict nor awaitable, return as-is
+        else:
+            print(f"Agent {agent.name} - Result is neither dict nor awaitable: {type(result)}")
+            return result
+            
+    except Exception as e:
+        print(f"Agent {agent.name} - Error in safe_runner_run: {str(e)}")
+        print(f"Agent {agent.name} - Error type: {type(e).__name__}")
         raise
 
 # --- Context Class ---

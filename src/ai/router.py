@@ -144,3 +144,32 @@ async def root():
             "docs": "/docs"
         }
     }
+
+
+@router.get("/test-agents")
+async def test_agents():
+    """Test endpoint to debug agents library behavior"""
+    try:
+        from .resume_scorer import safe_runner_run, skill_extractor_agent
+        import json
+        
+        test_input = json.dumps({
+            "resume_text": "Test resume text",
+            "target_skills": ["Python", "JavaScript"]
+        })
+        
+        result = await safe_runner_run(skill_extractor_agent, test_input)
+        
+        return {
+            "success": True,
+            "message": "Agents test successful",
+            "result_type": str(type(result)),
+            "has_final_output": hasattr(result, 'final_output')
+        }
+    except Exception as e:
+        return {
+            "success": False,
+            "error": str(e),
+            "error_type": type(e).__name__,
+            "message": "Agents test failed"
+        }
