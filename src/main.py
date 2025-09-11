@@ -6,22 +6,27 @@ try:
     # Try relative imports first (for Docker)
     from .router import router as process_router
     from .db import get_engine
+    from . import models
 except ImportError:
     # Fall back to absolute imports (for local development)
     from router import router as process_router
     from db import get_engine
+    import models
 
-# Create database tables with error handling
+# Create database tables with error handling (only for routes that need database)
+# This is optional and won't prevent the app from starting
 try:
     engine = get_engine()
     models.Base.metadata.create_all(bind=engine)
-    print("Database tables created successfully")
+    print("✅ Database tables created successfully")
 except Exception as e:
-    print(f"Warning: Could not create database tables: {e}")
+    print(f"⚠️  Warning: Could not create database tables: {e}")
+    print("ℹ️  AI routes will work without database connection")
+    print("ℹ️  Kasbon routes may not work without database connection")
 
 app = FastAPI(
     title="Aku Maju API",
-    description="API for karyawan management",
+    description="API for karyawan management and AI-powered resume scoring",
     version="1.0.0"
 )
 
@@ -37,6 +42,8 @@ app.add_middleware(
         "http://127.0.0.1:3001",
         "http://127.0.0.1:8080",
         "http://127.0.0.1:4200",
+        "http://193.194.1.6:8000",     # Alternative localhost
+        "http://193.194.1.6:8888",  
         "*"                           # Allow all origins (for development - remove in production)
     ],
     allow_credentials=True,
@@ -48,7 +55,7 @@ app.include_router(process_router)
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=8000)
+    uvicorn.run(app, host="193.194.1.6", port=8888)
 
 
 # 
