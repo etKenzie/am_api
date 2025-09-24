@@ -1923,40 +1923,84 @@ def get_karyawan_overdue_summary(db: Session,
             loan_conditions = KASBON_LOAN_CONDITIONS  # default to kasbon
         
         # Build the query to get karyawan with overdue loans
-        overdue_query = """
-        SELECT DISTINCT
-            tk.id_karyawan,
-            tk.ktp AS ktp,
-            tk.nama AS name,
-            emp.keterangan AS company,
-            src.keterangan AS sourced_to,
-            prj.keterangan AS project,
-            SUM(l.total_loan) as total_amount_owed,
-            MAX(l.repayment_date) as repayment_date,
-            SUM(l.admin_fee) as total_admin_fee,
-            SUM(l.total_payment) as total_payment
-        FROM td_loan l
-        LEFT JOIN td_karyawan tk
-            ON l.id_karyawan = tk.id_karyawan
-        LEFT JOIN tbl_gmc emp
-            ON tk.valdo_inc = emp.kode_gmc
-            AND emp.group_gmc = 'sub_client'
-            AND emp.aktif = 'Yes'
-            AND emp.keterangan3 = 1
-        LEFT JOIN tbl_gmc src
-            ON tk.placement = src.kode_gmc
-            AND src.group_gmc = 'placement_client'
-            AND src.aktif = 'Yes'
-            AND src.keterangan3 = 1
-        LEFT JOIN tbl_gmc prj
-            ON tk.project = prj.kode_gmc
-            AND prj.group_gmc = 'client_project'
-            AND prj.aktif = 'Yes'
-            AND prj.keterangan3 = 1
-        WHERE l.loan_status = 4
-        AND l.id_karyawan IS NOT NULL
-        AND {loan_conditions}
-        """.format(loan_conditions=loan_conditions).format(loan_conditions=loan_conditions)
+        if loan_type == "kasbon":
+            # For kasbon, use the existing logic from td_loan table
+            overdue_query = """
+            SELECT DISTINCT
+                tk.id_karyawan,
+                tk.ktp AS ktp,
+                tk.nama AS name,
+                emp.keterangan AS company,
+                src.keterangan AS sourced_to,
+                prj.keterangan AS project,
+                SUM(l.total_loan) as total_amount_owed,
+                MAX(l.repayment_date) as repayment_date,
+                SUM(l.admin_fee) as total_admin_fee,
+                SUM(l.total_payment) as total_payment
+            FROM td_loan l
+            LEFT JOIN td_karyawan tk
+                ON l.id_karyawan = tk.id_karyawan
+            LEFT JOIN tbl_gmc emp
+                ON tk.valdo_inc = emp.kode_gmc
+                AND emp.group_gmc = 'sub_client'
+                AND emp.aktif = 'Yes'
+                AND emp.keterangan3 = 1
+            LEFT JOIN tbl_gmc src
+                ON tk.placement = src.kode_gmc
+                AND src.group_gmc = 'placement_client'
+                AND src.aktif = 'Yes'
+                AND src.keterangan3 = 1
+            LEFT JOIN tbl_gmc prj
+                ON tk.project = prj.kode_gmc
+                AND prj.group_gmc = 'client_project'
+                AND prj.aktif = 'Yes'
+                AND prj.keterangan3 = 1
+            WHERE l.loan_status = 4
+            AND l.id_karyawan IS NOT NULL
+            AND {loan_conditions}
+            """.format(loan_conditions=loan_conditions)
+            
+        else:  # extradana
+            # For extradana, use td_loan_history table with the same method as get_expected_repayment
+            overdue_query = """
+            SELECT DISTINCT
+                tk.id_karyawan,
+                tk.ktp AS ktp,
+                tk.nama AS name,
+                emp.keterangan AS company,
+                src.keterangan AS sourced_to,
+                prj.keterangan AS project,
+                SUM(ROUND(tl.total_loan / tl.duration, 0)) as total_amount_owed,
+                MAX(tlh.due_date) as repayment_date,
+                SUM(ROUND(tl.admin_fee / tl.duration, 0)) as total_admin_fee,
+                SUM(tlh.monthly) as total_payment
+            FROM td_loan_history tlh
+            LEFT JOIN td_loan tl ON tlh.loan_form_id = tl.id
+            LEFT JOIN td_karyawan tk ON tl.id_karyawan = tk.id_karyawan
+            LEFT JOIN tbl_gmc emp
+                ON tk.valdo_inc = emp.kode_gmc
+                AND emp.group_gmc = 'sub_client'
+                AND emp.aktif = 'Yes'
+                AND emp.keterangan3 = 1
+            LEFT JOIN tbl_gmc src
+                ON tk.placement = src.kode_gmc
+                AND src.group_gmc = 'placement_client'
+                AND src.aktif = 'Yes'
+                AND src.keterangan3 = 1
+            LEFT JOIN tbl_gmc prj
+                ON tk.project = prj.kode_gmc
+                AND prj.group_gmc = 'client_project'
+                AND prj.aktif = 'Yes'
+                AND prj.keterangan3 = 1
+            WHERE tlh.due_date IS NOT NULL
+            AND tlh.status = 4
+            AND tl.id_karyawan IS NOT NULL
+            AND tl.loan_id IN (
+                SELECT ls.id
+                FROM loan_setting ls
+                WHERE ls.loan_type LIKE 'Extradana%'
+            )
+            """.format(loan_conditions=loan_conditions)
         
         # Build parameters dict for filters
         params = {}
@@ -1966,7 +2010,18 @@ def get_karyawan_overdue_summary(db: Session,
             overdue_query += " AND l.id_karyawan = :id_karyawan"
             params['id_karyawan'] = id_karyawan_filter
             
-        if employer_filter:
+        # Restrict to only PT Valdo companies (conditional based on loan type)
+        if loan_type == "extradana":
+            # For extradana, include all three companies (based on the example query)
+            company_filter = "('PT Valdo Sumber Daya Mandiri', 'PT Valdo International', 'PT Toko Pandai')"
+        else:
+            # For kasbon, include all three companies
+            company_filter = "('PT Valdo Sumber Daya Mandiri', 'PT Valdo International', 'PT Toko Pandai')"
+            
+        overdue_query += f" AND emp.keterangan IN {company_filter}"
+        
+        # If employer_filter is provided and it's one of the allowed companies, filter further
+        if employer_filter and employer_filter in ['PT Valdo Sumber Daya Mandiri', 'PT Valdo International', 'PT Toko Pandai']:
             overdue_query += " AND emp.keterangan = :employer"
             params['employer'] = employer_filter
             
@@ -1982,14 +2037,30 @@ def get_karyawan_overdue_summary(db: Session,
             overdue_query += " AND l.loan_status = :loan_status"
             params['loan_status'] = loan_status_filter
             
-        # Add month and year filters based on proses_date
-        if month_filter is not None:
-            overdue_query += " AND MONTH(l.proses_date) = :month"
-            params['month'] = month_filter
-            
-        if year_filter is not None:
-            overdue_query += " AND YEAR(l.proses_date) = :year"
-            params['year'] = year_filter
+        # Add month and year filters based on due_date for extradana, proses_date for kasbon
+        if month_filter is not None and year_filter is not None:
+            import calendar
+            start_date = f"{year_filter}-{month_filter:02d}-01"
+            # For extradana, use < next month format like the example
+            if month_filter == 12:
+                next_month_date = f"{year_filter + 1}-01-01"
+            else:
+                next_month_date = f"{year_filter}-{month_filter + 1:02d}-01"
+
+            if loan_type == "extradana":
+                # For extradana, filter by due_date in td_loan_history using the example format
+                overdue_query += " AND tlh.due_date >= :start_date"
+                overdue_query += " AND tlh.due_date < :next_month_date"
+                params['start_date'] = start_date
+                params['next_month_date'] = next_month_date
+            else:
+                # For kasbon, filter by proses_date in td_loan using range format
+                last_day = calendar.monthrange(year_filter, month_filter)[1]
+                end_date = f"{year_filter}-{month_filter:02d}-{last_day:02d}"
+                overdue_query += " AND l.proses_date >= :start_date"
+                overdue_query += " AND l.proses_date <= :end_date"
+                params['start_date'] = start_date
+                params['end_date'] = end_date
         
         # Group by karyawan and order by total amount owed (descending)
         overdue_query += """
