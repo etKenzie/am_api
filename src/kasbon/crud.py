@@ -4,7 +4,7 @@ from typing import List
 
 # Loan type constants
 KASBON_LOAN_CONDITIONS = "l.duration = 1 AND l.loan_id != 35"
-EXTRADANA_LOAN_CONDITIONS = "l.duration != 1 AND l.disbursement != 4"
+EXTRADANA_LOAN_CONDITIONS = "l.duration != 1 AND l.disbursement != 4 AND l.loan_id != 35"
 
 
 def get_enhanced_karyawan(db: Session, limit: int = 1000000, 
@@ -1359,24 +1359,31 @@ def get_available_filter_values(db: Session, employer_filter: str = None, placem
     """Get available filter values from tbl_gmc table for different categories with cascading filters"""
     
     try:
-        # Get employers (sub_client) - restricted to only PT Valdo Sumber Daya Mandiri and PT Valdo International
-        employer_query = """
+        # Get employers (sub_client) - conditional based on loan type
+        if loan_type == "extradana":
+            # For extradana, include all three companies (based on the example query)
+            company_filter = "('PT Valdo Sumber Daya Mandiri', 'PT Valdo International', 'PT Toko Pandai')"
+        else:
+            # For kasbon, include all three companies
+            company_filter = "('PT Valdo Sumber Daya Mandiri', 'PT Valdo International', 'PT Toko Pandai')"
+            
+        employer_query = f"""
         SELECT DISTINCT keterangan 
         FROM tbl_gmc 
         WHERE group_gmc = 'sub_client' 
         AND aktif = 'Yes' 
         AND keterangan3 = 1
-        AND keterangan IN ('PT Valdo Sumber Daya Mandiri', 'PT Valdo International', 'PT Toko Pandai')
+        AND keterangan IN {company_filter}
         ORDER BY keterangan
         """
         
         # Get placement clients - filtered by employer if provided, but only show those related to the two allowed companies
-        placement_query = """
+        placement_query = f"""
         SELECT DISTINCT src.keterangan 
         FROM tbl_gmc src
         INNER JOIN td_karyawan tk ON src.kode_gmc = tk.placement
         INNER JOIN tbl_gmc emp ON tk.valdo_inc = emp.kode_gmc
-        WHERE emp.keterangan IN ('PT Valdo Sumber Daya Mandiri', 'PT Valdo International', 'PT Toko Pandai')
+        WHERE emp.keterangan IN {company_filter}
         AND emp.group_gmc = 'sub_client'
         AND emp.aktif = 'Yes'
         AND emp.keterangan3 = 1
@@ -1390,13 +1397,13 @@ def get_available_filter_values(db: Session, employer_filter: str = None, placem
         
         placement_query += " ORDER BY src.keterangan"
         
-        # Get projects - filtered by employer and/or placement if provided, but only show those related to the two allowed companies
-        project_query = """
+        # Get projects - filtered by employer and/or placement if provided, but only show those related to the allowed companies
+        project_query = f"""
         SELECT DISTINCT prj.keterangan 
         FROM tbl_gmc prj
         INNER JOIN td_karyawan tk ON prj.kode_gmc = tk.project
         INNER JOIN tbl_gmc emp ON tk.valdo_inc = emp.kode_gmc
-        WHERE emp.keterangan IN ('PT Valdo Sumber Daya Mandiri', 'PT Valdo International', 'PT Toko Pandai')
+        WHERE emp.keterangan IN {company_filter}
         AND emp.group_gmc = 'sub_client'
         AND emp.aktif = 'Yes'
         AND emp.keterangan3 = 1
@@ -2155,6 +2162,447 @@ def get_loan_purpose_summary(db: Session,
         return []
 
 
+def get_total_admin_fee_collected(db: Session, 
+                                 employer_filter: str = None, sourced_to_filter: str = None, 
+                                 project_filter: str = None, loan_status_filter: int = None,
+                                 id_karyawan_filter: int = None, month_filter: int = None,
+                                 year_filter: int = None, loan_type: str = "kasbon") -> float:
+    """Get total admin fee collected amount based on loan type"""
+    
+    try:
+        # Determine loan conditions based on loan type
+        if loan_type == "kasbon":
+            loan_conditions = KASBON_LOAN_CONDITIONS
+        elif loan_type == "extradana":
+            loan_conditions = EXTRADANA_LOAN_CONDITIONS
+        else:
+            loan_conditions = KASBON_LOAN_CONDITIONS  # default to kasbon
+        
+        # Build parameters dict for filters
+        params = {}
+        
+        if loan_type == "kasbon":
+            # For kasbon, use the existing logic from td_loan table
+            admin_fee_collected_query = """
+            SELECT SUM(CASE WHEN l.loan_status = 2 THEN l.admin_fee ELSE 0 END) as total_admin_fee_collected
+            FROM td_loan l
+            LEFT JOIN td_karyawan tk
+                ON l.id_karyawan = tk.id_karyawan
+            LEFT JOIN tbl_gmc emp
+                ON tk.valdo_inc = emp.kode_gmc
+                AND emp.group_gmc = 'sub_client'
+                AND emp.aktif = 'Yes'
+                AND emp.keterangan3 = 1
+            LEFT JOIN tbl_gmc src
+                ON tk.placement = src.kode_gmc
+                AND src.group_gmc = 'placement_client'
+                AND src.aktif = 'Yes'
+                AND src.keterangan3 = 1
+            LEFT JOIN tbl_gmc prj
+                ON tk.project = prj.kode_gmc
+                AND prj.group_gmc = 'client_project'
+                AND prj.aktif = 'Yes'
+                AND prj.keterangan3 = 1
+            WHERE {loan_conditions}
+            """.format(loan_conditions=loan_conditions)
+            
+        else:  # extradana
+            # For extradana, use td_loan_history table with monthly admin fee calculation
+            admin_fee_collected_query = """
+            SELECT SUM(ROUND(tl.admin_fee / tl.duration, 0)) as total_admin_fee_collected
+            FROM td_loan_history tlh
+            LEFT JOIN td_loan tl ON tlh.loan_form_id = tl.id
+            LEFT JOIN td_karyawan tk ON tl.id_karyawan = tk.id_karyawan
+            LEFT JOIN tbl_gmc emp
+                ON tk.valdo_inc = emp.kode_gmc
+                AND emp.group_gmc = 'sub_client'
+                AND emp.aktif = 'Yes'
+                AND emp.keterangan3 = 1
+            LEFT JOIN tbl_gmc src
+                ON tk.placement = src.kode_gmc
+                AND src.group_gmc = 'placement_client'
+                AND src.aktif = 'Yes'
+                AND src.keterangan3 = 1
+            LEFT JOIN tbl_gmc prj
+                ON tk.project = prj.kode_gmc
+                AND prj.group_gmc = 'client_project'
+                AND prj.aktif = 'Yes'
+                AND prj.keterangan3 = 1
+            WHERE tlh.due_date IS NOT NULL
+            AND tl.loan_status IN (1, 2, 4)
+            AND tl.loan_id IN (
+                SELECT ls.id
+                FROM loan_setting ls
+                WHERE ls.loan_type LIKE 'Extradana%'
+            )
+            """.format(loan_conditions=loan_conditions)
+        
+        # Add filters
+        if id_karyawan_filter:
+            admin_fee_collected_query += " AND l.id_karyawan = :id_karyawan"
+            params['id_karyawan'] = id_karyawan_filter
+            
+        # Restrict to only PT Valdo companies (conditional based on loan type)
+        if loan_type == "extradana":
+            # For extradana, include all three companies (based on the example query)
+            company_filter = "('PT Valdo Sumber Daya Mandiri', 'PT Valdo International', 'PT Toko Pandai')"
+        else:
+            # For kasbon, include all three companies
+            company_filter = "('PT Valdo Sumber Daya Mandiri', 'PT Valdo International', 'PT Toko Pandai')"
+            
+        admin_fee_collected_query += f" AND emp.keterangan IN {company_filter}"
+        
+        # If employer_filter is provided and it's one of the allowed companies, filter further
+        if employer_filter and employer_filter in ['PT Valdo Sumber Daya Mandiri', 'PT Valdo International', 'PT Toko Pandai']:
+            admin_fee_collected_query += " AND emp.keterangan = :employer"
+            params['employer'] = employer_filter
+            
+        if sourced_to_filter:
+            admin_fee_collected_query += " AND src.keterangan = :sourced_to"
+            params['sourced_to'] = sourced_to_filter
+            
+        if project_filter:
+            admin_fee_collected_query += " AND prj.keterangan = :project"
+            params['project'] = project_filter
+            
+        if loan_status_filter is not None:
+            admin_fee_collected_query += " AND l.loan_status = :loan_status"
+            params['loan_status'] = loan_status_filter
+            
+        # Add month and year filters based on due_date for extradana, proses_date for kasbon
+        if month_filter is not None and year_filter is not None:
+            import calendar
+            start_date = f"{year_filter}-{month_filter:02d}-01"
+            # For extradana, use < next month format like the example
+            if month_filter == 12:
+                next_month_date = f"{year_filter + 1}-01-01"
+            else:
+                next_month_date = f"{year_filter}-{month_filter + 1:02d}-01"
+
+            if loan_type == "extradana":
+                # For extradana, filter by due_date in td_loan_history using the example format
+                admin_fee_collected_query += " AND tlh.due_date >= :start_date"
+                admin_fee_collected_query += " AND tlh.due_date < :next_month_date"
+                params['start_date'] = start_date
+                params['next_month_date'] = next_month_date
+            else:
+                # For kasbon, filter by proses_date in td_loan using range format
+                last_day = calendar.monthrange(year_filter, month_filter)[1]
+                end_date = f"{year_filter}-{month_filter:02d}-{last_day:02d}"
+                admin_fee_collected_query += " AND l.proses_date >= :start_date"
+                admin_fee_collected_query += " AND l.proses_date <= :end_date"
+                params['start_date'] = start_date
+                params['end_date'] = end_date
+        
+        # Execute the query
+        result = db.execute(text(admin_fee_collected_query), params)
+        record = result.fetchone()
+        
+        # Extract the value (handle None values)
+        total_admin_fee_collected = record[0] if record[0] is not None else 0
+        
+        return total_admin_fee_collected
+        
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return 0
+
+
+def get_total_kasbon_principal_collected(db: Session, 
+                                        employer_filter: str = None, sourced_to_filter: str = None, 
+                                        project_filter: str = None, loan_status_filter: int = None,
+                                        id_karyawan_filter: int = None, month_filter: int = None,
+                                        year_filter: int = None, loan_type: str = "kasbon") -> float:
+    """Get total kasbon principal collected amount based on loan type"""
+    
+    try:
+        # Determine loan conditions based on loan type
+        if loan_type == "kasbon":
+            loan_conditions = KASBON_LOAN_CONDITIONS
+        elif loan_type == "extradana":
+            loan_conditions = EXTRADANA_LOAN_CONDITIONS
+        else:
+            loan_conditions = KASBON_LOAN_CONDITIONS  # default to kasbon
+        
+        # Build parameters dict for filters
+        params = {}
+        
+        if loan_type == "kasbon":
+            # For kasbon, use the existing logic from td_loan table
+            principal_collected_query = """
+            SELECT SUM(CASE WHEN l.loan_status = 2 THEN l.total_loan ELSE 0 END) as total_kasbon_principal_collected
+            FROM td_loan l
+            LEFT JOIN td_karyawan tk
+                ON l.id_karyawan = tk.id_karyawan
+            LEFT JOIN tbl_gmc emp
+                ON tk.valdo_inc = emp.kode_gmc
+                AND emp.group_gmc = 'sub_client'
+                AND emp.aktif = 'Yes'
+                AND emp.keterangan3 = 1
+            LEFT JOIN tbl_gmc src
+                ON tk.placement = src.kode_gmc
+                AND src.group_gmc = 'placement_client'
+                AND src.aktif = 'Yes'
+                AND src.keterangan3 = 1
+            LEFT JOIN tbl_gmc prj
+                ON tk.project = prj.kode_gmc
+                AND prj.group_gmc = 'client_project'
+                AND prj.aktif = 'Yes'
+                AND prj.keterangan3 = 1
+            WHERE {loan_conditions}
+            """.format(loan_conditions=loan_conditions)
+            
+        else:  # extradana
+            # For extradana, use td_loan_history table with monthly principal calculation
+            principal_collected_query = """
+            SELECT SUM(ROUND(tl.total_loan / tl.duration, 0)) as total_kasbon_principal_collected
+            FROM td_loan_history tlh
+            LEFT JOIN td_loan tl ON tlh.loan_form_id = tl.id
+            LEFT JOIN td_karyawan tk ON tl.id_karyawan = tk.id_karyawan
+            LEFT JOIN tbl_gmc emp
+                ON tk.valdo_inc = emp.kode_gmc
+                AND emp.group_gmc = 'sub_client'
+                AND emp.aktif = 'Yes'
+                AND emp.keterangan3 = 1
+            LEFT JOIN tbl_gmc src
+                ON tk.placement = src.kode_gmc
+                AND src.group_gmc = 'placement_client'
+                AND src.aktif = 'Yes'
+                AND src.keterangan3 = 1
+            LEFT JOIN tbl_gmc prj
+                ON tk.project = prj.kode_gmc
+                AND prj.group_gmc = 'client_project'
+                AND prj.aktif = 'Yes'
+                AND prj.keterangan3 = 1
+            WHERE tlh.due_date IS NOT NULL
+            AND tl.loan_status IN (1, 2, 4)
+            AND tl.loan_id IN (
+                SELECT ls.id
+                FROM loan_setting ls
+                WHERE ls.loan_type LIKE 'Extradana%'
+            )
+            """.format(loan_conditions=loan_conditions)
+        
+        # Add filters
+        if id_karyawan_filter:
+            principal_collected_query += " AND l.id_karyawan = :id_karyawan"
+            params['id_karyawan'] = id_karyawan_filter
+            
+        # Restrict to only PT Valdo companies (conditional based on loan type)
+        if loan_type == "extradana":
+            # For extradana, include all three companies (based on the example query)
+            company_filter = "('PT Valdo Sumber Daya Mandiri', 'PT Valdo International', 'PT Toko Pandai')"
+        else:
+            # For kasbon, include all three companies
+            company_filter = "('PT Valdo Sumber Daya Mandiri', 'PT Valdo International', 'PT Toko Pandai')"
+            
+        principal_collected_query += f" AND emp.keterangan IN {company_filter}"
+        
+        # If employer_filter is provided and it's one of the allowed companies, filter further
+        if employer_filter and employer_filter in ['PT Valdo Sumber Daya Mandiri', 'PT Valdo International', 'PT Toko Pandai']:
+            principal_collected_query += " AND emp.keterangan = :employer"
+            params['employer'] = employer_filter
+            
+        if sourced_to_filter:
+            principal_collected_query += " AND src.keterangan = :sourced_to"
+            params['sourced_to'] = sourced_to_filter
+            
+        if project_filter:
+            principal_collected_query += " AND prj.keterangan = :project"
+            params['project'] = project_filter
+            
+        if loan_status_filter is not None:
+            principal_collected_query += " AND l.loan_status = :loan_status"
+            params['loan_status'] = loan_status_filter
+            
+        # Add month and year filters based on due_date for extradana, proses_date for kasbon
+        if month_filter is not None and year_filter is not None:
+            import calendar
+            start_date = f"{year_filter}-{month_filter:02d}-01"
+            # For extradana, use < next month format like the example
+            if month_filter == 12:
+                next_month_date = f"{year_filter + 1}-01-01"
+            else:
+                next_month_date = f"{year_filter}-{month_filter + 1:02d}-01"
+
+            if loan_type == "extradana":
+                # For extradana, filter by due_date in td_loan_history using the example format
+                principal_collected_query += " AND tlh.due_date >= :start_date"
+                principal_collected_query += " AND tlh.due_date < :next_month_date"
+                params['start_date'] = start_date
+                params['next_month_date'] = next_month_date
+            else:
+                # For kasbon, filter by proses_date in td_loan using range format
+                last_day = calendar.monthrange(year_filter, month_filter)[1]
+                end_date = f"{year_filter}-{month_filter:02d}-{last_day:02d}"
+                principal_collected_query += " AND l.proses_date >= :start_date"
+                principal_collected_query += " AND l.proses_date <= :end_date"
+                params['start_date'] = start_date
+                params['end_date'] = end_date
+        
+        # Execute the query
+        result = db.execute(text(principal_collected_query), params)
+        record = result.fetchone()
+        
+        # Extract the value (handle None values)
+        total_kasbon_principal_collected = record[0] if record[0] is not None else 0
+        
+        return total_kasbon_principal_collected
+        
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return 0
+
+
+def get_expected_repayment(db: Session, 
+                          employer_filter: str = None, sourced_to_filter: str = None, 
+                          project_filter: str = None, loan_status_filter: int = None,
+                          id_karyawan_filter: int = None, month_filter: int = None,
+                          year_filter: int = None, loan_type: str = "kasbon") -> float:
+    """Get expected repayment amount based on loan type"""
+    
+    try:
+        # Determine loan conditions based on loan type
+        if loan_type == "kasbon":
+            loan_conditions = KASBON_LOAN_CONDITIONS
+        elif loan_type == "extradana":
+            loan_conditions = EXTRADANA_LOAN_CONDITIONS
+        else:
+            loan_conditions = KASBON_LOAN_CONDITIONS  # default to kasbon
+        
+        # Build parameters dict for filters
+        params = {}
+        
+        if loan_type == "kasbon":
+            # For kasbon, use the existing logic from td_loan table
+            expected_repayment_query = """
+            SELECT SUM(CASE WHEN l.loan_status IN (1, 2, 4) THEN l.total_payment ELSE 0 END) as total_expected_repayment
+            FROM td_loan l
+            LEFT JOIN td_karyawan tk
+                ON l.id_karyawan = tk.id_karyawan
+            LEFT JOIN tbl_gmc emp
+                ON tk.valdo_inc = emp.kode_gmc
+                AND emp.group_gmc = 'sub_client'
+                AND emp.aktif = 'Yes'
+                AND emp.keterangan3 = 1
+            LEFT JOIN tbl_gmc src
+                ON tk.placement = src.kode_gmc
+                AND src.group_gmc = 'placement_client'
+                AND src.aktif = 'Yes'
+                AND src.keterangan3 = 1
+            LEFT JOIN tbl_gmc prj
+                ON tk.project = prj.kode_gmc
+                AND prj.group_gmc = 'client_project'
+                AND prj.aktif = 'Yes'
+                AND prj.keterangan3 = 1
+            WHERE {loan_conditions}
+            """.format(loan_conditions=loan_conditions)
+            
+        else:  # extradana
+            # For extradana, use td_loan_history table with due_date and monthly sum
+            expected_repayment_query = """
+            SELECT SUM(tlh.monthly) as total_expected_repayment
+            FROM td_loan_history tlh
+            LEFT JOIN td_loan l ON tlh.loan_form_id = l.id
+            LEFT JOIN td_karyawan tk ON l.id_karyawan = tk.id_karyawan
+            LEFT JOIN tbl_gmc emp
+                ON tk.valdo_inc = emp.kode_gmc
+                AND emp.group_gmc = 'sub_client'
+                AND emp.aktif = 'Yes'
+                AND emp.keterangan3 = 1
+            LEFT JOIN tbl_gmc src
+                ON tk.placement = src.kode_gmc
+                AND src.group_gmc = 'placement_client'
+                AND src.aktif = 'Yes'
+                AND src.keterangan3 = 1
+            LEFT JOIN tbl_gmc prj
+                ON tk.project = prj.kode_gmc
+                AND prj.group_gmc = 'client_project'
+                AND prj.aktif = 'Yes'
+                AND prj.keterangan3 = 1
+            WHERE tlh.due_date IS NOT NULL
+            AND l.loan_status IN (1, 2, 4)
+            AND l.loan_id IN (
+                SELECT ls.id
+                FROM loan_setting ls
+                WHERE ls.loan_type LIKE 'Extradana%'
+            )
+            """.format(loan_conditions=loan_conditions)
+        
+        # Add filters
+        if id_karyawan_filter:
+            expected_repayment_query += " AND l.id_karyawan = :id_karyawan"
+            params['id_karyawan'] = id_karyawan_filter
+            
+        # Restrict to only PT Valdo companies (conditional based on loan type)
+        if loan_type == "extradana":
+            # For extradana, include all three companies (based on the example query)
+            company_filter = "('PT Valdo Sumber Daya Mandiri', 'PT Valdo International', 'PT Toko Pandai')"
+        else:
+            # For kasbon, include all three companies
+            company_filter = "('PT Valdo Sumber Daya Mandiri', 'PT Valdo International', 'PT Toko Pandai')"
+            
+        expected_repayment_query += f" AND emp.keterangan IN {company_filter}"
+        
+        # If employer_filter is provided and it's one of the allowed companies, filter further
+        if employer_filter and employer_filter in ['PT Valdo Sumber Daya Mandiri', 'PT Valdo International', 'PT Toko Pandai']:
+            expected_repayment_query += " AND emp.keterangan = :employer"
+            params['employer'] = employer_filter
+            
+        if sourced_to_filter:
+            expected_repayment_query += " AND src.keterangan = :sourced_to"
+            params['sourced_to'] = sourced_to_filter
+            
+        if project_filter:
+            expected_repayment_query += " AND prj.keterangan = :project"
+            params['project'] = project_filter
+            
+        if loan_status_filter is not None:
+            expected_repayment_query += " AND l.loan_status = :loan_status"
+            params['loan_status'] = loan_status_filter
+            
+        # Add month and year filters based on due_date for extradana, proses_date for kasbon
+        if month_filter is not None and year_filter is not None:
+            import calendar
+            start_date = f"{year_filter}-{month_filter:02d}-01"
+            # For extradana, use < next month format like the example
+            if month_filter == 12:
+                next_month_date = f"{year_filter + 1}-01-01"
+            else:
+                next_month_date = f"{year_filter}-{month_filter + 1:02d}-01"
+
+            if loan_type == "extradana":
+                # For extradana, filter by due_date in td_loan_history using the example format
+                expected_repayment_query += " AND tlh.due_date >= :start_date"
+                expected_repayment_query += " AND tlh.due_date < :next_month_date"
+                params['start_date'] = start_date
+                params['next_month_date'] = next_month_date
+            else:
+                # For kasbon, filter by proses_date in td_loan using range format
+                last_day = calendar.monthrange(year_filter, month_filter)[1]
+                end_date = f"{year_filter}-{month_filter:02d}-{last_day:02d}"
+                expected_repayment_query += " AND l.proses_date >= :start_date"
+                expected_repayment_query += " AND l.proses_date <= :end_date"
+                params['start_date'] = start_date
+                params['end_date'] = end_date
+        
+        # Execute the query
+        result = db.execute(text(expected_repayment_query), params)
+        record = result.fetchone()
+        
+        # Extract the value (handle None values)
+        total_expected_repayment = record[0] if record[0] is not None else 0
+        
+        return total_expected_repayment
+        
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return 0
+
+
 def get_repayment_risk_summary(db: Session, 
                                employer_filter: str = None, sourced_to_filter: str = None, 
                                project_filter: str = None, loan_status_filter: int = None,
@@ -2209,8 +2657,15 @@ def get_repayment_risk_summary(db: Session,
             risk_query += " AND l.id_karyawan = :id_karyawan"
             params['id_karyawan'] = id_karyawan_filter
             
-        # Restrict to only PT Valdo Sumber Daya Mandiri and PT Valdo International
-        risk_query += " AND emp.keterangan IN ('PT Valdo Sumber Daya Mandiri', 'PT Valdo International', 'PT Toko Pandai')"
+        # Restrict to only PT Valdo companies (conditional based on loan type)
+        if loan_type == "extradana":
+            # For extradana, include all three companies (based on the example query)
+            company_filter = "('PT Valdo Sumber Daya Mandiri', 'PT Valdo International', 'PT Toko Pandai')"
+        else:
+            # For kasbon, include all three companies
+            company_filter = "('PT Valdo Sumber Daya Mandiri', 'PT Valdo International', 'PT Toko Pandai')"
+            
+        risk_query += f" AND emp.keterangan IN {company_filter}"
         
         # If employer_filter is provided and it's one of the allowed companies, filter further
         if employer_filter and employer_filter in ['PT Valdo Sumber Daya Mandiri', 'PT Valdo International', 'PT Toko Pandai']:
@@ -2249,6 +2704,42 @@ def get_repayment_risk_summary(db: Session,
         total_unrecovered_repayment = record[3] if record[3] is not None else 0
         total_unrecovered_kasbon_principal = record[4] if record[4] is not None else 0
         total_unrecovered_admin_fee = record[5] if record[5] is not None else 0
+        
+        # For extradana, override total_expected_repayment, total_kasbon_principal_collected, and total_admin_fee_collected with dedicated functions
+        if loan_type == "extradana":
+            total_expected_repayment = get_expected_repayment(
+                db=db,
+                employer_filter=employer_filter,
+                sourced_to_filter=sourced_to_filter,
+                project_filter=project_filter,
+                loan_status_filter=loan_status_filter,
+                id_karyawan_filter=id_karyawan_filter,
+                month_filter=month_filter,
+                year_filter=year_filter,
+                loan_type=loan_type
+            )
+            total_kasbon_principal_collected = get_total_kasbon_principal_collected(
+                db=db,
+                employer_filter=employer_filter,
+                sourced_to_filter=sourced_to_filter,
+                project_filter=project_filter,
+                loan_status_filter=loan_status_filter,
+                id_karyawan_filter=id_karyawan_filter,
+                month_filter=month_filter,
+                year_filter=year_filter,
+                loan_type=loan_type
+            )
+            total_admin_fee_collected = get_total_admin_fee_collected(
+                db=db,
+                employer_filter=employer_filter,
+                sourced_to_filter=sourced_to_filter,
+                project_filter=project_filter,
+                loan_status_filter=loan_status_filter,
+                id_karyawan_filter=id_karyawan_filter,
+                month_filter=month_filter,
+                year_filter=year_filter,
+                loan_type=loan_type
+            )
         
         # Calculate derived metrics
         repayment_recovery_rate = 0
@@ -2305,11 +2796,10 @@ def get_repayment_risk_monthly_summary(db: Session,
         else:
             loan_conditions = KASBON_LOAN_CONDITIONS  # default to kasbon
         
-        # Build the query to calculate repayment risk metrics by month
+        # Build the query to calculate repayment risk metrics by month (excluding total_expected_repayment)
         risk_query = """
         SELECT
             DATE_FORMAT(l.proses_date, '%M %Y') as month_year,
-            SUM(CASE WHEN l.loan_status IN (1, 2, 4) THEN l.total_payment ELSE 0 END) as total_expected_repayment,
             SUM(CASE WHEN l.loan_status = 2 THEN l.total_loan ELSE 0 END) as total_kasbon_principal_collected,
             SUM(CASE WHEN l.loan_status IN (1, 4) THEN l.total_payment ELSE 0 END) as total_unrecovered_repayment,
             SUM(CASE WHEN l.loan_status = 2 THEN l.admin_fee ELSE 0 END) as total_admin_fee_collected
@@ -2333,7 +2823,7 @@ def get_repayment_risk_monthly_summary(db: Session,
             AND prj.keterangan3 = 1
         WHERE l.proses_date IS NOT NULL
         AND {loan_conditions}
-        """.format(loan_conditions=loan_conditions).format(loan_conditions=loan_conditions)
+        """.format(loan_conditions=loan_conditions)
         
         # Build parameters dict for filters
         params = {}
@@ -2343,8 +2833,15 @@ def get_repayment_risk_monthly_summary(db: Session,
             risk_query += " AND l.id_karyawan = :id_karyawan"
             params['id_karyawan'] = id_karyawan_filter
             
-        # Restrict to only PT Valdo Sumber Daya Mandiri and PT Valdo International
-        risk_query += " AND emp.keterangan IN ('PT Valdo Sumber Daya Mandiri', 'PT Valdo International', 'PT Toko Pandai')"
+        # Restrict to only PT Valdo companies (conditional based on loan type)
+        if loan_type == "extradana":
+            # For extradana, include all three companies (based on the example query)
+            company_filter = "('PT Valdo Sumber Daya Mandiri', 'PT Valdo International', 'PT Toko Pandai')"
+        else:
+            # For kasbon, include all three companies
+            company_filter = "('PT Valdo Sumber Daya Mandiri', 'PT Valdo International', 'PT Toko Pandai')"
+            
+        risk_query += f" AND emp.keterangan IN {company_filter}"
         
         # If employer_filter is provided and it's one of the allowed companies, filter further
         if employer_filter and employer_filter in ['PT Valdo Sumber Daya Mandiri', 'PT Valdo International', 'PT Toko Pandai']:
@@ -2391,10 +2888,55 @@ def get_repayment_risk_monthly_summary(db: Session,
             if month_year is None:
                 continue
                 
-            total_expected_repayment = record[1] if record[1] is not None else 0
-            total_kasbon_principal_collected = record[2] if record[2] is not None else 0
-            total_unrecovered_repayment = record[3] if record[3] is not None else 0
-            total_admin_fee_collected = record[4] if record[4] is not None else 0
+            # Extract month and year from month_year string (e.g., "January 2025")
+            month_name, year_str = month_year.split(' ')
+            year = int(year_str)
+            month_num = {
+                'January': 1, 'February': 2, 'March': 3, 'April': 4, 'May': 5, 'June': 6,
+                'July': 7, 'August': 8, 'September': 9, 'October': 10, 'November': 11, 'December': 12
+            }[month_name]
+            
+            # Get total_expected_repayment and total_kasbon_principal_collected using the dedicated functions for this specific month
+            total_expected_repayment = get_expected_repayment(
+                db=db,
+                employer_filter=employer_filter,
+                sourced_to_filter=sourced_to_filter,
+                project_filter=project_filter,
+                loan_status_filter=loan_status_filter,
+                id_karyawan_filter=id_karyawan_filter,
+                month_filter=month_num,
+                year_filter=year,
+                loan_type=loan_type
+            )
+            
+            # For extradana, use the dedicated functions; for kasbon, use the query results
+            if loan_type == "extradana":
+                total_kasbon_principal_collected = get_total_kasbon_principal_collected(
+                    db=db,
+                    employer_filter=employer_filter,
+                    sourced_to_filter=sourced_to_filter,
+                    project_filter=project_filter,
+                    loan_status_filter=loan_status_filter,
+                    id_karyawan_filter=id_karyawan_filter,
+                    month_filter=month_num,
+                    year_filter=year,
+                    loan_type=loan_type
+                )
+                total_admin_fee_collected = get_total_admin_fee_collected(
+                    db=db,
+                    employer_filter=employer_filter,
+                    sourced_to_filter=sourced_to_filter,
+                    project_filter=project_filter,
+                    loan_status_filter=loan_status_filter,
+                    id_karyawan_filter=id_karyawan_filter,
+                    month_filter=month_num,
+                    year_filter=year,
+                    loan_type=loan_type
+                )
+            else:
+                total_kasbon_principal_collected = record[1] if record[1] is not None else 0
+                total_admin_fee_collected = record[3] if record[3] is not None else 0
+            total_unrecovered_repayment = record[2] if record[2] is not None else 0
             
             # Calculate repayment recovery rate
             repayment_recovery_rate = 0
@@ -2469,8 +3011,15 @@ def get_disbursed_amount(db: Session,
             disbursed_query += " AND l.id_karyawan = :id_karyawan"
             params['id_karyawan'] = id_karyawan_filter
             
-        # Restrict to only PT Valdo companies
-        disbursed_query += " AND emp.keterangan IN ('PT Valdo Sumber Daya Mandiri', 'PT Valdo International', 'PT Toko Pandai')"
+        # Restrict to only PT Valdo companies (conditional based on loan type)
+        if loan_type == "extradana":
+            # For extradana, include all three companies (based on the example query)
+            company_filter = "('PT Valdo Sumber Daya Mandiri', 'PT Valdo International', 'PT Toko Pandai')"
+        else:
+            # For kasbon, include all three companies
+            company_filter = "('PT Valdo Sumber Daya Mandiri', 'PT Valdo International', 'PT Toko Pandai')"
+            
+        disbursed_query += f" AND emp.keterangan IN {company_filter}"
         
         # If employer_filter is provided and it's one of the allowed companies, filter further
         if employer_filter and employer_filter in ['PT Valdo Sumber Daya Mandiri', 'PT Valdo International', 'PT Toko Pandai']:
@@ -2783,16 +3332,23 @@ def get_coverage_utilization_summary(db: Session,
             first_borrow_query += " AND l.id_karyawan = :id_karyawan"
             params['id_karyawan'] = id_karyawan_filter
             
-        # Restrict to only PT Valdo Sumber Daya Mandiri and PT Valdo International
-        eligible_count_query += " AND emp.keterangan IN ('PT Valdo Sumber Daya Mandiri', 'PT Valdo International', 'PT Toko Pandai')"
-        active_count_query += " AND emp.keterangan IN ('PT Valdo Sumber Daya Mandiri', 'PT Valdo International', 'PT Toko Pandai')"
-        processed_requests_query += " AND emp.keterangan IN ('PT Valdo Sumber Daya Mandiri', 'PT Valdo International', 'PT Toko Pandai')"
-        approved_requests_query += " AND emp.keterangan IN ('PT Valdo Sumber Daya Mandiri', 'PT Valdo International', 'PT Toko Pandai')"
-        rejected_requests_query += " AND emp.keterangan IN ('PT Valdo Sumber Daya Mandiri', 'PT Valdo International', 'PT Toko Pandai')"
-        avg_approval_time_query += " AND emp.keterangan IN ('PT Valdo Sumber Daya Mandiri', 'PT Valdo International', 'PT Toko Pandai')"
-        total_disbursed_amount_query += " AND emp.keterangan IN ('PT Valdo Sumber Daya Mandiri', 'PT Valdo International', 'PT Toko Pandai')"
-        total_loans_query += " AND emp.keterangan IN ('PT Valdo Sumber Daya Mandiri', 'PT Valdo International', 'PT Toko Pandai')"
-        first_borrow_query += " AND emp.keterangan IN ('PT Valdo Sumber Daya Mandiri', 'PT Valdo International', 'PT Toko Pandai')"
+        # Restrict to only PT Valdo companies (conditional based on loan type)
+        if loan_type == "extradana":
+            # For extradana, include all three companies (based on the example query)
+            company_filter = "('PT Valdo Sumber Daya Mandiri', 'PT Valdo International', 'PT Toko Pandai')"
+        else:
+            # For kasbon, include all three companies
+            company_filter = "('PT Valdo Sumber Daya Mandiri', 'PT Valdo International', 'PT Toko Pandai')"
+            
+        eligible_count_query += f" AND emp.keterangan IN {company_filter}"
+        active_count_query += f" AND emp.keterangan IN {company_filter}"
+        processed_requests_query += f" AND emp.keterangan IN {company_filter}"
+        approved_requests_query += f" AND emp.keterangan IN {company_filter}"
+        rejected_requests_query += f" AND emp.keterangan IN {company_filter}"
+        avg_approval_time_query += f" AND emp.keterangan IN {company_filter}"
+        total_disbursed_amount_query += f" AND emp.keterangan IN {company_filter}"
+        total_loans_query += f" AND emp.keterangan IN {company_filter}"
+        first_borrow_query += f" AND emp.keterangan IN {company_filter}"
         
         # If employer_filter is provided and it's one of the allowed companies, filter further
         if employer_filter and employer_filter in ['PT Valdo Sumber Daya Mandiri', 'PT Valdo International', 'PT Toko Pandai']:
@@ -3146,13 +3702,20 @@ def get_coverage_utilization_monthly_summary(db: Session,
             first_borrow_query += " AND l.id_karyawan = :id_karyawan"
             params['id_karyawan'] = id_karyawan_filter
             
-        # Restrict to only PT Valdo Sumber Daya Mandiri and PT Valdo International
-        eligible_count_query += " AND emp.keterangan IN ('PT Valdo Sumber Daya Mandiri', 'PT Valdo International', 'PT Toko Pandai')"
-        processed_requests_query += " AND emp.keterangan IN ('PT Valdo Sumber Daya Mandiri', 'PT Valdo International', 'PT Toko Pandai')"
-        approved_requests_query += " AND emp.keterangan IN ('PT Valdo Sumber Daya Mandiri', 'PT Valdo International', 'PT Toko Pandai')"
-        rejected_requests_query += " AND emp.keterangan IN ('PT Valdo Sumber Daya Mandiri', 'PT Valdo International', 'PT Toko Pandai')"
-        total_disbursed_amount_query += " AND emp.keterangan IN ('PT Valdo Sumber Daya Mandiri', 'PT Valdo International', 'PT Toko Pandai')"
-        first_borrow_query += " AND emp.keterangan IN ('PT Valdo Sumber Daya Mandiri', 'PT Valdo International', 'PT Toko Pandai')"
+        # Restrict to only PT Valdo companies (conditional based on loan type)
+        if loan_type == "extradana":
+            # For extradana, include all three companies (based on the example query)
+            company_filter = "('PT Valdo Sumber Daya Mandiri', 'PT Valdo International', 'PT Toko Pandai')"
+        else:
+            # For kasbon, include all three companies
+            company_filter = "('PT Valdo Sumber Daya Mandiri', 'PT Valdo International', 'PT Toko Pandai')"
+            
+        eligible_count_query += f" AND emp.keterangan IN {company_filter}"
+        processed_requests_query += f" AND emp.keterangan IN {company_filter}"
+        approved_requests_query += f" AND emp.keterangan IN {company_filter}"
+        rejected_requests_query += f" AND emp.keterangan IN {company_filter}"
+        total_disbursed_amount_query += f" AND emp.keterangan IN {company_filter}"
+        first_borrow_query += f" AND emp.keterangan IN {company_filter}"
         
         # If employer_filter is provided and it's one of the allowed companies, filter further
         if employer_filter and employer_filter in ['PT Valdo Sumber Daya Mandiri', 'PT Valdo International', 'PT Toko Pandai']:
@@ -3382,6 +3945,13 @@ def get_coverage_utilization_monthly_summary(db: Session,
             monthly_disbursed_query += " AND l.loan_status = :loan_status"
             monthly_first_borrow_query += " AND l.loan_status = :loan_status"
             
+        # Apply company filtering to monthly queries
+        monthly_processed_query += f" AND emp.keterangan IN {company_filter}"
+        monthly_approved_query += f" AND emp.keterangan IN {company_filter}"
+        monthly_rejected_query += f" AND emp.keterangan IN {company_filter}"
+        monthly_disbursed_query += f" AND emp.keterangan IN {company_filter}"
+        monthly_first_borrow_query += f" AND emp.keterangan IN {company_filter}"
+            
         if start_date:
             monthly_processed_query += " AND l.proses_date >= :start_date"
             monthly_approved_query += " AND l.proses_date >= :start_date"
@@ -3415,6 +3985,7 @@ def get_coverage_utilization_monthly_summary(db: Session,
         monthly_rejected_data = {row[0]: row[1] for row in monthly_rejected_result.fetchall() if row[0] is not None}
         monthly_disbursed_data = {row[0]: row[1] for row in monthly_disbursed_result.fetchall() if row[0] is not None}
         monthly_first_borrow_data = {row[0]: row[1] for row in monthly_first_borrow_result.fetchall() if row[0] is not None}
+        
         
         # Get total eligible employees (same for all months)
         eligible_result = db.execute(text(eligible_count_query), params)
@@ -3469,10 +4040,17 @@ def get_client_summary(db: Session, month_filter: int = None, year_filter: int =
         if loan_type == "kasbon":
             loan_conditions = KASBON_LOAN_CONDITIONS
         elif loan_type == "extradana":
-            
             loan_conditions = EXTRADANA_LOAN_CONDITIONS
         else:
             loan_conditions = KASBON_LOAN_CONDITIONS  # default to kasbon
+        
+        # Determine company filter based on loan type
+        if loan_type == "extradana":
+            # For extradana, include all three companies (based on the example query)
+            company_filter = "('PT Valdo Sumber Daya Mandiri', 'PT Valdo International', 'PT Toko Pandai')"
+        else:
+            # For kasbon, include all three companies
+            company_filter = "('PT Valdo Sumber Daya Mandiri', 'PT Valdo International', 'PT Toko Pandai')"
         
         # Build parameters dict for filters (needed for both queries)
         params = {}
@@ -3512,7 +4090,7 @@ def get_client_summary(db: Session, month_filter: int = None, year_filter: int =
             AND prj.keterangan3 = 1
         WHERE {loan_conditions}
         AND src.keterangan IS NOT NULL
-        AND emp.keterangan IN ('PT Valdo Sumber Daya Mandiri', 'PT Valdo International', 'PT Toko Pandai')
+        AND emp.keterangan IN {company_filter}
         """.format(loan_conditions=loan_conditions)
         
         if month_filter is not None:
@@ -3552,7 +4130,7 @@ def get_client_summary(db: Session, month_filter: int = None, year_filter: int =
                 WHERE tk.status = '1' 
                 AND tk.loan_kasbon_eligible = '1'
                 AND src.keterangan = :sourced_to
-                AND emp.keterangan IN ('PT Valdo Sumber Daya Mandiri', 'PT Valdo International', 'PT Toko Pandai')
+                AND emp.keterangan IN {company_filter}
                 """
                 
                 # Execute the eligible count query for this combination
@@ -3581,7 +4159,7 @@ def get_client_summary(db: Session, month_filter: int = None, year_filter: int =
                     AND prj.keterangan3 = 1
                 WHERE tk.status = '1'
                 AND src.keterangan = :sourced_to
-                AND emp.keterangan IN ('PT Valdo Sumber Daya Mandiri', 'PT Valdo International', 'PT Toko Pandai')
+                AND emp.keterangan IN {company_filter}
                 """
                 
                 active_result = db.execute(text(active_count_query), eligible_params)
@@ -3633,7 +4211,7 @@ def get_client_summary(db: Session, month_filter: int = None, year_filter: int =
             AND prj.keterangan3 = 1
         WHERE {loan_conditions}
         AND src.keterangan IS NOT NULL
-        AND emp.keterangan IN ('PT Valdo Sumber Daya Mandiri', 'PT Valdo International', 'PT Toko Pandai')
+        AND emp.keterangan IN {company_filter}
         """.format(loan_conditions=loan_conditions)
         
         # Add month and year filters to the main query (params already defined above)
