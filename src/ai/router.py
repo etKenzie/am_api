@@ -5,7 +5,7 @@ from typing import List, Optional
 from fastapi import APIRouter, UploadFile, File, Form, HTTPException
 from pydantic import BaseModel
 from PyPDF2 import PdfReader
-from .resume_scorer import score_resume
+from .resume_scorer import score_resume, enhance_job_requirements
 
 router = APIRouter(prefix="/ai", tags=["AI"])
 
@@ -21,6 +21,19 @@ class ResumeScoringResponse(BaseModel):
     """Resume Scoring Response Schema"""
     success: bool
     data: Optional[dict] = None
+    error: Optional[str] = None
+    message: str
+
+
+class JobRequirementsEnhancementRequest(BaseModel):
+    """Job Requirements Enhancement Request Schema"""
+    job_requirements: str
+
+
+class JobRequirementsEnhancementResponse(BaseModel):
+    """Job Requirements Enhancement Response Schema"""
+    success: bool
+    enhanced_requirements: Optional[str] = None
     error: Optional[str] = None
     message: str
 
@@ -132,6 +145,36 @@ async def score_pdf_endpoint(
         )
 
 
+@router.post("/enhance_job_requirements", response_model=JobRequirementsEnhancementResponse)
+async def enhance_job_requirements_endpoint(
+    request: JobRequirementsEnhancementRequest
+) -> JobRequirementsEnhancementResponse:
+    """
+    Enhance job requirements with bullet point formatting and 500 character limit.
+    
+    Args:
+        request: JobRequirementsEnhancementRequest containing the raw job requirements
+    
+    Returns:
+        Enhanced job requirements with bullet point formatting and maximum 500 characters
+    """
+    try:
+        enhanced_requirements = await enhance_job_requirements(request.job_requirements)
+        
+        return JobRequirementsEnhancementResponse(
+            success=True,
+            enhanced_requirements=enhanced_requirements,
+            message="Job requirements enhanced successfully"
+        )
+                
+    except Exception as e:
+        return JobRequirementsEnhancementResponse(
+            success=False,
+            error=str(e),
+            message="Failed to enhance job requirements"
+        )
+
+
 @router.get("/")
 async def root():
     """Root endpoint with API information"""
@@ -141,6 +184,7 @@ async def root():
         "endpoints": {
             "score_resume": "/score-resume",
             "score_pdf": "/score-pdf",
+            "enhance_job_requirements": "/enhance_job_requirements",
             "docs": "/docs"
         }
     }
