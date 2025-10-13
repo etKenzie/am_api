@@ -4,7 +4,7 @@ import sys
 from datetime import datetime
 from dataclasses import dataclass
 from typing import List
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 from openai import AsyncOpenAI
 import os
 import agents
@@ -70,23 +70,33 @@ class ExperienceScore(BaseModel):
     experience_score: float = Field(description="Score for experience match (0.0 to 4.5)")
     years_experience: float = Field(description="Total years of relevant experience")
     relevant_roles: List[str] = Field(description="List of relevant job titles/roles found")
-    experience_breakdown: str = Field(description="Detailed breakdown of experience scoring")
+    experience_breakdown: str = Field(description="High-level summary of experience relevance")
 
 class EducationScore(BaseModel):
     education_score: float = Field(description="Score for education match (0.0 to 1.0)")
     degree_match: str = Field(description="How well the degree matches requirements")
     certifications: List[str] = Field(description="List of relevant certifications")
-    education_breakdown: str = Field(description="Detailed breakdown of education scoring")
+    education_breakdown: str = Field(description="High-level summary of education relevance")
 
 class ResumeScore(BaseModel):
     overall_score: float = Field(description="Overall score out of 10")
     skill_score: float = Field(description="Score for skills match (0.0 to 4.0)")
     experience_score: float = Field(description="Score for experience match (0.0 to 4.5)")
     education_score: float = Field(description="Score for education match (0.0 to 1.0)")
+    other_factors_score: float = Field(description="Score for other factors like projects, achievements, additional qualifications (0.0 to 0.5 MAXIMUM)")
     strengths: List[str] = Field(description="List of candidate's strengths")
     weaknesses: List[str] = Field(description="List of candidate's weaknesses")
-    breakdown: str = Field(description="Detailed breakdown of final scoring")
+    breakdown: str = Field(description="High-level summary of overall assessment")
     summary: str = Field(description="Overall summary of the candidate's fit")
+    
+    @field_validator('other_factors_score')
+    @classmethod
+    def validate_other_factors_score(cls, v):
+        if v > 0.5:
+            return 0.5  # Cap at 0.5
+        if v < 0.0:
+            return 0.0  # Ensure non-negative
+        return v
 
 class ExperienceRelevance(BaseModel):
     relevance_explanation: str = Field(description="Penjelasan detail tentang bagaimana pengalaman kerja kandidat berkaitan dengan tujuan dan persyaratan pekerjaan (dalam bahasa Indonesia)")
@@ -241,12 +251,11 @@ skill_extractor_agent = Agent(
     1. Extract text from the provided resume using the resume_path
     2. Parse the target_skills string into a list of individual skills
     3. Analyze the resume content thoroughly to identify which target skills are present. 
-    4. Calculate a skill score based on the following methodology:
-       - Required skills: 2 points per match
-       - Preferred skills: 1 point per match
-       - Missing required skills: -3 points per miss
-       - Calculate as: (Total skill points / Max possible skill points) * 4.0
-       - Max Points: 4.0
+    4. Calculate a skill score based on match percentage:
+       - skill_score = match_percentage * 4.0
+       - This ensures consistent scoring based on the actual percentage of skills found
+       - Example: 75% match = 0.75 * 4.0 = 3.0 skill score
+       - Max Points: 4.0 (when 100% of skills are found)
     5. Return detailed information about skill matches including context and statistics
     
     ANALYSIS APPROACH:
@@ -255,31 +264,41 @@ skill_extractor_agent = Agent(
     - Check for skill mentions in experience, project descriptions, and technical sections
     - Be thorough but accurate - only include skills that are clearly demonstrated
     
-    SKILL DETECTION RULES:(SKILLS CAN BE FOUND OTHER THAN EXPLICITLY STATING THEM)
-    1. EXACT MATCHES: Direct mentions of the skill name
-    2. SYNONYMS: Common variations (e.g., "JS" for "JavaScript", "React.js" for "React")
-    3. CONTEXT CLUES: Skills implied through project descriptions, experience, or job responsibilities
+    SKILL DETECTION RULES (BE CONSISTENT AND DETERMINISTIC):
+    1. EXACT MATCHES: Direct mentions of the skill name (case-insensitive)
+    2. SYNONYMS: Common variations (e.g., "JS" for "JavaScript", "React.js" for "React", "Node.js" for "Node")
+    3. CONTEXT CLUES: Skills clearly implied through project descriptions, experience, or job responsibilities
     4. CERTIFICATIONS: Skills mentioned in certification names or descriptions
-    5. 
+    5. CONSISTENCY RULES:
+       - Always use the same criteria for skill detection
+       - If a skill is mentioned in multiple places, count it only once
+       - Be conservative - only count skills that are clearly demonstrated
+       - Use exact skill names from the target_skills list when possible 
     
     OUTPUT REQUIREMENTS:
     - skills_found: List of skills that are actually present in the resume
     - total_skills_checked: Count of all target skills that were evaluated
     - match_percentage: Calculate as (len(skills_found) / total_skills_checked) with 2 decimal places
     - skill_context: For each found skill, provide brief context like "Found in work experience as Senior Developer" or "Mentioned in project description"
-    - skill_score: Calculated score based on the methodology above (0.0 to 4.0)
+    - skill_score: ALWAYS calculate as match_percentage * 4.0 (0.0 to 4.0)
+    
+    DETERMINISTIC CALCULATION RULES:
+    - match_percentage = number_of_skills_found / total_skills_checked
+    - skill_score = match_percentage * 4.0
+    - Example: 8 skills found out of 10 total = 0.8 * 4.0 = 3.2 skill_score
+    - This ensures consistent scoring regardless of content complexity
     
     IMPORTANT: 
     - Be precise and conservative. Only include skills that are clearly demonstrated
     - Provide meaningful context for each skill found
     - Calculate match percentage accurately (0.0 to 1.0 scale)
-    - Calculate skill score using the exact methodology specified
+    - ALWAYS use the formula: skill_score = match_percentage * 4.0
     - Follow the SkillsFound schema exactly with all required fields
     - Handle cases where target_skills might be empty or malformed
     """,
     # tools=[extract_text_from_pdf, read_text_file],
     output_type=SkillsFound,
-    model=MODEL
+    model=MODEL,
 )
 
 job_analyzer_agent = Agent(
@@ -309,7 +328,7 @@ job_analyzer_agent = Agent(
     - Empty fields should be EMPTY LISTS, never null or placeholder text
     """,
     output_type=JobRequirements,
-    model=MODEL
+    model=MODEL,
 )
 
 experience_scoring_agent = Agent(
@@ -319,6 +338,12 @@ experience_scoring_agent = Agent(
     If no experience listed determine by yourself based on the job title how relevant the work is. Be strict on how relevant a candidates experience is to their job description.
     
     IMPORTANT: All text output must be in Indonesian language (Bahasa Indonesia).
+    
+    BREAKDOWN STYLE REQUIREMENTS:
+    - Provide high-level, abstract summary of experience relevance
+    - Focus on overall fit and alignment with job requirements
+    - Avoid detailed point calculations or scoring explanations
+    - Keep it concise and professional
     
     SCORING METHODOLOGY (0.0 to 4.5 scale):
     1. YEARS OF EXPERIENCE:
@@ -339,22 +364,25 @@ experience_scoring_agent = Agent(
        - Related industry: +0.3 points
        - Different industry: +0.1 points
     
-    CALCULATION RULES:
+    CALCULATION RULES (BE CONSISTENT AND DETERMINISTIC):
     - Start with base score of 0.0
     - Add points according to methodology above
     - Cap total score at 4.5
     - Use precise decimals (e.g., 3.2, 4.1)
+    - ALWAYS apply the same criteria for similar experience levels
+    - Be consistent in role relevance assessment
+    - Use the same industry classification criteria
     
     OUTPUT REQUIREMENTS:
     - experience_score: Final calculated score (0.0 to 4.5)
     - years_experience: Total years of relevant experience
     - relevant_roles: List of relevant job titles/roles found (in Indonesian)
-    - experience_breakdown: Detailed explanation of scoring (in Indonesian)
+    - experience_breakdown: High-level summary of experience relevance (in Indonesian, no point details)
     
     Make sure to follow the exact schema provided in the ExperienceScore model.
     """,
     output_type=ExperienceScore,
-    model=MODEL
+    model=MODEL,
 )
 
 education_scoring_agent = Agent(
@@ -364,6 +392,12 @@ education_scoring_agent = Agent(
     make a decision based on the job description if the education is relevant.
     
     IMPORTANT: All text output must be in Indonesian language (Bahasa Indonesia).
+    
+    BREAKDOWN STYLE REQUIREMENTS:
+    - Provide high-level, abstract summary of education relevance
+    - Focus on overall fit and alignment with job requirements
+    - Avoid detailed point calculations or scoring explanations
+    - Keep it concise and professional
     
     SCORING METHODOLOGY (0.0 to 1.0 scale):
     1. DEGREE MATCH:
@@ -380,22 +414,25 @@ education_scoring_agent = Agent(
        - Relevant courses/training: +0.1 points
        - Academic achievements: +0.1 points
     
-    CALCULATION RULES:
+    CALCULATION RULES (BE CONSISTENT AND DETERMINISTIC):
     - Start with base score of 0.0
     - Add points according to methodology above
     - Cap total score at 1.0
     - Use precise decimals (e.g., 0.8, 0.6)
+    - ALWAYS apply the same criteria for similar degree types
+    - Be consistent in certification relevance assessment
+    - Use the same field classification criteria
     
     OUTPUT REQUIREMENTS:
     - education_score: Final calculated score (0.0 to 1.0)
     - degree_match: Description of how well the degree matches requirements (in Indonesian)
     - certifications: List of relevant certifications found (in Indonesian)
-    - education_breakdown: Detailed explanation of scoring (in Indonesian)
+    - education_breakdown: High-level summary of education relevance (in Indonesian, no point details)
     
     Make sure to follow the exact schema provided in the EducationScore model.
     """,
     output_type=EducationScore,
-    model=MODEL
+    model=MODEL,
 )
 
 final_scoring_agent = Agent(
@@ -405,6 +442,24 @@ final_scoring_agent = Agent(
     
     IMPORTANT: All text output must be in Indonesian language (Bahasa Indonesia).
     
+    BREAKDOWN STYLE REQUIREMENTS:
+    - Provide high-level, abstract summary of overall assessment
+    - Focus on overall candidate fit and key factors
+    - Avoid detailed point calculations or scoring explanations
+    - Keep it concise and professional
+    
+    CONSISTENCY REQUIREMENTS:
+    - Use the EXACT scores provided by the individual agents
+    - Do NOT modify or recalculate the skill_score, experience_score, or education_score
+    - Only calculate the other_factors_score and overall_score
+    - Be consistent in your other_factors_score calculation
+    
+    MANDATORY OTHER_FACTORS_SCORE RULES:
+    - other_factors_score MUST be between 0.0 and 0.5 (inclusive)
+    - If your calculation results in more than 0.5, you MUST set it to exactly 0.5
+    - This is a HARD LIMIT that cannot be exceeded under any circumstances
+    - Double-check your calculation before outputting the final result
+    
     INPUT:
     You will receive scores from:
     - Skill Extractor Agent (skill_score: 0.0 to 4.0)
@@ -413,8 +468,15 @@ final_scoring_agent = Agent(
     - Resume data and job requirements for context
     
     FINAL SCORING METHODOLOGY:
-    - Overall Score = skill_score + experience_score + education_score + other_factors
-    - Other factors (0.0 to 0.5): Projects, achievements, additional qualifications
+    - Overall Score = skill_score + experience_score + education_score + other_factors_score
+    - Other factors score (0.0 to 0.5): Projects, achievements, additional qualifications
+    - Calculate other_factors_score based on (CAP AT 0.5):
+      * Relevant projects: +0.2 points for significant projects (max 1 project)
+      * Notable achievements: +0.1 points for relevant achievements (max 1 achievement)
+      * Additional qualifications: +0.1 points for relevant certifications/training (max 1 qualification)
+      * Leadership experience: +0.1 points for relevant leadership roles (max 1 leadership role)
+      * TOTAL CAP: 0.5 maximum (even if sum exceeds 0.5)
+    - VALIDATION STEP: Before finalizing, check if other_factors_score > 0.5, if yes, set to 0.5
     - Maximum possible score: 10.0
     
     EVALUATION CRITERIA:
@@ -428,15 +490,23 @@ final_scoring_agent = Agent(
     - skill_score: From skill extractor agent
     - experience_score: From experience scoring agent
     - education_score: From education scoring agent
+    - other_factors_score: Score for projects, achievements, additional qualifications (0.0 to 0.5 MAXIMUM)
     - strengths: List of candidate's key strengths (in Indonesian)
     - weaknesses: List of candidate's key weaknesses (in Indonesian)
-    - breakdown: Detailed explanation of final scoring (in Indonesian)
+    - breakdown: High-level summary of overall assessment (in Indonesian, no point details)
     - summary: Overall assessment of candidate fit (in Indonesian)
+    
+    CRITICAL: other_factors_score MUST NEVER exceed 0.5. If calculated sum exceeds 0.5, cap it at 0.5.
+    
+    FINAL VALIDATION CHECKLIST:
+    1. Is other_factors_score <= 0.5? If NO, set to 0.5
+    2. Is overall_score = skill_score + experience_score + education_score + other_factors_score?
+    3. Are all scores within their valid ranges?
     
     Make sure to follow the exact schema provided in the ResumeScore model.
     """,
     output_type=ResumeScore,
-    model=MODEL
+    model=MODEL,
 )
 
 # Indonesian Language Guardrail Agent
@@ -520,6 +590,12 @@ resume_scoring_agent = Agent(
     
     IMPORTANT: All text output must be in Indonesian language (Bahasa Indonesia).
     
+    SCORE-DRIVEN RECOMMENDATION PRINCIPLE:
+    - Your hiring recommendation MUST be heavily influenced by the overall_score
+    - Higher scores (6.0+) should generally result in hiring recommendations
+    - Lower scores (below 5.0) should generally result in non-hiring recommendations
+    - Use the scoring results as the primary basis for your decision
+    
     EVALUATION COMPONENTS:
     
     1. EXPERIENCE RELEVANCE ANALYSIS:
@@ -534,11 +610,16 @@ resume_scoring_agent = Agent(
        - Highlight education gaps or missing qualifications
        - Provide detailed explanations of education alignment
     
-    3. HIRING RECOMMENDATION:
-       - Make a clear hiring decision (should_hire: true/false)
-       - Provide detailed reasoning for the recommendation
-       - Assess confidence level (Tinggi/Sedang/Rendah) based on evidence quality
-       - List key factors that influenced the decision
+    3. HIRING RECOMMENDATION (SCORE-DRIVEN):
+       - Make hiring decision based HEAVILY on overall_score:
+         * overall_score >= 7.0: STRONGLY RECOMMEND (should_hire: true, confidence: Tinggi)
+         * overall_score 6.0-6.9: RECOMMEND (should_hire: true, confidence: Sedang-Tinggi)
+         * overall_score 5.0-5.9: CONSIDER (should_hire: true, confidence: Sedang)
+         * overall_score 4.0-4.9: WEAK RECOMMENDATION (should_hire: false, confidence: Sedang)
+         * overall_score < 4.0: DO NOT RECOMMEND (should_hire: false, confidence: Tinggi)
+       - Provide reasoning that emphasizes the scoring results
+       - Confidence level should reflect score strength
+       - List key factors with focus on score components
     
     4. ALTERNATIVE POSITIONS:
        - Suggest alternative job positions that might be better suited for the candidate
@@ -552,7 +633,8 @@ resume_scoring_agent = Agent(
     - Provide actionable insights for hiring decisions
     - Include specific examples from the resume and job description
     - Be objective and evidence-based in all assessments
-    - Be extremely critical of mismatches and provide clear reasoning for recommendations
+    - Base hiring recommendations PRIMARILY on overall_score results
+    - Reference specific score components (skill_score, experience_score, education_score) in reasoning
     
     IMPORTANT: All text content must be in Indonesian language (Bahasa Indonesia).
     """,

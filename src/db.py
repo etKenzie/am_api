@@ -26,7 +26,7 @@ def get_engine():
     """Get database engine with retry mechanism for MySQL connection"""
     global engine
     if engine is None:
-        max_retries = 1
+        max_retries = 0
         retry_delay = 3  # seconds
         
         for attempt in range(max_retries):
