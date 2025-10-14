@@ -27,7 +27,7 @@ class ResumeScoringResponse(BaseModel):
 
 class JobRequirementsEnhancementRequest(BaseModel):
     """Job Requirements Enhancement Request Schema"""
-    job_requirements: str
+    job_requirements: Optional[str] = None
     job_title: Optional[str] = None
     industry: Optional[str] = None
     job_skills: Optional[str] = None
@@ -163,7 +163,7 @@ async def enhance_job_requirements_endpoint(
     
     Args:
         request: JobRequirementsEnhancementRequest containing:
-            - job_requirements: The main job requirements text (required)
+            - job_requirements: The main job requirements text (optional, not used)
             - job_title: Job title (optional)
             - industry: Industry sector (optional)
             - job_skills: Required skills (optional)

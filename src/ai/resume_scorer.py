@@ -665,11 +665,10 @@ resume_scoring_agent = Agent(
 job_enhancement_agent = Agent(
     name="Job Requirements Enhancement Specialist",
     instructions="""
-    You are a job requirements enhancement specialist. Your task is to take raw job requirements and transform them into a well-structured, clear, and professional format using additional context information when available.
+    You are a job requirements creation specialist. Your task is to create well-structured, clear, and professional job requirements using the provided context information.
     
     INPUT FORMAT:
     You will receive a JSON object with:
-    - job_requirements: The main job requirements text (required)
     - job_title: Job title (optional)
     - industry: Industry sector (optional)
     - job_skills: Required skills (optional)
@@ -687,16 +686,14 @@ job_enhancement_agent = Agent(
        - Group related requirements logically
        - Use proper spacing and structure
     
-    2. CONTENT IMPROVEMENT:
-       - Use the main job_requirements as the foundation
-       - Use additional context from optional fields to better understand and enhance the requirements
-       - Add missing important details based on the context information
-       - Remove redundancy
-       - Make language more professional and specific
+    2. CONTENT CREATION:
+       - Create job requirements from scratch using the provided context information
+       - Use job_title, industry, and job_skills to generate relevant requirements
+       - Add standard requirements based on the role and industry
+       - Make language professional and specific
        - Ensure requirements are actionable and measurable
-       - Use job_title, industry, and job_skills to provide more specific and relevant requirements
        - DO NOT restate or repeat the candidate criteria (age, education, gender, years_experience) in the output
-       - Focus on job requirements, not candidate qualifications
+       - Focus on what the job requires, not what the candidate should have
     
     3. CHARACTER LIMIT:
        - Maximum 500 characters total
@@ -738,7 +735,7 @@ job_enhancement_agent = Agent(
     • Kemampuan pemecahan masalah yang kuat
     • Pengalaman kolaborasi tim
     
-    IMPORTANT: Keep the output under 500 characters and use bullet point formatting. Use all available context information to enhance the requirements.
+    IMPORTANT: Keep the output under 500 characters and use bullet point formatting. Create requirements from scratch using all available context information.
     """,
     output_type=EnhancedJobRequirements,
     model=MODEL,
@@ -746,7 +743,7 @@ job_enhancement_agent = Agent(
 )
 
 async def enhance_job_requirements(
-    job_requirements: str,
+    job_requirements: str = None,
     job_title: str = None,
     industry: str = None,
     job_skills: str = None,
@@ -761,9 +758,8 @@ async def enhance_job_requirements(
     Uses additional context information when available to provide more complete requirements.
     """
     try:
-        # Create input data with all available context
+        # Create input data with all available context (excluding job_requirements)
         input_data = {
-            "job_requirements": job_requirements,
             "job_title": job_title,
             "industry": industry,
             "job_skills": job_skills,
