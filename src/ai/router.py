@@ -28,6 +28,14 @@ class ResumeScoringResponse(BaseModel):
 class JobRequirementsEnhancementRequest(BaseModel):
     """Job Requirements Enhancement Request Schema"""
     job_requirements: str
+    job_title: Optional[str] = None
+    industry: Optional[str] = None
+    job_skills: Optional[str] = None
+    gender: Optional[str] = None
+    years_experience: Optional[str] = None
+    age: Optional[str] = None
+    education: Optional[str] = None
+    working_type: Optional[str] = None
 
 
 class JobRequirementsEnhancementResponse(BaseModel):
@@ -94,14 +102,14 @@ async def score_resume_endpoint(
         return ResumeScoringResponse(
             success=True,
             data=result,
-            message="Resume scored successfully"
+            message="Resume berhasil dinilai"
         )
                 
     except Exception as e:
         return ResumeScoringResponse(
             success=False,
             error=str(e),
-            message="Failed to score resume"
+            message="Gagal menilai resume"
         )
     
 
@@ -133,7 +141,7 @@ async def score_pdf_endpoint(
         return ResumeScoringResponse(
             success=True,
             data=result,
-            message="Resume scored successfully"
+            message="Resume berhasil dinilai"
         )
     except HTTPException:
         raise
@@ -141,7 +149,7 @@ async def score_pdf_endpoint(
         return ResumeScoringResponse(
             success=False,
             error=str(e),
-            message="Failed to score resume"
+            message="Gagal menilai resume"
         )
 
 
@@ -151,27 +159,47 @@ async def enhance_job_requirements_endpoint(
 ) -> JobRequirementsEnhancementResponse:
     """
     Enhance job requirements with bullet point formatting and 500 character limit.
+    Uses additional context information when available to provide more complete requirements.
     
     Args:
-        request: JobRequirementsEnhancementRequest containing the raw job requirements
+        request: JobRequirementsEnhancementRequest containing:
+            - job_requirements: The main job requirements text (required)
+            - job_title: Job title (optional)
+            - industry: Industry sector (optional)
+            - job_skills: Required skills (optional)
+            - gender: Gender preference (optional)
+            - years_experience: Years of experience required (optional)
+            - age: Age requirements (optional)
+            - education: Education requirements (optional)
+            - working_type: Working arrangement (optional)
     
     Returns:
         Enhanced job requirements with bullet point formatting and maximum 500 characters
     """
     try:
-        enhanced_requirements = await enhance_job_requirements(request.job_requirements)
+        enhanced_requirements = await enhance_job_requirements(
+            job_requirements=request.job_requirements,
+            job_title=request.job_title,
+            industry=request.industry,
+            job_skills=request.job_skills,
+            gender=request.gender,
+            years_experience=request.years_experience,
+            age=request.age,
+            education=request.education,
+            working_type=request.working_type
+        )
         
         return JobRequirementsEnhancementResponse(
             success=True,
             enhanced_requirements=enhanced_requirements,
-            message="Job requirements enhanced successfully"
+            message="Persyaratan pekerjaan berhasil ditingkatkan"
         )
                 
     except Exception as e:
         return JobRequirementsEnhancementResponse(
             success=False,
             error=str(e),
-            message="Failed to enhance job requirements"
+            message="Gagal meningkatkan persyaratan pekerjaan"
         )
 
 

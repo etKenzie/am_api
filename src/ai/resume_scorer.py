@@ -545,6 +545,24 @@ indonesian_check_agent = Agent(
 )
 
 @output_guardrail
+async def indonesian_guardrail_job_enhancement(
+    ctx: RunContextWrapper, agent: Agent, output: EnhancedJobRequirements
+) -> GuardrailFunctionOutput:
+    """
+    Guardrail to ensure job enhancement output is in Indonesian language.
+    """
+    # Check if the enhanced requirements text is in Indonesian
+    result = await Runner.run(indonesian_check_agent, output.enhanced_requirements, context=ctx.context)
+    
+    # Trip the guardrail if the text is NOT in Indonesian
+    tripwire_triggered = not result.final_output.is_indonesian
+    
+    return GuardrailFunctionOutput(
+        output_info=result.final_output,
+        tripwire_triggered=tripwire_triggered,
+    )
+
+@output_guardrail
 async def indonesian_guardrail(
     ctx: RunContextWrapper, agent: Agent, output: FinalOutput
 ) -> GuardrailFunctionOutput:
@@ -647,7 +665,19 @@ resume_scoring_agent = Agent(
 job_enhancement_agent = Agent(
     name="Job Requirements Enhancement Specialist",
     instructions="""
-    You are a job requirements enhancement specialist. Your task is to take raw job requirements and transform them into a well-structured, clear, and professional format.
+    You are a job requirements enhancement specialist. Your task is to take raw job requirements and transform them into a well-structured, clear, and professional format using additional context information when available.
+    
+    INPUT FORMAT:
+    You will receive a JSON object with:
+    - job_requirements: The main job requirements text (required)
+    - job_title: Job title (optional)
+    - industry: Industry sector (optional)
+    - job_skills: Required skills (optional)
+    - gender: Gender preference (optional)
+    - years_experience: Years of experience required (optional)
+    - age: Age requirements (optional)
+    - education: Education requirements (optional)
+    - working_type: Working arrangement (optional)
     
     ENHANCEMENT REQUIREMENTS:
     
@@ -658,11 +688,15 @@ job_enhancement_agent = Agent(
        - Use proper spacing and structure
     
     2. CONTENT IMPROVEMENT:
-       - Clarify vague or ambiguous requirements
-       - Add missing important details
+       - Use the main job_requirements as the foundation
+       - Use additional context from optional fields to better understand and enhance the requirements
+       - Add missing important details based on the context information
        - Remove redundancy
        - Make language more professional and specific
        - Ensure requirements are actionable and measurable
+       - Use job_title, industry, and job_skills to provide more specific and relevant requirements
+       - DO NOT restate or repeat the candidate criteria (age, education, gender, years_experience) in the output
+       - Focus on job requirements, not candidate qualifications
     
     3. CHARACTER LIMIT:
        - Maximum 500 characters total
@@ -681,12 +715,21 @@ job_enhancement_agent = Agent(
        - Use professional Indonesian terminology
        - Translate technical terms appropriately
     
+    CONTEXT UTILIZATION:
+    - If job_title is provided, use it to make requirements more specific to that role
+    - If industry is provided, tailor requirements to that industry's standards
+    - If job_skills are provided, incorporate them into the skills requirements
+    - If working_type is provided, include working arrangement details
+    - Use years_experience, age, education, and gender as context to better understand the role, but DO NOT include them in the output
+    - Focus on what the job requires, not what the candidate should have
+    
     OUTPUT REQUIREMENTS:
     - enhanced_requirements: Well-formatted job requirements with bullet points
     - Must be exactly 500 characters or less
     - Each requirement should be on a new line with bullet point
     - Professional and clear language
     - Comprehensive but concise
+    - Enhanced with context information when available
     
     EXAMPLE FORMAT (Indonesian):
     • Gelar Sarjana Teknik Informatika atau bidang terkait
@@ -695,20 +738,48 @@ job_enhancement_agent = Agent(
     • Kemampuan pemecahan masalah yang kuat
     • Pengalaman kolaborasi tim
     
-    IMPORTANT: Keep the output under 500 characters and use bullet point formatting.
+    IMPORTANT: Keep the output under 500 characters and use bullet point formatting. Use all available context information to enhance the requirements.
     """,
     output_type=EnhancedJobRequirements,
-    model=MODEL
+    model=MODEL,
+    output_guardrails=[indonesian_guardrail_job_enhancement]
 )
 
-async def enhance_job_requirements(job_requirements: str) -> str:
+async def enhance_job_requirements(
+    job_requirements: str,
+    job_title: str = None,
+    industry: str = None,
+    job_skills: str = None,
+    gender: str = None,
+    years_experience: str = None,
+    age: str = None,
+    education: str = None,
+    working_type: str = None
+) -> str:
     """
     Enhance job requirements with bullet point formatting and character limit.
+    Uses additional context information when available to provide more complete requirements.
     """
     try:
+        # Create input data with all available context
+        input_data = {
+            "job_requirements": job_requirements,
+            "job_title": job_title,
+            "industry": industry,
+            "job_skills": job_skills,
+            "gender": gender,
+            "years_experience": years_experience,
+            "age": age,
+            "education": education,
+            "working_type": working_type
+        }
+        
+        # Remove None values to keep the input clean
+        input_data = {k: v for k, v in input_data.items() if v is not None}
+        
         result = await safe_runner_run(
             job_enhancement_agent,
-            job_requirements
+            json.dumps(input_data)
         )
         
         if not isinstance(result.final_output, EnhancedJobRequirements):
