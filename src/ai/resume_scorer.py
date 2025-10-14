@@ -83,15 +83,15 @@ class ResumeScore(BaseModel):
     skill_score: float = Field(description="Score for skills match (0.0 to 4.0)")
     experience_score: float = Field(description="Score for experience match (0.0 to 4.5)")
     education_score: float = Field(description="Score for education match (0.0 to 1.0)")
-    other_factors_score: float = Field(description="Score for other factors like projects, achievements, additional qualifications (0.0 to 0.5 MAXIMUM)")
+    others_score: float = Field(description="Score for other factors like projects, achievements, additional qualifications (0.0 to 0.5 MAXIMUM)")
     strengths: List[str] = Field(description="List of candidate's strengths")
     weaknesses: List[str] = Field(description="List of candidate's weaknesses")
     breakdown: str = Field(description="High-level summary of overall assessment")
     summary: str = Field(description="Overall summary of the candidate's fit")
     
-    @field_validator('other_factors_score')
+    @field_validator('others_score')
     @classmethod
-    def validate_other_factors_score(cls, v):
+    def validate_others_score(cls, v):
         if v > 0.5:
             return 0.5  # Cap at 0.5
         if v < 0.0:
@@ -451,11 +451,11 @@ final_scoring_agent = Agent(
     CONSISTENCY REQUIREMENTS:
     - Use the EXACT scores provided by the individual agents
     - Do NOT modify or recalculate the skill_score, experience_score, or education_score
-    - Only calculate the other_factors_score and overall_score
-    - Be consistent in your other_factors_score calculation
+    - Only calculate the others_score and overall_score
+    - Be consistent in your others_score calculation
     
-    MANDATORY OTHER_FACTORS_SCORE RULES:
-    - other_factors_score MUST be between 0.0 and 0.5 (inclusive)
+    MANDATORY OTHERS_SCORE RULES:
+    - others_score MUST be between 0.0 and 0.5 (inclusive)
     - If your calculation results in more than 0.5, you MUST set it to exactly 0.5
     - This is a HARD LIMIT that cannot be exceeded under any circumstances
     - Double-check your calculation before outputting the final result
@@ -468,15 +468,15 @@ final_scoring_agent = Agent(
     - Resume data and job requirements for context
     
     FINAL SCORING METHODOLOGY:
-    - Overall Score = skill_score + experience_score + education_score + other_factors_score
-    - Other factors score (0.0 to 0.5): Projects, achievements, additional qualifications
-    - Calculate other_factors_score based on (CAP AT 0.5):
+    - Overall Score = skill_score + experience_score + education_score + others_score
+    - Others score (0.0 to 0.5): Projects, achievements, additional qualifications
+    - Calculate others_score based on (CAP AT 0.5):
       * Relevant projects: +0.2 points for significant projects (max 1 project)
       * Notable achievements: +0.1 points for relevant achievements (max 1 achievement)
       * Additional qualifications: +0.1 points for relevant certifications/training (max 1 qualification)
       * Leadership experience: +0.1 points for relevant leadership roles (max 1 leadership role)
       * TOTAL CAP: 0.5 maximum (even if sum exceeds 0.5)
-    - VALIDATION STEP: Before finalizing, check if other_factors_score > 0.5, if yes, set to 0.5
+    - VALIDATION STEP: Before finalizing, check if others_score > 0.5, if yes, set to 0.5
     - Maximum possible score: 10.0
     
     EVALUATION CRITERIA:
@@ -490,17 +490,17 @@ final_scoring_agent = Agent(
     - skill_score: From skill extractor agent
     - experience_score: From experience scoring agent
     - education_score: From education scoring agent
-    - other_factors_score: Score for projects, achievements, additional qualifications (0.0 to 0.5 MAXIMUM)
+    - others_score: Score for projects, achievements, additional qualifications (0.0 to 0.5 MAXIMUM)
     - strengths: List of candidate's key strengths (in Indonesian)
     - weaknesses: List of candidate's key weaknesses (in Indonesian)
     - breakdown: High-level summary of overall assessment (in Indonesian, no point details)
     - summary: Overall assessment of candidate fit (in Indonesian)
     
-    CRITICAL: other_factors_score MUST NEVER exceed 0.5. If calculated sum exceeds 0.5, cap it at 0.5.
+    CRITICAL: others_score MUST NEVER exceed 0.5. If calculated sum exceeds 0.5, cap it at 0.5.
     
     FINAL VALIDATION CHECKLIST:
-    1. Is other_factors_score <= 0.5? If NO, set to 0.5
-    2. Is overall_score = skill_score + experience_score + education_score + other_factors_score?
+    1. Is others_score <= 0.5? If NO, set to 0.5
+    2. Is overall_score = skill_score + experience_score + education_score + others_score?
     3. Are all scores within their valid ranges?
     
     Make sure to follow the exact schema provided in the ResumeScore model.
