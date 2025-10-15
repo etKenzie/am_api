@@ -9,11 +9,11 @@ try:
     from ..db import get_db
 except ImportError:
     # Fall back to absolute imports (for local development)
-    from kasbon import crud, schemas
+    from loan import crud, schemas
     from db import get_db
 
 
-router = APIRouter(prefix="/kasbon", tags=["kasbon"])
+router = APIRouter(prefix="/loan", tags=["loan"])
 
 
 @router.get("/karyawan", response_model=schemas.KaryawanEnhancedListResponse)
@@ -61,7 +61,7 @@ async def get_karyawan(
 async def get_client_summary(
     month: int = None,
     year: int = None,
-    loan_type: str = "kasbon",
+    loan_type: str = "loan",
     db: Session = Depends(get_db)
 ):
     """Get comprehensive client summary with disbursement and other metrics"""
@@ -97,7 +97,7 @@ async def get_summary(
     project: str = None, 
     db: Session = Depends(get_db)
 ):
-    """Get kasbon summary with eligible count and kasbon request metrics"""
+    """Get loan summary with eligible count and loan request metrics"""
     try:
         coverage_summary = crud.get_user_coverage_summary(
             db, 
@@ -113,8 +113,8 @@ async def get_summary(
         return {
             "status": "success",
             "total_eligible_employees": coverage_summary["total_eligible_employees"],
-            "total_processed_kasbon_requests": coverage_summary["total_processed_kasbon_requests"],
-            "total_pending_kasbon_requests": coverage_summary["total_pending_kasbon_requests"],
+            "total_processed_loan_requests": coverage_summary["total_processed_loan_requests"],
+            "total_pending_loan_requests": coverage_summary["total_pending_loan_requests"],
             "total_first_borrow": coverage_summary["total_first_borrow"],
             "total_approved_requests": coverage_summary["total_approved_requests"],
             "total_rejected_requests": coverage_summary["total_rejected_requests"],
@@ -132,8 +132,8 @@ async def get_summary(
             "status": "error",
             "message": str(e),
             "total_eligible_employees": 0,
-            "total_processed_kasbon_requests": 0,
-            "total_pending_kasbon_requests": 0,
+            "total_processed_loan_requests": 0,
+            "total_pending_loan_requests": 0,
             "total_first_borrow": 0,
             "total_approved_requests": 0,
             "total_rejected_requests": 0,
@@ -143,48 +143,6 @@ async def get_summary(
             "approval_rate": 0,
             "average_approval_time": 0,
             "penetration_rate": 0
-        }
-
-
-@router.get("/user-coverage", response_model=schemas.UserCoverageResponse)
-async def get_user_coverage(
-    month: int = None,
-    year: int = None,
-    id_karyawan: int = None,
-    employer: str = None, 
-    sourced_to: str = None, 
-    project: str = None, 
-    db: Session = Depends(get_db)
-):
-    """Get user coverage metrics: total_eligible_employees, total_kasbon_requests, penetration_rate, total_first_borrow"""
-    try:
-        coverage_data = crud.get_user_coverage_endpoint(
-            db, 
-            id_karyawan_filter=id_karyawan,
-            employer_filter=employer,
-            sourced_to_filter=sourced_to,
-            project_filter=project,
-            month_filter=month,
-            year_filter=year
-        )
-        
-        # Return structured response
-        return {
-            "status": "success",
-            "total_eligible_employees": coverage_data["total_eligible_employees"],
-            "total_kasbon_requests": coverage_data["total_kasbon_requests"],
-            "penetration_rate": coverage_data["penetration_rate"],
-            "total_first_borrow": coverage_data["total_first_borrow"]
-        }
-    except Exception as e:
-        # Return error response with status
-        return {
-            "status": "error",
-            "message": str(e),
-            "total_eligible_employees": 0,
-            "total_kasbon_requests": 0,
-            "penetration_rate": 0,
-            "total_first_borrow": 0
         }
 
 
@@ -270,44 +228,6 @@ async def get_disbursement(
         }
 
 
-@router.get("/user-coverage-monthly", response_model=schemas.UserCoverageMonthlyResponse)
-async def get_user_coverage_monthly(
-    start_date: str,
-    end_date: str,
-    id_karyawan: int = None,
-    employer: str = None, 
-    sourced_to: str = None, 
-    project: str = None, 
-    db: Session = Depends(get_db)
-):
-    """Get user coverage monthly data: eligible employees and kasbon applicants by month"""
-    try:
-        monthly_coverage = crud.get_user_coverage_monthly_endpoint(
-            db, 
-            start_date=start_date,
-            end_date=end_date,
-            id_karyawan_filter=id_karyawan,
-            employer_filter=employer,
-            sourced_to_filter=sourced_to,
-            project_filter=project
-        )
-        
-
-        
-        # Return structured response
-        return {
-            "status": "success",
-            "monthly_data": monthly_coverage
-        }
-    except Exception as e:
-        # Return error response with status
-        return {
-            "status": "error",
-            "message": str(e),
-            "monthly_data": {}
-        }
-
-
 @router.get("/disbursement-monthly", response_model=schemas.DisbursementMonthlyResponse)
 async def get_disbursement_monthly(
     start_date: str,
@@ -356,7 +276,7 @@ async def get_summary_monthly(
     project: str = None, 
     db: Session = Depends(get_db)
 ):
-    """Get kasbon summary monthly data with eligible count and kasbon request metrics"""
+    """Get loan summary monthly data with eligible count and loan request metrics"""
     
     try:
         monthly_coverage = crud.get_user_coverage_monthly_summary(
@@ -467,7 +387,7 @@ async def get_loan_purpose_summary(
 async def get_available_filters(
     employer: str = None, 
     placement: str = None,
-    loan_type: str = "kasbon",
+    loan_type: str = "loan",
     db: Session = Depends(get_db)
 ):
     """Get available filter values for enhanced karyawan queries with cascading filters"""
@@ -616,20 +536,20 @@ async def get_loan_risk(
         # Return structured response
         return {
             "status": "success",
-            "total_unrecovered_kasbon": risk_summary["total_unrecovered_kasbon"],
-            "unrecovered_kasbon_count": risk_summary["unrecovered_kasbon_count"],
+            "total_unrecovered_loan": risk_summary["total_unrecovered_loan"],
+            "unrecovered_loan_count": risk_summary["unrecovered_loan_count"],
             "total_expected_repayment": risk_summary["total_expected_repayment"],
-            "kasbon_principal_recovery_rate": risk_summary["kasbon_principal_recovery_rate"]
+            "loan_principal_recovery_rate": risk_summary["loan_principal_recovery_rate"]
         }
     except Exception as e:
         # Return error response with status
         return {
             "status": "error",
             "message": str(e),
-            "total_unrecovered_kasbon": 0,
-            "unrecovered_kasbon_count": 0,
+            "total_unrecovered_loan": 0,
+            "unrecovered_loan_count": 0,
             "total_expected_repayment": 0,
-            "kasbon_principal_recovery_rate": 0
+            "loan_principal_recovery_rate": 0
         }
 
 
@@ -687,7 +607,7 @@ async def get_karyawan_overdue(
     id_karyawan: int = None,
     month: int = None,
     year: int = None,
-    loan_type: str = "kasbon",
+    loan_type: str = "loan",
     db: Session = Depends(get_db)
 ):
     """Get karyawan data for those with overdue loans (status 4)"""
@@ -731,7 +651,7 @@ async def get_repayment_risk(
     project: str = None,
     loan_status: int = None,
     id_karyawan: int = None,
-    loan_type: str = "kasbon",
+    loan_type: str = "loan",
     db: Session = Depends(get_db)
 ):
     """Get repayment risk summary with various repayment and risk metrics"""
@@ -754,10 +674,10 @@ async def get_repayment_risk(
         return {
             "status": "success",
             "total_expected_repayment": repayment_risk_summary["total_expected_repayment"],
-            "total_kasbon_principal_collected": repayment_risk_summary["total_kasbon_principal_collected"],
+            "total_loan_principal_collected": repayment_risk_summary["total_loan_principal_collected"],
             "total_admin_fee_collected": repayment_risk_summary["total_admin_fee_collected"],
             "total_unrecovered_repayment": repayment_risk_summary["total_unrecovered_repayment"],
-            "total_unrecovered_kasbon_principal": repayment_risk_summary["total_unrecovered_kasbon_principal"],
+            "total_unrecovered_loan_principal": repayment_risk_summary["total_unrecovered_loan_principal"],
             "total_unrecovered_admin_fee": repayment_risk_summary["total_unrecovered_admin_fee"],
             "repayment_recovery_rate": repayment_risk_summary["repayment_recovery_rate"],
             "delinquencies_rate": repayment_risk_summary["delinquencies_rate"],
@@ -769,10 +689,10 @@ async def get_repayment_risk(
             "status": "error",
             "message": str(e),
             "total_expected_repayment": 0,
-            "total_kasbon_principal_collected": 0,
+            "total_loan_principal_collected": 0,
             "total_admin_fee_collected": 0,
             "total_unrecovered_repayment": 0,
-            "total_unrecovered_kasbon_principal": 0,
+            "total_unrecovered_loan_principal": 0,
             "total_unrecovered_admin_fee": 0,
             "repayment_recovery_rate": 0,
             "delinquencies_rate": 0,
@@ -789,7 +709,7 @@ async def get_repayment_risk_monthly(
     project: str = None,
     loan_status: int = None,
     id_karyawan: int = None,
-    loan_type: str = "kasbon",
+    loan_type: str = "loan",
     db: Session = Depends(get_db)
 ):
     """Get repayment risk summary separated by months within a date range
@@ -836,7 +756,7 @@ async def get_coverage_utilization(
     project: str = None,
     loan_status: int = None,
     id_karyawan: int = None,
-    loan_type: str = "kasbon",
+    loan_type: str = "loan",
     db: Session = Depends(get_db)
 ):
     """Get comprehensive coverage and utilization summary combining multiple metrics"""
@@ -900,7 +820,7 @@ async def get_coverage_utilization_monthly(
     project: str = None,
     loan_status: int = None,
     id_karyawan: int = None,
-    loan_type: str = "kasbon",
+    loan_type: str = "loan",
     db: Session = Depends(get_db)
 ):
     """Get coverage utilization summary separated by months within a date range

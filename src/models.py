@@ -8,4 +8,4 @@ from sqlalchemy.ext.declarative import declarative_base
 Base = declarative_base()
 
 # Note: We don't define actual models here since we're using raw SQL queries
-# in the kasbon module. This file exists only to satisfy the import in main.py
+# in the loan module. This file exists only to satisfy the import in main.py

@@ -29,8 +29,8 @@ class KaryawanEnhancedListResponse(BaseModel):
 class SummaryResponse(BaseModel):
     status: str
     total_eligible_employees: int
-    total_processed_kasbon_requests: int
-    total_pending_kasbon_requests: int
+    total_processed_loan_requests: int
+    total_pending_loan_requests: int
     total_first_borrow: int
     total_approved_requests: int
     total_rejected_requests: int
@@ -40,18 +40,6 @@ class SummaryResponse(BaseModel):
     approval_rate: float
     average_approval_time: float
     penetration_rate: float
-    message: Optional[str] = None
-
-    class Config:
-        from_attributes = True
-
-
-class UserCoverageResponse(BaseModel):
-    status: str
-    total_eligible_employees: int
-    total_kasbon_requests: int
-    penetration_rate: float
-    total_first_borrow: int
     message: Optional[str] = None
 
     class Config:
@@ -80,27 +68,6 @@ class DisbursementResponse(BaseModel):
         from_attributes = True
 
 
-class MonthlyUserCoverageData(BaseModel):
-    total_eligible_employees: int
-    total_kasbon_requests: int
-    total_first_borrow: int
-    total_approved_requests: int
-    total_disbursed_amount: int
-    penetration_rate: float
-
-    class Config:
-        from_attributes = True
-
-
-class UserCoverageMonthlyResponse(BaseModel):
-    status: str
-    monthly_data: dict[str, MonthlyUserCoverageData]
-    message: Optional[str] = None
-
-    class Config:
-        from_attributes = True
-
-
 class MonthlyDisbursementData(BaseModel):
     total_disbursed_amount: int
     total_loans: int
@@ -121,7 +88,7 @@ class DisbursementMonthlyResponse(BaseModel):
 
 class MonthlySummaryData(BaseModel):
     total_eligible_employees: int
-    total_processed_kasbon_requests: int
+    total_processed_loan_requests: int
     total_disbursed_amount: int
     penetration_rate: float
 
@@ -214,10 +181,10 @@ class LoanFeesMonthlyResponse(BaseModel):
 
 class LoanRiskResponse(BaseModel):
     status: str
-    total_unrecovered_kasbon: int
-    unrecovered_kasbon_count: int
+    total_unrecovered_loan: int
+    unrecovered_loan_count: int
     total_expected_repayment: int
-    kasbon_principal_recovery_rate: float
+    loan_principal_recovery_rate: float
     message: Optional[str] = None
 
     class Config:
@@ -225,10 +192,10 @@ class LoanRiskResponse(BaseModel):
 
 
 class MonthlyLoanRiskData(BaseModel):
-    total_unrecovered_kasbon: int
-    unrecovered_kasbon_count: int
+    total_unrecovered_loan: int
+    unrecovered_loan_count: int
     total_expected_repayment: int
-    kasbon_principal_recovery_rate: float
+    loan_principal_recovery_rate: float
 
     class Config:
         from_attributes = True
@@ -296,10 +263,10 @@ class RepaymentRiskResponse(BaseModel):
     """Response model for repayment risk summary data"""
     status: str
     total_expected_repayment: int
-    total_kasbon_principal_collected: int
+    total_loan_principal_collected: int
     total_admin_fee_collected: int
     total_unrecovered_repayment: int
-    total_unrecovered_kasbon_principal: int
+    total_unrecovered_loan_principal: int
     total_unrecovered_admin_fee: int
     repayment_recovery_rate: float
     delinquencies_rate: float
@@ -314,7 +281,7 @@ class MonthlyRepaymentRiskData(BaseModel):
     """Monthly data for repayment risk summary"""
     repayment_recovery_rate: float
     total_expected_repayment: int
-    total_kasbon_principal_collected: int
+    total_loan_principal_collected: int
     total_unrecovered_repayment: int
     admin_fee_profit: int
 

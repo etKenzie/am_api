@@ -47,7 +47,7 @@ class ChatResponse(BaseModel):
 
 class AnalysisRequest(BaseModel):
     """Schema for data analysis requests"""
-    data_type: str  # "kasbon", "extradana", "general"
+    data_type: str  # "loan", "extradana", "general"
     analysis_type: str  # "summary", "trends", "insights", "recommendations"
     filters: Optional[Dict[str, Any]] = None
     date_range: Optional[Dict[str, str]] = None
