@@ -78,16 +78,13 @@ class EducationScore(BaseModel):
     certifications: List[str] = Field(description="List of relevant certifications")
     education_breakdown: str = Field(description="High-level summary of education relevance")
 
-class ResumeScore(BaseModel):
-    overall_score: float = Field(description="Overall score out of 10")
-    skill_score: float = Field(description="Score for skills match (0.0 to 4.0)")
-    experience_score: float = Field(description="Score for experience match (0.0 to 4.5)")
-    education_score: float = Field(description="Score for education match (0.0 to 1.0)")
-    others_score: float = Field(description="Score for other factors like projects, achievements, additional qualifications (0.0 to 0.5 MAXIMUM)")
-    strengths: List[str] = Field(description="List of candidate's strengths")
-    weaknesses: List[str] = Field(description="List of candidate's weaknesses")
-    breakdown: str = Field(description="High-level summary of overall assessment")
-    summary: str = Field(description="Overall summary of the candidate's fit")
+class OthersScore(BaseModel):
+    others_score: float = Field(description="Score for other factors like projects, achievements, additional qualifications (0.0 to 0.5)")
+    relevant_projects: List[str] = Field(description="List of relevant projects found")
+    notable_achievements: List[str] = Field(description="List of notable achievements found")
+    additional_qualifications: List[str] = Field(description="List of additional qualifications found")
+    leadership_experience: List[str] = Field(description="List of leadership experience found")
+    others_breakdown: str = Field(description="High-level summary of other factors relevance")
     
     @field_validator('others_score')
     @classmethod
@@ -97,6 +94,17 @@ class ResumeScore(BaseModel):
         if v < 0.0:
             return 0.0  # Ensure non-negative
         return v
+
+class ResumeScore(BaseModel):
+    overall_score: float = Field(description="Overall score out of 10")
+    skill_score: float = Field(description="Score for skills match (0.0 to 4.0)")
+    experience_score: float = Field(description="Score for experience match (0.0 to 4.5)")
+    education_score: float = Field(description="Score for education match (0.0 to 1.0)")
+    others_score: float = Field(description="Score for other factors like projects, achievements, additional qualifications (0.0 to 0.5)")
+    strengths: List[str] = Field(description="List of candidate's strengths")
+    weaknesses: List[str] = Field(description="List of candidate's weaknesses")
+    breakdown: str = Field(description="High-level summary of overall assessment")
+    summary: str = Field(description="Overall summary of the candidate's fit")
 
 class ExperienceRelevance(BaseModel):
     relevance_explanation: str = Field(description="Penjelasan detail tentang bagaimana pengalaman kerja kandidat berkaitan dengan tujuan dan persyaratan pekerjaan (dalam bahasa Indonesia)")
@@ -435,6 +443,61 @@ education_scoring_agent = Agent(
     model=MODEL,
 )
 
+others_scoring_agent = Agent(
+    name="Others Scoring Specialist",
+    instructions="""
+    You are an others scoring specialist. Your task is to evaluate other factors like projects, achievements, additional qualifications, and leadership experience against job requirements.
+    
+    IMPORTANT: All text output must be in Indonesian language (Bahasa Indonesia).
+    
+    BREAKDOWN STYLE REQUIREMENTS:
+    - Provide high-level, abstract summary of other factors relevance
+    - Focus on overall fit and alignment with job requirements
+    - Avoid detailed point calculations or scoring explanations
+    - Keep it concise and professional
+    
+    SCORING METHODOLOGY (0.0 to 0.5 scale):
+    1. RELEVANT PROJECTS:
+       - Significant projects relevant to job: +0.2 points (max 1 project)
+       - Minor projects: +0.1 points (max 1 project)
+    
+    2. NOTABLE ACHIEVEMENTS:
+       - Relevant achievements: +0.1 points (max 1 achievement)
+       - Industry recognition: +0.1 points (max 1 recognition)
+    
+    3. ADDITIONAL QUALIFICATIONS:
+       - Relevant certifications/training: +0.1 points (max 1 qualification)
+       - Professional development: +0.1 points (max 1 development)
+    
+    4. LEADERSHIP EXPERIENCE:
+       - Relevant leadership roles: +0.1 points (max 1 leadership role)
+       - Team management: +0.1 points (max 1 management role)
+    
+    CALCULATION RULES (BE CONSISTENT AND DETERMINISTIC):
+    - Start with base score of 0.0
+    - Add points according to methodology above
+    - Cap total score at 0.5 (HARD LIMIT)
+    - Use precise decimals (e.g., 0.3, 0.4)
+    - ALWAYS apply the same criteria for similar project types
+    - Be consistent in achievement relevance assessment
+    - Use the same qualification classification criteria
+    
+    OUTPUT REQUIREMENTS:
+    - others_score: Final calculated score (0.0 to 0.5) - MUST NOT EXCEED 0.5
+    - relevant_projects: List of relevant projects found (in Indonesian)
+    - notable_achievements: List of notable achievements found (in Indonesian)
+    - additional_qualifications: List of additional qualifications found (in Indonesian)
+    - leadership_experience: List of leadership experience found (in Indonesian)
+    - others_breakdown: High-level summary of other factors relevance (in Indonesian, no point details)
+    
+    CRITICAL: others_score MUST NEVER exceed 0.5. If calculated sum exceeds 0.5, cap it at 0.5.
+    
+    Make sure to follow the exact schema provided in the OthersScore model.
+    """,
+    output_type=OthersScore,
+    model=MODEL,
+)
+
 final_scoring_agent = Agent(
     name="Final Scoring Coordinator",
     instructions="""
@@ -449,34 +512,26 @@ final_scoring_agent = Agent(
     - Keep it concise and professional
     
     CONSISTENCY REQUIREMENTS:
-    - Use the EXACT scores provided by the individual agents
-    - Do NOT modify or recalculate the skill_score, experience_score, or education_score
-    - Only calculate the others_score and overall_score
-    - Be consistent in your others_score calculation
-    
-    MANDATORY OTHERS_SCORE RULES:
-    - others_score MUST be between 0.0 and 0.5 (inclusive)
-    - If your calculation results in more than 0.5, you MUST set it to exactly 0.5
-    - This is a HARD LIMIT that cannot be exceeded under any circumstances
-    - Double-check your calculation before outputting the final result
+    - Use the EXACT scores provided by ALL individual agents
+    - Do NOT modify or recalculate ANY of the component scores
+    - Do NOT calculate others_score - it comes from the Others Scoring Agent
+    - MATHEMATICAL REQUIREMENT: overall_score MUST equal skill_score + experience_score + education_score + others_score
+    - DO NOT add any bonus points, adjustments, or modifications to the overall_score
+    - The overall_score is purely a mathematical sum - no interpretation or assessment needed
     
     INPUT:
     You will receive scores from:
     - Skill Extractor Agent (skill_score: 0.0 to 4.0)
     - Experience Scoring Agent (experience_score: 0.0 to 4.5)
     - Education Scoring Agent (education_score: 0.0 to 1.0)
+    - Others Scoring Agent (others_score: 0.0 to 0.5)
     - Resume data and job requirements for context
     
     FINAL SCORING METHODOLOGY:
-    - Overall Score = skill_score + experience_score + education_score + others_score
-    - Others score (0.0 to 0.5): Projects, achievements, additional qualifications
-    - Calculate others_score based on (CAP AT 0.5):
-      * Relevant projects: +0.2 points for significant projects (max 1 project)
-      * Notable achievements: +0.1 points for relevant achievements (max 1 achievement)
-      * Additional qualifications: +0.1 points for relevant certifications/training (max 1 qualification)
-      * Leadership experience: +0.1 points for relevant leadership roles (max 1 leadership role)
-      * TOTAL CAP: 0.5 maximum (even if sum exceeds 0.5)
-    - VALIDATION STEP: Before finalizing, check if others_score > 0.5, if yes, set to 0.5
+    - CRITICAL: Overall Score MUST be calculated as: skill_score + experience_score + education_score + others_score
+    - This is a MATHEMATICAL FORMULA that must be followed exactly - no exceptions
+    - Use the others_score provided by the Others Scoring Agent - do NOT recalculate it
+    - MANDATORY CALCULATION: overall_score = skill_score + experience_score + education_score + others_score
     - Maximum possible score: 10.0
     
     EVALUATION CRITERIA:
@@ -487,21 +542,22 @@ final_scoring_agent = Agent(
     
     OUTPUT REQUIREMENTS:
     - overall_score: Sum of all component scores (0.0 to 10.0)
-    - skill_score: From skill extractor agent
-    - experience_score: From experience scoring agent
-    - education_score: From education scoring agent
-    - others_score: Score for projects, achievements, additional qualifications (0.0 to 0.5 MAXIMUM)
+    - skill_score: From skill extractor agent (DO NOT MODIFY)
+    - experience_score: From experience scoring agent (DO NOT MODIFY)
+    - education_score: From education scoring agent (DO NOT MODIFY)
+    - others_score: From others scoring agent (DO NOT MODIFY)
     - strengths: List of candidate's key strengths (in Indonesian)
     - weaknesses: List of candidate's key weaknesses (in Indonesian)
     - breakdown: High-level summary of overall assessment (in Indonesian, no point details)
     - summary: Overall assessment of candidate fit (in Indonesian)
     
-    CRITICAL: others_score MUST NEVER exceed 0.5. If calculated sum exceeds 0.5, cap it at 0.5.
-    
     FINAL VALIDATION CHECKLIST:
-    1. Is others_score <= 0.5? If NO, set to 0.5
-    2. Is overall_score = skill_score + experience_score + education_score + others_score?
-    3. Are all scores within their valid ranges?
+    1. CRITICAL: Is overall_score = skill_score + experience_score + education_score + others_score? 
+       - If NO, recalculate overall_score using the exact formula above
+       - This is a mathematical requirement, not a suggestion
+    2. Are all scores within their valid ranges?
+    3. Double-check: overall_score should be exactly the sum of the four component scores
+    4. Verify: All component scores are used exactly as provided by their respective agents
     
     Make sure to follow the exact schema provided in the ResumeScore model.
     """,
@@ -874,11 +930,31 @@ async def score_resume(
 
         education_score = education_score_result.final_output
 
-        # STEP 6: Run Final Scoring Agent
+        # STEP 6: Run Others Scoring Agent
+        others_input = json.dumps({
+            "resume_text": resume_text,
+            "job_description": job_description
+        })
+
+        others_score_result = await safe_runner_run(
+            others_scoring_agent,
+            others_input
+        )
+
+        if not isinstance(others_score_result.final_output, OthersScore):
+            raise TypeError("Others Scoring Agent returned wrong type")
+
+        print("\nOthers Scoring Result:")
+        print(others_score_result)
+
+        others_score = others_score_result.final_output
+
+        # STEP 7: Run Final Scoring Agent
         final_scoring_input = json.dumps({
             "skill_score": skills_found.skill_score,
             "experience_score": experience_score.experience_score,
             "education_score": education_score.education_score,
+            "others_score": others_score.others_score,
             "resume_text": resume_text,
             "skills_found": skills_found.model_dump(),
             "job_description": job_description
@@ -896,15 +972,31 @@ async def score_resume(
         print(final_score_result)
 
         result = final_score_result.final_output
+        
+        # VALIDATION: Ensure overall_score equals the sum of components
+        expected_overall_score = result.skill_score + result.experience_score + result.education_score + result.others_score
+        print(f"DEBUG: Checking overall_score validation:")
+        print(f"  - Current overall_score: {result.overall_score}")
+        print(f"  - Expected sum: {expected_overall_score}")
+        print(f"  - Difference: {abs(result.overall_score - expected_overall_score)}")
+        
+        if abs(result.overall_score - expected_overall_score) > 0.01:  # Allow for small floating point differences
+            print(f"WARNING: overall_score ({result.overall_score}) does not match sum of components ({expected_overall_score})")
+            print(f"Correcting overall_score to {expected_overall_score}")
+            result.overall_score = expected_overall_score
+            print(f"DEBUG: After correction - overall_score: {result.overall_score}")
+        else:
+            print(f"DEBUG: overall_score validation passed")
 
-        # STEP 7: Run Final Evaluation Agent
+        # STEP 8: Run Final Evaluation Agent
         evaluation_input = json.dumps({
             "result": result.model_dump(),
             "job_description": job_description,
             "resume_text": resume_text,
             "skills_found": skills_found.model_dump(),
             "experience_score": experience_score.model_dump(),
-            "education_score": education_score.model_dump()
+            "education_score": education_score.model_dump(),
+            "others_score": others_score.model_dump()
         })
 
         resume_evaluation = await safe_runner_run(
@@ -915,11 +1007,19 @@ async def score_resume(
         if not isinstance(resume_evaluation.final_output, FinalOutput):
             raise TypeError("Resume Scoring Coordinator returned wrong type")
 
+        # FINAL VALIDATION: Ensure overall_score is correct before returning
+        final_expected_score = result.skill_score + result.experience_score + result.education_score + result.others_score
+        if abs(result.overall_score - final_expected_score) > 0.01:
+            print(f"FINAL WARNING: overall_score still incorrect ({result.overall_score}) vs expected ({final_expected_score})")
+            print(f"FINAL CORRECTION: Setting overall_score to {final_expected_score}")
+            result.overall_score = final_expected_score
+
         # Return a dictionary with all the serializable data
         return {
             "skills_found": skills_found.model_dump(),
             "experience_score": experience_score.model_dump(),
             "education_score": education_score.model_dump(),
+            "others_score": others_score.model_dump(),
             "scoring": result.model_dump(),
             "evaluation": resume_evaluation.final_output.model_dump()
         }
@@ -1016,11 +1116,31 @@ async def score_pdf(
 
         education_score = education_score_result.final_output
 
-        # STEP 6: Run Final Scoring Agent
+        # STEP 6: Run Others Scoring Agent
+        others_input = json.dumps({
+            "resume_text": resume_text,
+            "job_description": job_description
+        })
+
+        others_score_result = await safe_runner_run(
+            others_scoring_agent,
+            others_input
+        )
+
+        if not isinstance(others_score_result.final_output, OthersScore):
+            raise TypeError("Others Scoring Agent returned wrong type")
+
+        print("\nOthers Scoring Result:")
+        print(others_score_result)
+
+        others_score = others_score_result.final_output
+
+        # STEP 7: Run Final Scoring Agent
         final_scoring_input = json.dumps({
             "skill_score": skills_found.skill_score,
             "experience_score": experience_score.experience_score,
             "education_score": education_score.education_score,
+            "others_score": others_score.others_score,
             "resume_text": resume_text,
             "skills_found": skills_found.model_dump(),
             "job_description": job_description
@@ -1038,15 +1158,31 @@ async def score_pdf(
         print(final_score_result)
 
         result = final_score_result.final_output
+        
+        # VALIDATION: Ensure overall_score equals the sum of components
+        expected_overall_score = result.skill_score + result.experience_score + result.education_score + result.others_score
+        print(f"DEBUG: Checking overall_score validation:")
+        print(f"  - Current overall_score: {result.overall_score}")
+        print(f"  - Expected sum: {expected_overall_score}")
+        print(f"  - Difference: {abs(result.overall_score - expected_overall_score)}")
+        
+        if abs(result.overall_score - expected_overall_score) > 0.01:  # Allow for small floating point differences
+            print(f"WARNING: overall_score ({result.overall_score}) does not match sum of components ({expected_overall_score})")
+            print(f"Correcting overall_score to {expected_overall_score}")
+            result.overall_score = expected_overall_score
+            print(f"DEBUG: After correction - overall_score: {result.overall_score}")
+        else:
+            print(f"DEBUG: overall_score validation passed")
 
-        # STEP 7: Run Final Evaluation Agent
+        # STEP 8: Run Final Evaluation Agent
         evaluation_input = json.dumps({
             "result": result.model_dump(),
             "job_description": job_description,
             "resume_text": resume_text,
             "skills_found": skills_found.model_dump(),
             "experience_score": experience_score.model_dump(),
-            "education_score": education_score.model_dump()
+            "education_score": education_score.model_dump(),
+            "others_score": others_score.model_dump()
         })
 
         resume_evaluation = await safe_runner_run(
@@ -1057,11 +1193,19 @@ async def score_pdf(
         if not isinstance(resume_evaluation.final_output, FinalOutput):
             raise TypeError("Resume Scoring Coordinator returned wrong type")
 
+        # FINAL VALIDATION: Ensure overall_score is correct before returning
+        final_expected_score = result.skill_score + result.experience_score + result.education_score + result.others_score
+        if abs(result.overall_score - final_expected_score) > 0.01:
+            print(f"FINAL WARNING: overall_score still incorrect ({result.overall_score}) vs expected ({final_expected_score})")
+            print(f"FINAL CORRECTION: Setting overall_score to {final_expected_score}")
+            result.overall_score = final_expected_score
+
         # Return a dictionary with all the serializable data
         return {
             "skills_found": skills_found.model_dump(),
             "experience_score": experience_score.model_dump(),
             "education_score": education_score.model_dump(),
+            "others_score": others_score.model_dump(),
             "scoring": result.model_dump(),
             "evaluation": resume_evaluation.final_output.model_dump()
         }
