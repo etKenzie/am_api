@@ -3827,7 +3827,7 @@ def get_client_summary(db: Session, month_filter: int = None, year_filter: int =
         employee_counts = {}
         
         # Get unique sourced_to and project combinations from the loan data first
-        combinations_query = """
+        combinations_query = f"""
         SELECT DISTINCT
             src.keterangan as sourced_to,
             prj.keterangan as project
@@ -3852,7 +3852,7 @@ def get_client_summary(db: Session, month_filter: int = None, year_filter: int =
         WHERE {loan_conditions}
         AND src.keterangan IS NOT NULL
         AND emp.keterangan IN {company_filter}
-        """.format(loan_conditions=loan_conditions)
+        """
         
         if month_filter is not None:
             combinations_query += " AND MONTH(l.proses_date) = :month"
@@ -3870,7 +3870,7 @@ def get_client_summary(db: Session, month_filter: int = None, year_filter: int =
                 key = f"{sourced_to}_{project}"
                 
                 # Use the exact same eligible count query as coverage utilization (only filter by sourced_to)
-                eligible_count_query = """
+                eligible_count_query = f"""
                 SELECT COUNT(*)
                 FROM td_karyawan tk
                 LEFT JOIN tbl_gmc emp
@@ -3900,7 +3900,7 @@ def get_client_summary(db: Session, month_filter: int = None, year_filter: int =
                 eligible_count = eligible_result.fetchone()[0] or 0
                 
                 # For active employees, we'll use the same approach but without loan_kasbon_eligible filter
-                active_count_query = """
+                active_count_query = f"""
                 SELECT COUNT(*)
                 FROM td_karyawan tk
                 LEFT JOIN tbl_gmc emp
@@ -3973,7 +3973,7 @@ def get_client_summary(db: Session, month_filter: int = None, year_filter: int =
         WHERE {loan_conditions}
         AND src.keterangan IS NOT NULL
         AND emp.keterangan IN {company_filter}
-        """.format(loan_conditions=loan_conditions)
+        """.format(loan_conditions=loan_conditions, company_filter=company_filter)
         
         # Add month and year filters to the main query (params already defined above)
         if month_filter is not None:
