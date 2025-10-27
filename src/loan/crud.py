@@ -5,6 +5,7 @@ from typing import List
 # Loan type constants
 LOAN_CONDITIONS = "l.duration = 1 AND l.loan_id != 35"
 EXTRADANA_LOAN_CONDITIONS = "l.duration != 1 AND l.disbursement != 4 AND l.loan_id != 35"
+AKU_CICIL_CONDITION = "l.loan_id = 35"
 
 
 def get_enhanced_karyawan(db: Session, limit: int = 1000000, 
@@ -1053,6 +1054,9 @@ def get_available_filter_values(db: Session, employer_filter: str = None, placem
         if loan_type == "extradana":
             # For extradana, include all three companies (based on the example query)
             company_filter = "('PT Valdo Sumber Daya Mandiri', 'PT Valdo International', 'PT Toko Pandai')"
+        elif loan_type == "aku_cicil":
+            # For aku_cicil, include all three companies
+            company_filter = "('PT Valdo Sumber Daya Mandiri', 'PT Valdo International', 'PT Toko Pandai')"
         else:
             # For loan, include all three companies
             company_filter = "('PT Valdo Sumber Daya Mandiri', 'PT Valdo International', 'PT Toko Pandai')"
@@ -1609,6 +1613,8 @@ def get_karyawan_overdue_summary(db: Session,
             loan_conditions = LOAN_CONDITIONS
         elif loan_type == "extradana":
             loan_conditions = EXTRADANA_LOAN_CONDITIONS
+        elif loan_type == "aku_cicil":
+            loan_conditions = AKU_CICIL_CONDITION
         else:
             loan_conditions = LOAN_CONDITIONS  # default to loan
         
@@ -1704,6 +1710,9 @@ def get_karyawan_overdue_summary(db: Session,
         if loan_type == "extradana":
             # For extradana, include all three companies (based on the example query)
             company_filter = "('PT Valdo Sumber Daya Mandiri', 'PT Valdo International', 'PT Toko Pandai')"
+        elif loan_type == "aku_cicil":
+            # For aku_cicil, include all three companies
+            company_filter = "('PT Valdo Sumber Daya Mandiri', 'PT Valdo International', 'PT Toko Pandai')"
         else:
             # For loan, include all three companies
             company_filter = "('PT Valdo Sumber Daya Mandiri', 'PT Valdo International', 'PT Toko Pandai')"
@@ -1739,6 +1748,12 @@ def get_karyawan_overdue_summary(db: Session,
 
             if loan_type == "extradana":
                 # For extradana, filter by due_date in td_loan_history using the example format
+                overdue_query += " AND tlh.due_date >= :start_date"
+                overdue_query += " AND tlh.due_date < :next_month_date"
+                params['start_date'] = start_date
+                params['next_month_date'] = next_month_date
+            elif loan_type == "aku_cicil":
+                # For aku_cicil, filter by due_date in td_loan_history using the example format
                 overdue_query += " AND tlh.due_date >= :start_date"
                 overdue_query += " AND tlh.due_date < :next_month_date"
                 params['start_date'] = start_date
@@ -1936,6 +1951,8 @@ def get_total_admin_fee_collected(db: Session,
             loan_conditions = LOAN_CONDITIONS
         elif loan_type == "extradana":
             loan_conditions = EXTRADANA_LOAN_CONDITIONS
+        elif loan_type == "aku_cicil":
+            loan_conditions = AKU_CICIL_CONDITION
         else:
             loan_conditions = LOAN_CONDITIONS  # default to loan
         
@@ -2007,6 +2024,9 @@ def get_total_admin_fee_collected(db: Session,
         if loan_type == "extradana":
             # For extradana, include all three companies (based on the example query)
             company_filter = "('PT Valdo Sumber Daya Mandiri', 'PT Valdo International', 'PT Toko Pandai')"
+        elif loan_type == "aku_cicil":
+            # For aku_cicil, include all three companies
+            company_filter = "('PT Valdo Sumber Daya Mandiri', 'PT Valdo International', 'PT Toko Pandai')"
         else:
             # For loan, include all three companies
             company_filter = "('PT Valdo Sumber Daya Mandiri', 'PT Valdo International', 'PT Toko Pandai')"
@@ -2042,6 +2062,12 @@ def get_total_admin_fee_collected(db: Session,
 
             if loan_type == "extradana":
                 # For extradana, filter by due_date in td_loan_history using the example format
+                admin_fee_collected_query += " AND tlh.due_date >= :start_date"
+                admin_fee_collected_query += " AND tlh.due_date < :next_month_date"
+                params['start_date'] = start_date
+                params['next_month_date'] = next_month_date
+            elif loan_type == "aku_cicil":
+                # For aku_cicil, filter by due_date in td_loan_history using the example format
                 admin_fee_collected_query += " AND tlh.due_date >= :start_date"
                 admin_fee_collected_query += " AND tlh.due_date < :next_month_date"
                 params['start_date'] = start_date
@@ -2083,6 +2109,8 @@ def get_total_loan_principal_collected(db: Session,
             loan_conditions = LOAN_CONDITIONS
         elif loan_type == "extradana":
             loan_conditions = EXTRADANA_LOAN_CONDITIONS
+        elif loan_type == "aku_cicil":
+            loan_conditions = AKU_CICIL_CONDITION
         else:
             loan_conditions = LOAN_CONDITIONS  # default to loan
         
@@ -2154,6 +2182,9 @@ def get_total_loan_principal_collected(db: Session,
         if loan_type == "extradana":
             # For extradana, include all three companies (based on the example query)
             company_filter = "('PT Valdo Sumber Daya Mandiri', 'PT Valdo International', 'PT Toko Pandai')"
+        elif loan_type == "aku_cicil":
+            # For aku_cicil, include all three companies
+            company_filter = "('PT Valdo Sumber Daya Mandiri', 'PT Valdo International', 'PT Toko Pandai')"
         else:
             # For loan, include all three companies
             company_filter = "('PT Valdo Sumber Daya Mandiri', 'PT Valdo International', 'PT Toko Pandai')"
@@ -2189,6 +2220,12 @@ def get_total_loan_principal_collected(db: Session,
 
             if loan_type == "extradana":
                 # For extradana, filter by due_date in td_loan_history using the example format
+                principal_collected_query += " AND tlh.due_date >= :start_date"
+                principal_collected_query += " AND tlh.due_date < :next_month_date"
+                params['start_date'] = start_date
+                params['next_month_date'] = next_month_date
+            elif loan_type == "aku_cicil":
+                # For aku_cicil, filter by due_date in td_loan_history using the example format
                 principal_collected_query += " AND tlh.due_date >= :start_date"
                 principal_collected_query += " AND tlh.due_date < :next_month_date"
                 params['start_date'] = start_date
@@ -2230,6 +2267,8 @@ def get_expected_repayment(db: Session,
             loan_conditions = LOAN_CONDITIONS
         elif loan_type == "extradana":
             loan_conditions = EXTRADANA_LOAN_CONDITIONS
+        elif loan_type == "aku_cicil":
+            loan_conditions = AKU_CICIL_CONDITION
         else:
             loan_conditions = LOAN_CONDITIONS  # default to loan
         
@@ -2301,6 +2340,9 @@ def get_expected_repayment(db: Session,
         if loan_type == "extradana":
             # For extradana, include all three companies (based on the example query)
             company_filter = "('PT Valdo Sumber Daya Mandiri', 'PT Valdo International', 'PT Toko Pandai')"
+        elif loan_type == "aku_cicil":
+            # For aku_cicil, include all three companies
+            company_filter = "('PT Valdo Sumber Daya Mandiri', 'PT Valdo International', 'PT Toko Pandai')"
         else:
             # For loan, include all three companies
             company_filter = "('PT Valdo Sumber Daya Mandiri', 'PT Valdo International', 'PT Toko Pandai')"
@@ -2336,6 +2378,12 @@ def get_expected_repayment(db: Session,
 
             if loan_type == "extradana":
                 # For extradana, filter by due_date in td_loan_history using the example format
+                expected_repayment_query += " AND tlh.due_date >= :start_date"
+                expected_repayment_query += " AND tlh.due_date < :next_month_date"
+                params['start_date'] = start_date
+                params['next_month_date'] = next_month_date
+            elif loan_type == "aku_cicil":
+                # For aku_cicil, filter by due_date in td_loan_history using the example format
                 expected_repayment_query += " AND tlh.due_date >= :start_date"
                 expected_repayment_query += " AND tlh.due_date < :next_month_date"
                 params['start_date'] = start_date
@@ -2377,6 +2425,8 @@ def get_repayment_risk_summary(db: Session,
             loan_conditions = LOAN_CONDITIONS
         elif loan_type == "extradana":
             loan_conditions = EXTRADANA_LOAN_CONDITIONS
+        elif loan_type == "aku_cicil":
+            loan_conditions = AKU_CICIL_CONDITION
         else:
             loan_conditions = LOAN_CONDITIONS  # default to loan
         
@@ -2421,6 +2471,9 @@ def get_repayment_risk_summary(db: Session,
         # Restrict to only PT Valdo companies (conditional based on loan type)
         if loan_type == "extradana":
             # For extradana, include all three companies (based on the example query)
+            company_filter = "('PT Valdo Sumber Daya Mandiri', 'PT Valdo International', 'PT Toko Pandai')"
+        elif loan_type == "aku_cicil":
+            # For aku_cicil, include all three companies
             company_filter = "('PT Valdo Sumber Daya Mandiri', 'PT Valdo International', 'PT Toko Pandai')"
         else:
             # For loan, include all three companies
@@ -2468,6 +2521,40 @@ def get_repayment_risk_summary(db: Session,
         
         # For extradana, override total_expected_repayment, total_loan_principal_collected, and total_admin_fee_collected with dedicated functions
         if loan_type == "extradana":
+            total_expected_repayment = get_expected_repayment(
+                db=db,
+                employer_filter=employer_filter,
+                sourced_to_filter=sourced_to_filter,
+                project_filter=project_filter,
+                loan_status_filter=loan_status_filter,
+                id_karyawan_filter=id_karyawan_filter,
+                month_filter=month_filter,
+                year_filter=year_filter,
+                loan_type=loan_type
+            )
+            total_loan_principal_collected = get_total_loan_principal_collected(
+                db=db,
+                employer_filter=employer_filter,
+                sourced_to_filter=sourced_to_filter,
+                project_filter=project_filter,
+                loan_status_filter=loan_status_filter,
+                id_karyawan_filter=id_karyawan_filter,
+                month_filter=month_filter,
+                year_filter=year_filter,
+                loan_type=loan_type
+            )
+            total_admin_fee_collected = get_total_admin_fee_collected(
+                db=db,
+                employer_filter=employer_filter,
+                sourced_to_filter=sourced_to_filter,
+                project_filter=project_filter,
+                loan_status_filter=loan_status_filter,
+                id_karyawan_filter=id_karyawan_filter,
+                month_filter=month_filter,
+                year_filter=year_filter,
+                loan_type=loan_type
+            )
+        elif loan_type == "aku_cicil":
             total_expected_repayment = get_expected_repayment(
                 db=db,
                 employer_filter=employer_filter,
@@ -2554,6 +2641,8 @@ def get_repayment_risk_monthly_summary(db: Session,
             loan_conditions = LOAN_CONDITIONS
         elif loan_type == "extradana":
             loan_conditions = EXTRADANA_LOAN_CONDITIONS
+        elif loan_type == "aku_cicil":
+            loan_conditions = AKU_CICIL_CONDITION
         else:
             loan_conditions = LOAN_CONDITIONS  # default to loan
         
@@ -2597,6 +2686,9 @@ def get_repayment_risk_monthly_summary(db: Session,
         # Restrict to only PT Valdo companies (conditional based on loan type)
         if loan_type == "extradana":
             # For extradana, include all three companies (based on the example query)
+            company_filter = "('PT Valdo Sumber Daya Mandiri', 'PT Valdo International', 'PT Toko Pandai')"
+        elif loan_type == "aku_cicil":
+            # For aku_cicil, include all three companies
             company_filter = "('PT Valdo Sumber Daya Mandiri', 'PT Valdo International', 'PT Toko Pandai')"
         else:
             # For loan, include all three companies
@@ -2694,6 +2786,29 @@ def get_repayment_risk_monthly_summary(db: Session,
                     year_filter=year,
                     loan_type=loan_type
                 )
+            elif loan_type == "aku_cicil":
+                total_loan_principal_collected = get_total_loan_principal_collected(
+                    db=db,
+                    employer_filter=employer_filter,
+                    sourced_to_filter=sourced_to_filter,
+                    project_filter=project_filter,
+                    loan_status_filter=loan_status_filter,
+                    id_karyawan_filter=id_karyawan_filter,
+                    month_filter=month_num,
+                    year_filter=year,
+                    loan_type=loan_type
+                )
+                total_admin_fee_collected = get_total_admin_fee_collected(
+                    db=db,
+                    employer_filter=employer_filter,
+                    sourced_to_filter=sourced_to_filter,
+                    project_filter=project_filter,
+                    loan_status_filter=loan_status_filter,
+                    id_karyawan_filter=id_karyawan_filter,
+                    month_filter=month_num,
+                    year_filter=year,
+                    loan_type=loan_type
+                )
             else:
                 total_loan_principal_collected = record[1] if record[1] is not None else 0
                 total_admin_fee_collected = record[3] if record[3] is not None else 0
@@ -2736,6 +2851,8 @@ def get_disbursed_amount(db: Session,
             loan_conditions = LOAN_CONDITIONS
         elif loan_type == "extradana":
             loan_conditions = EXTRADANA_LOAN_CONDITIONS
+        elif loan_type == "aku_cicil":
+            loan_conditions = AKU_CICIL_CONDITION
         else:
             loan_conditions = LOAN_CONDITIONS  # default to loan
         
@@ -2775,6 +2892,9 @@ def get_disbursed_amount(db: Session,
         # Restrict to only PT Valdo companies (conditional based on loan type)
         if loan_type == "extradana":
             # For extradana, include all three companies (based on the example query)
+            company_filter = "('PT Valdo Sumber Daya Mandiri', 'PT Valdo International', 'PT Toko Pandai')"
+        elif loan_type == "aku_cicil":
+            # For aku_cicil, include all three companies
             company_filter = "('PT Valdo Sumber Daya Mandiri', 'PT Valdo International', 'PT Toko Pandai')"
         else:
             # For loan, include all three companies
@@ -2836,6 +2956,8 @@ def get_coverage_utilization_summary(db: Session,
             loan_conditions = LOAN_CONDITIONS
         elif loan_type == "extradana":
             loan_conditions = EXTRADANA_LOAN_CONDITIONS
+        elif loan_type == "aku_cicil":
+            loan_conditions = AKU_CICIL_CONDITION
         else:
             loan_conditions = LOAN_CONDITIONS  # default to loan
         
@@ -3097,6 +3219,9 @@ def get_coverage_utilization_summary(db: Session,
         if loan_type == "extradana":
             # For extradana, include all three companies (based on the example query)
             company_filter = "('PT Valdo Sumber Daya Mandiri', 'PT Valdo International', 'PT Toko Pandai')"
+        elif loan_type == "aku_cicil":
+            # For aku_cicil, include all three companies
+            company_filter = "('PT Valdo Sumber Daya Mandiri', 'PT Valdo International', 'PT Toko Pandai')"
         else:
             # For loan, include all three companies
             company_filter = "('PT Valdo Sumber Daya Mandiri', 'PT Valdo International', 'PT Toko Pandai')"
@@ -3291,6 +3416,8 @@ def get_coverage_utilization_monthly_summary(db: Session,
             loan_conditions = LOAN_CONDITIONS
         elif loan_type == "extradana":
             loan_conditions = EXTRADANA_LOAN_CONDITIONS
+        elif loan_type == "aku_cicil":
+            loan_conditions = AKU_CICIL_CONDITION
         else:
             loan_conditions = LOAN_CONDITIONS  # default to loan
         
@@ -3466,6 +3593,9 @@ def get_coverage_utilization_monthly_summary(db: Session,
         # Restrict to only PT Valdo companies (conditional based on loan type)
         if loan_type == "extradana":
             # For extradana, include all three companies (based on the example query)
+            company_filter = "('PT Valdo Sumber Daya Mandiri', 'PT Valdo International', 'PT Toko Pandai')"
+        elif loan_type == "aku_cicil":
+            # For aku_cicil, include all three companies
             company_filter = "('PT Valdo Sumber Daya Mandiri', 'PT Valdo International', 'PT Toko Pandai')"
         else:
             # For loan, include all three companies
@@ -3802,6 +3932,8 @@ def get_client_summary(db: Session, month_filter: int = None, year_filter: int =
             loan_conditions = LOAN_CONDITIONS
         elif loan_type == "extradana":
             loan_conditions = EXTRADANA_LOAN_CONDITIONS
+        elif loan_type == "aku_cicil":
+            loan_conditions = AKU_CICIL_CONDITION
         else:
             loan_conditions = LOAN_CONDITIONS  # default to loan
         
