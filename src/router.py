@@ -6,11 +6,13 @@ try:
     from . import endpoint
     from .loan.router import router as loan_router
     from .ai.router import router as ai_router
+    from .internal_payroll.router import router as internal_payroll_router
 except ImportError:
     # Fall back to absolute imports (for local development)
     import endpoint
     from loan.router import router as loan_router
     from ai.router import router as ai_router
+    from internal_payroll.router import router as internal_payroll_router
 
 
 router = APIRouter()
@@ -23,3 +25,6 @@ router.include_router(loan_router)
 
 # Include the AI router
 router.include_router(ai_router)
+
+# Include the internal payroll router
+router.include_router(internal_payroll_router)
