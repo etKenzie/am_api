@@ -6,6 +6,7 @@ from typing import List
 LOAN_CONDITIONS = "l.duration = 1 AND l.loan_id != 35"
 EXTRADANA_LOAN_CONDITIONS = "l.duration != 1 AND l.disbursement != 4 AND l.loan_id != 35"
 AKU_CICIL_CONDITION = "l.loan_id = 35"
+KASBON_CONDITION = "l.duration = 1 AND l.loan_id != 35"  # Same as LOAN_CONDITIONS but will be used in td_loan_history context
 
 
 def get_enhanced_karyawan(db: Session, limit: int = 1000000, 
@@ -1609,18 +1610,19 @@ def get_karyawan_overdue_summary(db: Session,
     
     try:
         # Determine loan conditions based on loan type
-        if loan_type == "loan":
-            loan_conditions = LOAN_CONDITIONS
-        elif loan_type == "extradana":
+        if loan_type == "extradana":
             loan_conditions = EXTRADANA_LOAN_CONDITIONS
         elif loan_type == "aku_cicil":
             loan_conditions = AKU_CICIL_CONDITION
+        elif loan_type == "kasbon":
+            loan_conditions = KASBON_CONDITION
         else:
-            loan_conditions = LOAN_CONDITIONS  # default to loan
+            loan_conditions = LOAN_CONDITIONS  # default
         
-        # Build the query to get karyawan with overdue loans
-        if loan_type == "loan":
-            # For loan, use the existing logic from td_loan table
+        # For kasbon and default, use td_loan table directly (like the old "loan" type)
+        # For extradana and aku_cicil, use td_loan_history table
+        if loan_type == "kasbon" or loan_type not in ["extradana", "aku_cicil", "kasbon"]:
+            # Use td_loan table directly for kasbon
             overdue_query = """
             SELECT DISTINCT
                 tk.id_karyawan,
@@ -1655,9 +1657,11 @@ def get_karyawan_overdue_summary(db: Session,
             AND l.id_karyawan IS NOT NULL
             AND {loan_conditions}
             """.format(loan_conditions=loan_conditions)
+        else:
+            # For extradana and aku_cicil, use td_loan_history table
+            # Adapt loan_conditions for td_loan_history context by replacing l. with tl.
+            loan_conditions_tl = loan_conditions.replace('l.', 'tl.')
             
-        else:  # extradana
-            # For extradana, use td_loan_history table with the same method as get_expected_repayment
             overdue_query = """
             SELECT DISTINCT
                 tk.id_karyawan,
@@ -1691,32 +1695,25 @@ def get_karyawan_overdue_summary(db: Session,
             WHERE tlh.due_date IS NOT NULL
             AND tlh.status = 4
             AND tl.id_karyawan IS NOT NULL
-            AND tl.loan_id IN (
-                SELECT ls.id
-                FROM loan_setting ls
-                WHERE ls.loan_type LIKE 'Extradana%'
-            )
-            """.format(loan_conditions=loan_conditions)
+            AND {loan_conditions_tl}
+            """.format(loan_conditions_tl=loan_conditions_tl)
         
         # Build parameters dict for filters
         params = {}
         
+        # Determine if using td_loan (kasbon/default) or td_loan_history (extradana/aku_cicil)
+        use_td_loan = loan_type == "kasbon" or loan_type not in ["extradana", "aku_cicil", "kasbon"]
+        
         # Add filters
         if id_karyawan_filter:
-            overdue_query += " AND l.id_karyawan = :id_karyawan"
+            if use_td_loan:
+                overdue_query += " AND l.id_karyawan = :id_karyawan"
+            else:
+                overdue_query += " AND tl.id_karyawan = :id_karyawan"
             params['id_karyawan'] = id_karyawan_filter
             
-        # Restrict to only PT Valdo companies (conditional based on loan type)
-        if loan_type == "extradana":
-            # For extradana, include all three companies (based on the example query)
-            company_filter = "('PT Valdo Sumber Daya Mandiri', 'PT Valdo International', 'PT Toko Pandai')"
-        elif loan_type == "aku_cicil":
-            # For aku_cicil, include all three companies
-            company_filter = "('PT Valdo Sumber Daya Mandiri', 'PT Valdo International', 'PT Toko Pandai')"
-        else:
-            # For loan, include all three companies
-            company_filter = "('PT Valdo Sumber Daya Mandiri', 'PT Valdo International', 'PT Toko Pandai')"
-            
+        # Restrict to only PT Valdo companies
+        company_filter = "('PT Valdo Sumber Daya Mandiri', 'PT Valdo International', 'PT Toko Pandai')"
         overdue_query += f" AND emp.keterangan IN {company_filter}"
         
         # If employer_filter is provided and it's one of the allowed companies, filter further
@@ -1733,39 +1730,35 @@ def get_karyawan_overdue_summary(db: Session,
             params['project'] = project_filter
             
         if loan_status_filter is not None:
-            overdue_query += " AND l.loan_status = :loan_status"
+            if use_td_loan:
+                overdue_query += " AND l.loan_status = :loan_status"
+            else:
+                overdue_query += " AND tlh.status = :loan_status"
             params['loan_status'] = loan_status_filter
             
-        # Add month and year filters based on due_date for extradana, proses_date for loan
+        # Add month and year filters
         if month_filter is not None and year_filter is not None:
             import calendar
             start_date = f"{year_filter}-{month_filter:02d}-01"
-            # For extradana, use < next month format like the example
-            if month_filter == 12:
-                next_month_date = f"{year_filter + 1}-01-01"
-            else:
-                next_month_date = f"{year_filter}-{month_filter + 1:02d}-01"
-
-            if loan_type == "extradana":
-                # For extradana, filter by due_date in td_loan_history using the example format
-                overdue_query += " AND tlh.due_date >= :start_date"
-                overdue_query += " AND tlh.due_date < :next_month_date"
-                params['start_date'] = start_date
-                params['next_month_date'] = next_month_date
-            elif loan_type == "aku_cicil":
-                # For aku_cicil, filter by due_date in td_loan_history using the example format
-                overdue_query += " AND tlh.due_date >= :start_date"
-                overdue_query += " AND tlh.due_date < :next_month_date"
-                params['start_date'] = start_date
-                params['next_month_date'] = next_month_date
-            else:
-                # For loan, filter by proses_date in td_loan using range format
+            
+            if use_td_loan:
+                # For kasbon/default, filter by proses_date in td_loan using range format
                 last_day = calendar.monthrange(year_filter, month_filter)[1]
                 end_date = f"{year_filter}-{month_filter:02d}-{last_day:02d}"
                 overdue_query += " AND l.proses_date >= :start_date"
                 overdue_query += " AND l.proses_date <= :end_date"
                 params['start_date'] = start_date
                 params['end_date'] = end_date
+            else:
+                # For extradana and aku_cicil, filter by due_date in td_loan_history
+                if month_filter == 12:
+                    next_month_date = f"{year_filter + 1}-01-01"
+                else:
+                    next_month_date = f"{year_filter}-{month_filter + 1:02d}-01"
+                overdue_query += " AND tlh.due_date >= :start_date"
+                overdue_query += " AND tlh.due_date < :next_month_date"
+                params['start_date'] = start_date
+                params['next_month_date'] = next_month_date
         
         # Group by karyawan and order by total amount owed (descending)
         overdue_query += """
@@ -1984,13 +1977,21 @@ def get_total_admin_fee_collected(db: Session,
             WHERE {loan_conditions}
             """.format(loan_conditions=loan_conditions)
             
-        else:  # extradana
-            # For extradana, use td_loan_history table with monthly admin fee calculation
+        else:  # extradana or aku_cicil
+            # For extradana and aku_cicil, use td_loan_history table with monthly admin fee calculation
+            # Note: td_loan is aliased as 'l' in this query, so loan_conditions with 'l.' prefix work correctly
+            # Special handling for extradana - use loan_setting table
+            if loan_type == "extradana":
+                loan_conditions_tl = "l.loan_id IN (SELECT ls.id FROM loan_setting ls WHERE ls.loan_type LIKE 'Extradana%')"
+            else:
+                # For aku_cicil, loan_conditions already use 'l.' prefix which matches the alias
+                loan_conditions_tl = loan_conditions
+            
             admin_fee_collected_query = """
-            SELECT SUM(ROUND(tl.admin_fee / tl.duration, 0)) as total_admin_fee_collected
+            SELECT SUM(ROUND(l.admin_fee / l.duration, 0)) as total_admin_fee_collected
             FROM td_loan_history tlh
-            LEFT JOIN td_loan tl ON tlh.loan_form_id = tl.id
-            LEFT JOIN td_karyawan tk ON tl.id_karyawan = tk.id_karyawan
+            LEFT JOIN td_loan l ON tlh.loan_form_id = l.id
+            LEFT JOIN td_karyawan tk ON l.id_karyawan = tk.id_karyawan
             LEFT JOIN tbl_gmc emp
                 ON tk.valdo_inc = emp.kode_gmc
                 AND emp.group_gmc = 'sub_client'
@@ -2007,13 +2008,9 @@ def get_total_admin_fee_collected(db: Session,
                 AND prj.aktif = 'Yes'
                 AND prj.keterangan3 = 1
             WHERE tlh.due_date IS NOT NULL
-            AND tl.loan_status IN (1, 2, 4)
-            AND tl.loan_id IN (
-                SELECT ls.id
-                FROM loan_setting ls
-                WHERE ls.loan_type LIKE 'Extradana%'
-            )
-            """.format(loan_conditions=loan_conditions)
+            AND l.loan_status IN (1, 2, 4)
+            AND {loan_conditions_tl}
+            """.format(loan_conditions_tl=loan_conditions_tl)
         
         # Add filters
         if id_karyawan_filter:
@@ -2142,13 +2139,21 @@ def get_total_loan_principal_collected(db: Session,
             WHERE {loan_conditions}
             """.format(loan_conditions=loan_conditions)
             
-        else:  # extradana
-            # For extradana, use td_loan_history table with monthly principal calculation
+        else:  # extradana or aku_cicil
+            # For extradana and aku_cicil, use td_loan_history table with monthly principal calculation
+            # Note: td_loan is aliased as 'l' in this query, so loan_conditions with 'l.' prefix work correctly
+            # Special handling for extradana - use loan_setting table
+            if loan_type == "extradana":
+                loan_conditions_tl = "l.loan_id IN (SELECT ls.id FROM loan_setting ls WHERE ls.loan_type LIKE 'Extradana%')"
+            else:
+                # For aku_cicil, loan_conditions already use 'l.' prefix which matches the alias
+                loan_conditions_tl = loan_conditions
+            
             principal_collected_query = """
-            SELECT SUM(ROUND(tl.total_loan / tl.duration, 0)) as total_loan_principal_collected
+            SELECT SUM(ROUND(l.total_loan / l.duration, 0)) as total_loan_principal_collected
             FROM td_loan_history tlh
-            LEFT JOIN td_loan tl ON tlh.loan_form_id = tl.id
-            LEFT JOIN td_karyawan tk ON tl.id_karyawan = tk.id_karyawan
+            LEFT JOIN td_loan l ON tlh.loan_form_id = l.id
+            LEFT JOIN td_karyawan tk ON l.id_karyawan = tk.id_karyawan
             LEFT JOIN tbl_gmc emp
                 ON tk.valdo_inc = emp.kode_gmc
                 AND emp.group_gmc = 'sub_client'
@@ -2165,13 +2170,9 @@ def get_total_loan_principal_collected(db: Session,
                 AND prj.aktif = 'Yes'
                 AND prj.keterangan3 = 1
             WHERE tlh.due_date IS NOT NULL
-            AND tl.loan_status IN (1, 2, 4)
-            AND tl.loan_id IN (
-                SELECT ls.id
-                FROM loan_setting ls
-                WHERE ls.loan_type LIKE 'Extradana%'
-            )
-            """.format(loan_conditions=loan_conditions)
+            AND l.loan_status IN (1, 2, 4)
+            AND {loan_conditions_tl}
+            """.format(loan_conditions_tl=loan_conditions_tl)
         
         # Add filters
         if id_karyawan_filter:
@@ -2300,8 +2301,16 @@ def get_expected_repayment(db: Session,
             WHERE {loan_conditions}
             """.format(loan_conditions=loan_conditions)
             
-        else:  # extradana
-            # For extradana, use td_loan_history table with due_date and monthly sum
+        else:  # extradana or aku_cicil
+            # For extradana and aku_cicil, use td_loan_history table with due_date and monthly sum
+            # Note: td_loan is aliased as 'l' in this query, so loan_conditions with 'l.' prefix work correctly
+            # Special handling for extradana - use loan_setting table
+            if loan_type == "extradana":
+                loan_conditions_tl = "l.loan_id IN (SELECT ls.id FROM loan_setting ls WHERE ls.loan_type LIKE 'Extradana%')"
+            else:
+                # For aku_cicil, loan_conditions already use 'l.' prefix which matches the alias
+                loan_conditions_tl = loan_conditions
+            
             expected_repayment_query = """
             SELECT SUM(tlh.monthly) as total_expected_repayment
             FROM td_loan_history tlh
@@ -2324,12 +2333,8 @@ def get_expected_repayment(db: Session,
                 AND prj.keterangan3 = 1
             WHERE tlh.due_date IS NOT NULL
             AND l.loan_status IN (1, 2, 4)
-            AND l.loan_id IN (
-                SELECT ls.id
-                FROM loan_setting ls
-                WHERE ls.loan_type LIKE 'Extradana%'
-            )
-            """.format(loan_conditions=loan_conditions)
+            AND {loan_conditions_tl}
+            """.format(loan_conditions_tl=loan_conditions_tl)
         
         # Add filters
         if id_karyawan_filter:
@@ -2588,6 +2593,89 @@ def get_repayment_risk_summary(db: Session,
                 year_filter=year_filter,
                 loan_type=loan_type
             )
+        
+        # For extradana and aku_cicil, calculate unrecovered amounts from td_loan_history
+        if loan_type in ["extradana", "aku_cicil"]:
+            # Adapt loan_conditions for td_loan_history context
+            loan_conditions_tl = loan_conditions.replace('l.', 'tl.')
+            if loan_type == "extradana":
+                loan_conditions_tl = "tl.loan_id IN (SELECT ls.id FROM loan_setting ls WHERE ls.loan_type LIKE 'Extradana%')"
+            
+            # Build query for unrecovered amounts from td_loan_history
+            unrecovered_query = """
+            SELECT
+                SUM(tlh.monthly) as total_unrecovered_repayment,
+                SUM(ROUND(tl.total_loan / tl.duration, 0)) as total_unrecovered_loan_principal,
+                SUM(ROUND(tl.admin_fee / tl.duration, 0)) as total_unrecovered_admin_fee
+            FROM td_loan_history tlh
+            LEFT JOIN td_loan tl ON tlh.loan_form_id = tl.id
+            LEFT JOIN td_karyawan tk ON tl.id_karyawan = tk.id_karyawan
+            LEFT JOIN tbl_gmc emp
+                ON tk.valdo_inc = emp.kode_gmc
+                AND emp.group_gmc = 'sub_client'
+                AND emp.aktif = 'Yes'
+                AND emp.keterangan3 = 1
+            LEFT JOIN tbl_gmc src
+                ON tk.placement = src.kode_gmc
+                AND src.group_gmc = 'placement_client'
+                AND src.aktif = 'Yes'
+                AND src.keterangan3 = 1
+            LEFT JOIN tbl_gmc prj
+                ON tk.project = prj.kode_gmc
+                AND prj.group_gmc = 'client_project'
+                AND prj.aktif = 'Yes'
+                AND prj.keterangan3 = 1
+            WHERE tlh.due_date IS NOT NULL
+            AND tlh.status = 4
+            AND tl.id_karyawan IS NOT NULL
+            AND {loan_conditions_tl}
+            """.format(loan_conditions_tl=loan_conditions_tl)
+            
+            # Add filters
+            unrecovered_params = {}
+            if id_karyawan_filter:
+                unrecovered_query += " AND tl.id_karyawan = :id_karyawan"
+                unrecovered_params['id_karyawan'] = id_karyawan_filter
+            
+            company_filter = "('PT Valdo Sumber Daya Mandiri', 'PT Valdo International', 'PT Toko Pandai')"
+            unrecovered_query += f" AND emp.keterangan IN {company_filter}"
+            
+            if employer_filter and employer_filter in ['PT Valdo Sumber Daya Mandiri', 'PT Valdo International', 'PT Toko Pandai']:
+                unrecovered_query += " AND emp.keterangan = :employer"
+                unrecovered_params['employer'] = employer_filter
+            
+            if sourced_to_filter:
+                unrecovered_query += " AND src.keterangan = :sourced_to"
+                unrecovered_params['sourced_to'] = sourced_to_filter
+            
+            if project_filter:
+                unrecovered_query += " AND prj.keterangan = :project"
+                unrecovered_params['project'] = project_filter
+            
+            if loan_status_filter is not None:
+                unrecovered_query += " AND tlh.status = :loan_status"
+                unrecovered_params['loan_status'] = loan_status_filter
+            
+            # Add month and year filters based on due_date
+            if month_filter is not None and year_filter is not None:
+                start_date = f"{year_filter}-{month_filter:02d}-01"
+                if month_filter == 12:
+                    next_month_date = f"{year_filter + 1}-01-01"
+                else:
+                    next_month_date = f"{year_filter}-{month_filter + 1:02d}-01"
+                unrecovered_query += " AND tlh.due_date >= :start_date"
+                unrecovered_query += " AND tlh.due_date < :next_month_date"
+                unrecovered_params['start_date'] = start_date
+                unrecovered_params['next_month_date'] = next_month_date
+            
+            # Execute unrecovered query
+            unrecovered_result = db.execute(text(unrecovered_query), unrecovered_params)
+            unrecovered_record = unrecovered_result.fetchone()
+            
+            if unrecovered_record:
+                total_unrecovered_repayment = unrecovered_record[0] if unrecovered_record[0] is not None else 0
+                total_unrecovered_loan_principal = unrecovered_record[1] if unrecovered_record[1] is not None else 0
+                total_unrecovered_admin_fee = unrecovered_record[2] if unrecovered_record[2] is not None else 0
         
         # Calculate derived metrics
         repayment_recovery_rate = 0
