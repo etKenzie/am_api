@@ -2734,34 +2734,68 @@ def get_repayment_risk_monthly_summary(db: Session,
         else:
             loan_conditions = LOAN_CONDITIONS  # default to loan
         
-        # Build the query to calculate repayment risk metrics by month (excluding total_expected_repayment)
-        risk_query = """
-        SELECT
-            DATE_FORMAT(l.proses_date, '%M %Y') as month_year,
-            SUM(CASE WHEN l.loan_status = 2 THEN l.total_loan ELSE 0 END) as total_loan_principal_collected,
-            SUM(CASE WHEN l.loan_status IN (1, 4) THEN l.total_payment ELSE 0 END) as total_unrecovered_repayment,
-            SUM(CASE WHEN l.loan_status = 2 THEN l.admin_fee ELSE 0 END) as total_admin_fee_collected
-        FROM td_loan l
-        LEFT JOIN td_karyawan tk
-            ON l.id_karyawan = tk.id_karyawan
-        LEFT JOIN tbl_gmc emp
-            ON tk.valdo_inc = emp.kode_gmc
-            AND emp.group_gmc = 'sub_client'
-            AND emp.aktif = 'Yes'
-            AND emp.keterangan3 = 1
-        LEFT JOIN tbl_gmc src
-            ON tk.placement = src.kode_gmc
-            AND src.group_gmc = 'placement_client'
-            AND src.aktif = 'Yes'
-            AND src.keterangan3 = 1
-        LEFT JOIN tbl_gmc prj
-            ON tk.project = prj.kode_gmc
-            AND prj.group_gmc = 'client_project'
-            AND prj.aktif = 'Yes'
-            AND prj.keterangan3 = 1
-        WHERE l.proses_date IS NOT NULL
-        AND {loan_conditions}
-        """.format(loan_conditions=loan_conditions)
+        # For extradana and aku_cicil, query from td_loan_history using due_date
+        # For loan (kasbon), query from td_loan using proses_date
+        if loan_type == "extradana" or loan_type == "aku_cicil":
+            # Build the query to calculate repayment risk metrics by month using td_loan_history
+            risk_query = """
+            SELECT
+                DATE_FORMAT(tlh.due_date, '%M %Y') as month_year,
+                0 as total_loan_principal_collected,
+                SUM(CASE WHEN tlh.status = 0 THEN tlh.monthly ELSE 0 END) as total_unrecovered_repayment,
+                0 as total_admin_fee_collected
+            FROM td_loan_history tlh
+            INNER JOIN td_loan l ON tlh.loan_form_id = l.id
+            LEFT JOIN td_karyawan tk
+                ON l.id_karyawan = tk.id_karyawan
+            LEFT JOIN tbl_gmc emp
+                ON tk.valdo_inc = emp.kode_gmc
+                AND emp.group_gmc = 'sub_client'
+                AND emp.aktif = 'Yes'
+                AND emp.keterangan3 = 1
+            LEFT JOIN tbl_gmc src
+                ON tk.placement = src.kode_gmc
+                AND src.group_gmc = 'placement_client'
+                AND src.aktif = 'Yes'
+                AND src.keterangan3 = 1
+            LEFT JOIN tbl_gmc prj
+                ON tk.project = prj.kode_gmc
+                AND prj.group_gmc = 'client_project'
+                AND prj.aktif = 'Yes'
+                AND prj.keterangan3 = 1
+            WHERE tlh.due_date IS NOT NULL
+            AND {loan_conditions}
+            """.format(loan_conditions=loan_conditions)
+        else:
+            # Build the query to calculate repayment risk metrics by month using td_loan
+            risk_query = """
+            SELECT
+                DATE_FORMAT(l.proses_date, '%M %Y') as month_year,
+                SUM(CASE WHEN l.loan_status IN (1, 2, 4) THEN l.total_payment ELSE 0 END) as total_expected_repayment,
+                SUM(CASE WHEN l.loan_status = 2 THEN l.total_loan ELSE 0 END) as total_loan_principal_collected,
+                SUM(CASE WHEN l.loan_status IN (1, 4) THEN l.total_payment ELSE 0 END) as total_unrecovered_repayment,
+                SUM(CASE WHEN l.loan_status = 2 THEN l.admin_fee ELSE 0 END) as total_admin_fee_collected
+            FROM td_loan l
+            LEFT JOIN td_karyawan tk
+                ON l.id_karyawan = tk.id_karyawan
+            LEFT JOIN tbl_gmc emp
+                ON tk.valdo_inc = emp.kode_gmc
+                AND emp.group_gmc = 'sub_client'
+                AND emp.aktif = 'Yes'
+                AND emp.keterangan3 = 1
+            LEFT JOIN tbl_gmc src
+                ON tk.placement = src.kode_gmc
+                AND src.group_gmc = 'placement_client'
+                AND src.aktif = 'Yes'
+                AND src.keterangan3 = 1
+            LEFT JOIN tbl_gmc prj
+                ON tk.project = prj.kode_gmc
+                AND prj.group_gmc = 'client_project'
+                AND prj.aktif = 'Yes'
+                AND prj.keterangan3 = 1
+            WHERE l.proses_date IS NOT NULL
+            AND {loan_conditions}
+            """.format(loan_conditions=loan_conditions)
         
         # Build parameters dict for filters
         params = {}
@@ -2798,23 +2832,39 @@ def get_repayment_risk_monthly_summary(db: Session,
             params['project'] = project_filter
             
         if loan_status_filter is not None:
-            risk_query += " AND l.loan_status = :loan_status"
+            # For extradana/aku_cicil, loan_status is in td_loan_history as status
+            if loan_type == "extradana" or loan_type == "aku_cicil":
+                risk_query += " AND tlh.status = :loan_status"
+            else:
+                risk_query += " AND l.loan_status = :loan_status"
             params['loan_status'] = loan_status_filter
             
-        # Add date range filters based on proses_date
+        # Add date range filters based on due_date for extradana/aku_cicil, proses_date for loan
         if start_date:
-            risk_query += " AND l.proses_date >= :start_date"
+            if loan_type == "extradana" or loan_type == "aku_cicil":
+                risk_query += " AND tlh.due_date >= :start_date"
+            else:
+                risk_query += " AND l.proses_date >= :start_date"
             params['start_date'] = start_date
             
         if end_date:
-            risk_query += " AND l.proses_date <= :end_date"
+            if loan_type == "extradana" or loan_type == "aku_cicil":
+                risk_query += " AND tlh.due_date <= :end_date"
+            else:
+                risk_query += " AND l.proses_date <= :end_date"
             params['end_date'] = end_date
         
         # Group by month and year, order by date
-        risk_query += """
-        GROUP BY DATE_FORMAT(l.proses_date, '%M %Y')
-        ORDER BY MIN(l.proses_date)
-        """
+        if loan_type == "extradana" or loan_type == "aku_cicil":
+            risk_query += """
+            GROUP BY DATE_FORMAT(tlh.due_date, '%M %Y')
+            ORDER BY MIN(tlh.due_date)
+            """
+        else:
+            risk_query += """
+            GROUP BY DATE_FORMAT(l.proses_date, '%M %Y')
+            ORDER BY MIN(l.proses_date)
+            """
         
         
         # Execute the query
@@ -2837,44 +2887,35 @@ def get_repayment_risk_monthly_summary(db: Session,
                 'July': 7, 'August': 8, 'September': 9, 'October': 10, 'November': 11, 'December': 12
             }[month_name]
             
-            # Get total_expected_repayment and total_kasbon_principal_collected using the dedicated functions for this specific month
-            total_expected_repayment = get_expected_repayment(
-                db=db,
-                employer_filter=employer_filter,
-                sourced_to_filter=sourced_to_filter,
-                project_filter=project_filter,
-                loan_status_filter=loan_status_filter,
-                id_karyawan_filter=id_karyawan_filter,
-                month_filter=month_num,
-                year_filter=year,
-                loan_type=loan_type
-            )
+            # For kasbon (loan), get total_expected_repayment from query results
+            # For extradana and aku_cicil, use the dedicated function
+            if loan_type == "extradana" or loan_type == "aku_cicil":
+                total_expected_repayment = get_expected_repayment(
+                    db=db,
+                    employer_filter=employer_filter,
+                    sourced_to_filter=sourced_to_filter,
+                    project_filter=project_filter,
+                    loan_status_filter=loan_status_filter,
+                    id_karyawan_filter=id_karyawan_filter,
+                    month_filter=month_num,
+                    year_filter=year,
+                    loan_type=loan_type
+                )
+            else:
+                # For kasbon, get from query results (record[1] after adding total_expected_repayment to SELECT)
+                total_expected_repayment = record[1] if record[1] is not None else 0
             
-            # For extradana, use the dedicated functions; for kasbon, use the query results
-            if loan_type == "extradana":
-                total_loan_principal_collected = get_total_loan_principal_collected(
-                    db=db,
-                    employer_filter=employer_filter,
-                    sourced_to_filter=sourced_to_filter,
-                    project_filter=project_filter,
-                    loan_status_filter=loan_status_filter,
-                    id_karyawan_filter=id_karyawan_filter,
-                    month_filter=month_num,
-                    year_filter=year,
-                    loan_type=loan_type
-                )
-                total_admin_fee_collected = get_total_admin_fee_collected(
-                    db=db,
-                    employer_filter=employer_filter,
-                    sourced_to_filter=sourced_to_filter,
-                    project_filter=project_filter,
-                    loan_status_filter=loan_status_filter,
-                    id_karyawan_filter=id_karyawan_filter,
-                    month_filter=month_num,
-                    year_filter=year,
-                    loan_type=loan_type
-                )
-            elif loan_type == "aku_cicil":
+            # For extradana and aku_cicil, use the dedicated functions for some values and query results for others
+            # For kasbon, use query results for all values
+            if loan_type == "extradana" or loan_type == "aku_cicil":
+                # For extradana/aku_cicil query structure:
+                # record[0] = month_year
+                # record[1] = total_loan_principal_collected (0, will be overridden)
+                # record[2] = total_unrecovered_repayment
+                # record[3] = total_admin_fee_collected (0, will be overridden)
+                total_unrecovered_repayment = record[2] if record[2] is not None else 0
+                
+                # Use dedicated functions for these
                 total_loan_principal_collected = get_total_loan_principal_collected(
                     db=db,
                     employer_filter=employer_filter,
@@ -2898,9 +2939,15 @@ def get_repayment_risk_monthly_summary(db: Session,
                     loan_type=loan_type
                 )
             else:
-                total_loan_principal_collected = record[1] if record[1] is not None else 0
-                total_admin_fee_collected = record[3] if record[3] is not None else 0
-            total_unrecovered_repayment = record[2] if record[2] is not None else 0
+                # For kasbon, query structure:
+                # record[0] = month_year
+                # record[1] = total_expected_repayment (already used above)
+                # record[2] = total_loan_principal_collected
+                # record[3] = total_unrecovered_repayment
+                # record[4] = total_admin_fee_collected
+                total_loan_principal_collected = record[2] if record[2] is not None else 0
+                total_unrecovered_repayment = record[3] if record[3] is not None else 0
+                total_admin_fee_collected = record[4] if record[4] is not None else 0
             
             # Calculate repayment recovery rate
             repayment_recovery_rate = 0
