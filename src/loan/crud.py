@@ -1742,11 +1742,11 @@ def get_karyawan_overdue_summary(db: Session,
             start_date = f"{year_filter}-{month_filter:02d}-01"
             
             if use_td_loan:
-                # For kasbon/default, filter by proses_date in td_loan using range format
+                # For kasbon/default, filter by repayment_date in td_loan using range format
                 last_day = calendar.monthrange(year_filter, month_filter)[1]
                 end_date = f"{year_filter}-{month_filter:02d}-{last_day:02d}"
-                overdue_query += " AND l.proses_date >= :start_date"
-                overdue_query += " AND l.proses_date <= :end_date"
+                overdue_query += " AND l.repayment_date >= :start_date"
+                overdue_query += " AND l.repayment_date <= :end_date"
                 params['start_date'] = start_date
                 params['end_date'] = end_date
             else:
