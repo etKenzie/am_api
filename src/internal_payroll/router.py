@@ -22,16 +22,18 @@ async def get_total_payroll_disbursed(
     year: int = None,
     dept_id: int = None,
     status_kontrak: int = None,
+    valdo_inc: int = None,
     db: Session = Depends(get_db)
 ):
-    """Get total payroll disbursed (sum of take_home_pay) for a given month and year, optionally filtered by dept_id and status_kontrak (1=PKWTT, 2=PKWT, 3=Mitra)"""
+    """Get total payroll disbursed (sum of take_home_pay) for a given month and year, optionally filtered by dept_id, status_kontrak (1=PKWTT, 2=PKWT, 3=Mitra), and valdo_inc"""
     try:
         total_payroll_disbursed = crud.get_total_payroll_disbursed(
             db,
             month=month,
             year=year,
             dept_id=dept_id,
-            status_kontrak=status_kontrak
+            status_kontrak=status_kontrak,
+            valdo_inc=valdo_inc
         )
         
         return {
@@ -58,16 +60,18 @@ async def get_total_payroll_headcount(
     year: int = None,
     dept_id: int = None,
     status_kontrak: int = None,
+    valdo_inc: int = None,
     db: Session = Depends(get_db)
 ):
-    """Get total payroll headcount with breakdown by status_kontrak (count of unique id_karyawan) for a given month and year, optionally filtered by dept_id and status_kontrak (1=PKWTT, 2=PKWT, 3=Mitra)"""
+    """Get total payroll headcount with breakdown by status_kontrak (count of unique id_karyawan) for a given month and year, optionally filtered by dept_id, status_kontrak (1=PKWTT, 2=PKWT, 3=Mitra), and valdo_inc"""
     try:
         headcount_data = crud.get_total_payroll_headcount(
             db,
             month=month,
             year=year,
             dept_id=dept_id,
-            status_kontrak=status_kontrak
+            status_kontrak=status_kontrak,
+            valdo_inc=valdo_inc
         )
         
         return {
@@ -98,14 +102,16 @@ async def get_total_payroll_headcount(
 async def get_total_department_count(
     month: int = None,
     year: int = None,
+    valdo_inc: int = None,
     db: Session = Depends(get_db)
 ):
-    """Get total number of unique departments (dept_id) from payroll_header for a given month and year"""
+    """Get total number of unique departments (dept_id) from payroll_header for a given month and year, optionally filtered by valdo_inc"""
     try:
         total_department_count = crud.get_total_department_count(
             db,
             month=month,
-            year=year
+            year=year,
+            valdo_inc=valdo_inc
         )
         
         return {
@@ -130,16 +136,18 @@ async def get_total_bpsjtk(
     year: int = None,
     dept_id: int = None,
     status_kontrak: int = None,
+    valdo_inc: int = None,
     db: Session = Depends(get_db)
 ):
-    """Get total BPJS TK (sum of all_bpjs_tk_comp) for a given month and year, optionally filtered by dept_id and status_kontrak (1=PKWTT, 2=PKWT, 3=Mitra)"""
+    """Get total BPJS TK (sum of all_bpjs_tk_comp) for a given month and year, optionally filtered by dept_id, status_kontrak (1=PKWTT, 2=PKWT, 3=Mitra), and valdo_inc"""
     try:
         total_bpsjtk = crud.get_total_bpsjtk(
             db,
             month=month,
             year=year,
             dept_id=dept_id,
-            status_kontrak=status_kontrak
+            status_kontrak=status_kontrak,
+            valdo_inc=valdo_inc
         )
         
         return {
@@ -166,16 +174,18 @@ async def get_total_kesehatan(
     year: int = None,
     dept_id: int = None,
     status_kontrak: int = None,
+    valdo_inc: int = None,
     db: Session = Depends(get_db)
 ):
-    """Get total BPJS Kesehatan (sum of all_bpjs_kesehatan_comp) for a given month and year, optionally filtered by dept_id and status_kontrak (1=PKWTT, 2=PKWT, 3=Mitra)"""
+    """Get total BPJS Kesehatan (sum of all_bpjs_kesehatan_comp) for a given month and year, optionally filtered by dept_id, status_kontrak (1=PKWTT, 2=PKWT, 3=Mitra), and valdo_inc"""
     try:
         total_kesehatan = crud.get_total_kesehatan(
             db,
             month=month,
             year=year,
             dept_id=dept_id,
-            status_kontrak=status_kontrak
+            status_kontrak=status_kontrak,
+            valdo_inc=valdo_inc
         )
         
         return {
@@ -202,16 +212,18 @@ async def get_total_pensiun(
     year: int = None,
     dept_id: int = None,
     status_kontrak: int = None,
+    valdo_inc: int = None,
     db: Session = Depends(get_db)
 ):
-    """Get total BPJS Pensiun (sum of all_bpjs_pensiun_comp) for a given month and year, optionally filtered by dept_id and status_kontrak (1=PKWTT, 2=PKWT, 3=Mitra)"""
+    """Get total BPJS Pensiun (sum of all_bpjs_pensiun_comp) for a given month and year, optionally filtered by dept_id, status_kontrak (1=PKWTT, 2=PKWT, 3=Mitra), and valdo_inc"""
     try:
         total_pensiun = crud.get_total_pensiun(
             db,
             month=month,
             year=year,
             dept_id=dept_id,
-            status_kontrak=status_kontrak
+            status_kontrak=status_kontrak,
+            valdo_inc=valdo_inc
         )
         
         return {
@@ -236,14 +248,16 @@ async def get_total_pensiun(
 async def get_department_filters(
     month: int = None,
     year: int = None,
+    valdo_inc: int = None,
     db: Session = Depends(get_db)
 ):
-    """Get list of departments (dept_id and department_name) from payroll_header joined with payroll_cost_owner for a given month and year"""
+    """Get list of departments (dept_id and department_name) from payroll_header joined with payroll_cost_owner for a given month and year, optionally filtered by valdo_inc"""
     try:
         departments = crud.get_department_filters(
             db,
             month=month,
-            year=year
+            year=year,
+            valdo_inc=valdo_inc
         )
         
         return {
@@ -270,6 +284,7 @@ async def get_monthly_payroll_summary(
     end_month: str,
     dept_id: int = None,
     status_kontrak: int = None,
+    valdo_inc: int = None,
     db: Session = Depends(get_db)
 ):
     """Get monthly payroll summaries combining total_disbursed and headcount for each month in the range.
@@ -279,6 +294,7 @@ async def get_monthly_payroll_summary(
         end_month: End month in MM-YYYY format (e.g., "08-2025")
         dept_id: Optional department ID filter
         status_kontrak: Optional status kontrak filter (1=PKWTT, 2=PKWT, 3=Mitra)
+        valdo_inc: Optional valdo_inc filter
     """
     try:
         # Validate format
@@ -345,7 +361,8 @@ async def get_monthly_payroll_summary(
             start_month_str=start_month,
             end_month_str=end_month,
             dept_id=dept_id,
-            status_kontrak=status_kontrak
+            status_kontrak=status_kontrak,
+            valdo_inc=valdo_inc
         )
         
         return {
@@ -371,15 +388,17 @@ async def get_department_summary(
     month: int = None,
     year: int = None,
     status_kontrak: int = None,
+    valdo_inc: int = None,
     db: Session = Depends(get_db)
 ):
-    """Get department summary with headcount breakdown, distribution ratio, and total disbursed. Only includes departments that exist in payroll_cost_owner. Optionally filtered by status_kontrak (1=PKWTT, 2=PKWT, 3=Mitra)."""
+    """Get department summary with headcount breakdown, distribution ratio, and total disbursed. Only includes departments that exist in payroll_cost_owner. Optionally filtered by status_kontrak (1=PKWTT, 2=PKWT, 3=Mitra) and valdo_inc."""
     try:
         departments = crud.get_department_summary(
             db,
             month=month,
             year=year,
-            status_kontrak=status_kontrak
+            status_kontrak=status_kontrak,
+            valdo_inc=valdo_inc
         )
         
         return {
@@ -405,15 +424,17 @@ async def get_cost_owner_summary(
     month: int = None,
     year: int = None,
     status_kontrak: int = None,
+    valdo_inc: int = None,
     db: Session = Depends(get_db)
 ):
-    """Get cost owner summary with headcount breakdown, distribution ratio, and total disbursed. Only includes departments that exist in payroll_cost_owner. Optionally filtered by status_kontrak (1=PKWTT, 2=PKWT, 3=Mitra)."""
+    """Get cost owner summary with headcount breakdown, distribution ratio, and total disbursed. Only includes departments that exist in payroll_cost_owner. Optionally filtered by status_kontrak (1=PKWTT, 2=PKWT, 3=Mitra) and valdo_inc."""
     try:
         cost_owners = crud.get_cost_owner_summary(
             db,
             month=month,
             year=year,
-            status_kontrak=status_kontrak
+            status_kontrak=status_kontrak,
+            valdo_inc=valdo_inc
         )
         
         return {

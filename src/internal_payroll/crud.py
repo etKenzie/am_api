@@ -10,8 +10,8 @@ def format_department_name(name: str) -> str:
     return ' '.join(word.capitalize() if word else '' for word in name.split())
 
 
-def get_total_payroll_disbursed(db: Session, month: int = None, year: int = None, dept_id: int = None, status_kontrak: int = None) -> float:
-    """Get total payroll disbursed (sum of take_home_pay) for a given month and year, optionally filtered by dept_id and status_kontrak. Only counts departments that exist in payroll_cost_owner."""
+def get_total_payroll_disbursed(db: Session, month: int = None, year: int = None, dept_id: int = None, status_kontrak: int = None, valdo_inc: int = None) -> float:
+    """Get total payroll disbursed (sum of take_home_pay) for a given month and year, optionally filtered by dept_id, status_kontrak, and valdo_inc. Only counts departments that exist in payroll_cost_owner."""
     
     try:
         # Build the query to sum take_home_pay
@@ -21,6 +21,13 @@ def get_total_payroll_disbursed(db: Session, month: int = None, year: int = None
         FROM payroll_detail pd
         INNER JOIN payroll_header ph ON pd.payroll_id = ph.payroll_id
         INNER JOIN payroll_cost_owner pco ON ph.dept_id = pco.id_department
+        """
+        
+        # Join td_karyawan if valdo_inc filter is needed
+        if valdo_inc is not None:
+            query += " INNER JOIN td_karyawan tk ON pd.id_karyawan = tk.id_karyawan"
+        
+        query += """
         WHERE 1=1
         AND ph.dept_id != 0
         """
@@ -46,6 +53,11 @@ def get_total_payroll_disbursed(db: Session, month: int = None, year: int = None
         if status_kontrak is not None:
             query += " AND pd.status_kontrak = :status_kontrak"
             params['status_kontrak'] = status_kontrak
+        
+        # Add valdo_inc filter if provided
+        if valdo_inc is not None:
+            query += " AND tk.valdo_inc = :valdo_inc"
+            params['valdo_inc'] = valdo_inc
         
         # Execute the query
         result = db.execute(text(query), params)
@@ -62,8 +74,8 @@ def get_total_payroll_disbursed(db: Session, month: int = None, year: int = None
         return 0
 
 
-def get_total_bpsjtk(db: Session, month: int = None, year: int = None, dept_id: int = None, status_kontrak: int = None) -> float:
-    """Get total BPJS TK (sum of all_bpjs_tk_comp) for a given month and year, optionally filtered by dept_id and status_kontrak. Only counts departments that exist in payroll_cost_owner."""
+def get_total_bpsjtk(db: Session, month: int = None, year: int = None, dept_id: int = None, status_kontrak: int = None, valdo_inc: int = None) -> float:
+    """Get total BPJS TK (sum of all_bpjs_tk_comp) for a given month and year, optionally filtered by dept_id, status_kontrak, and valdo_inc. Only counts departments that exist in payroll_cost_owner."""
     
     try:
         # Build the query to sum all_bpjs_tk_comp
@@ -73,6 +85,13 @@ def get_total_bpsjtk(db: Session, month: int = None, year: int = None, dept_id: 
         FROM payroll_detail pd
         INNER JOIN payroll_header ph ON pd.payroll_id = ph.payroll_id
         INNER JOIN payroll_cost_owner pco ON ph.dept_id = pco.id_department
+        """
+        
+        # Join td_karyawan if valdo_inc filter is needed
+        if valdo_inc is not None:
+            query += " INNER JOIN td_karyawan tk ON pd.id_karyawan = tk.id_karyawan"
+        
+        query += """
         WHERE 1=1
         AND ph.dept_id != 0
         """
@@ -98,6 +117,11 @@ def get_total_bpsjtk(db: Session, month: int = None, year: int = None, dept_id: 
         if status_kontrak is not None:
             query += " AND pd.status_kontrak = :status_kontrak"
             params['status_kontrak'] = status_kontrak
+        
+        # Add valdo_inc filter if provided
+        if valdo_inc is not None:
+            query += " AND tk.valdo_inc = :valdo_inc"
+            params['valdo_inc'] = valdo_inc
         
         # Execute the query
         result = db.execute(text(query), params)
@@ -114,8 +138,8 @@ def get_total_bpsjtk(db: Session, month: int = None, year: int = None, dept_id: 
         return 0
 
 
-def get_total_kesehatan(db: Session, month: int = None, year: int = None, dept_id: int = None, status_kontrak: int = None) -> float:
-    """Get total BPJS Kesehatan (sum of all_bpjs_kesehatan_comp) for a given month and year, optionally filtered by dept_id and status_kontrak. Only counts departments that exist in payroll_cost_owner."""
+def get_total_kesehatan(db: Session, month: int = None, year: int = None, dept_id: int = None, status_kontrak: int = None, valdo_inc: int = None) -> float:
+    """Get total BPJS Kesehatan (sum of all_bpjs_kesehatan_comp) for a given month and year, optionally filtered by dept_id, status_kontrak, and valdo_inc. Only counts departments that exist in payroll_cost_owner."""
     
     try:
         # Build the query to sum all_bpjs_kesehatan_comp
@@ -125,6 +149,13 @@ def get_total_kesehatan(db: Session, month: int = None, year: int = None, dept_i
         FROM payroll_detail pd
         INNER JOIN payroll_header ph ON pd.payroll_id = ph.payroll_id
         INNER JOIN payroll_cost_owner pco ON ph.dept_id = pco.id_department
+        """
+        
+        # Join td_karyawan if valdo_inc filter is needed
+        if valdo_inc is not None:
+            query += " INNER JOIN td_karyawan tk ON pd.id_karyawan = tk.id_karyawan"
+        
+        query += """
         WHERE 1=1
         AND ph.dept_id != 0
         """
@@ -150,6 +181,11 @@ def get_total_kesehatan(db: Session, month: int = None, year: int = None, dept_i
         if status_kontrak is not None:
             query += " AND pd.status_kontrak = :status_kontrak"
             params['status_kontrak'] = status_kontrak
+        
+        # Add valdo_inc filter if provided
+        if valdo_inc is not None:
+            query += " AND tk.valdo_inc = :valdo_inc"
+            params['valdo_inc'] = valdo_inc
         
         # Execute the query
         result = db.execute(text(query), params)
@@ -166,8 +202,8 @@ def get_total_kesehatan(db: Session, month: int = None, year: int = None, dept_i
         return 0
 
 
-def get_total_pensiun(db: Session, month: int = None, year: int = None, dept_id: int = None, status_kontrak: int = None) -> float:
-    """Get total BPJS Pensiun (sum of all_bpjs_pensiun_comp) for a given month and year, optionally filtered by dept_id and status_kontrak. Only counts departments that exist in payroll_cost_owner."""
+def get_total_pensiun(db: Session, month: int = None, year: int = None, dept_id: int = None, status_kontrak: int = None, valdo_inc: int = None) -> float:
+    """Get total BPJS Pensiun (sum of all_bpjs_pensiun_comp) for a given month and year, optionally filtered by dept_id, status_kontrak, and valdo_inc. Only counts departments that exist in payroll_cost_owner."""
     
     try:
         # Build the query to sum all_bpjs_pensiun_comp
@@ -177,6 +213,13 @@ def get_total_pensiun(db: Session, month: int = None, year: int = None, dept_id:
         FROM payroll_detail pd
         INNER JOIN payroll_header ph ON pd.payroll_id = ph.payroll_id
         INNER JOIN payroll_cost_owner pco ON ph.dept_id = pco.id_department
+        """
+        
+        # Join td_karyawan if valdo_inc filter is needed
+        if valdo_inc is not None:
+            query += " INNER JOIN td_karyawan tk ON pd.id_karyawan = tk.id_karyawan"
+        
+        query += """
         WHERE 1=1
         AND ph.dept_id != 0
         """
@@ -202,6 +245,11 @@ def get_total_pensiun(db: Session, month: int = None, year: int = None, dept_id:
         if status_kontrak is not None:
             query += " AND pd.status_kontrak = :status_kontrak"
             params['status_kontrak'] = status_kontrak
+        
+        # Add valdo_inc filter if provided
+        if valdo_inc is not None:
+            query += " AND tk.valdo_inc = :valdo_inc"
+            params['valdo_inc'] = valdo_inc
         
         # Execute the query
         result = db.execute(text(query), params)
@@ -218,8 +266,8 @@ def get_total_pensiun(db: Session, month: int = None, year: int = None, dept_id:
         return 0
 
 
-def get_total_payroll_headcount(db: Session, month: int = None, year: int = None, dept_id: int = None, status_kontrak: int = None) -> dict:
-    """Get total payroll headcount with breakdown by status_kontrak (count of unique id_karyawan) for a given month and year, optionally filtered by dept_id and status_kontrak. Only counts departments that exist in payroll_cost_owner."""
+def get_total_payroll_headcount(db: Session, month: int = None, year: int = None, dept_id: int = None, status_kontrak: int = None, valdo_inc: int = None) -> dict:
+    """Get total payroll headcount with breakdown by status_kontrak (count of unique id_karyawan) for a given month and year, optionally filtered by dept_id, status_kontrak, and valdo_inc. Only counts departments that exist in payroll_cost_owner."""
     
     try:
         # Build the query to count unique id_karyawan with breakdowns by status_kontrak
@@ -234,6 +282,13 @@ def get_total_payroll_headcount(db: Session, month: int = None, year: int = None
         FROM payroll_detail pd
         INNER JOIN payroll_header ph ON pd.payroll_id = ph.payroll_id
         INNER JOIN payroll_cost_owner pco ON ph.dept_id = pco.id_department
+        """
+        
+        # Join td_karyawan if valdo_inc filter is needed
+        if valdo_inc is not None:
+            query += " INNER JOIN td_karyawan tk ON pd.id_karyawan = tk.id_karyawan"
+        
+        query += """
         WHERE 1=1
         AND ph.dept_id != 0
         """
@@ -259,6 +314,11 @@ def get_total_payroll_headcount(db: Session, month: int = None, year: int = None
         if status_kontrak is not None:
             query += " AND pd.status_kontrak = :status_kontrak"
             params['status_kontrak'] = status_kontrak
+        
+        # Add valdo_inc filter if provided
+        if valdo_inc is not None:
+            query += " AND tk.valdo_inc = :valdo_inc"
+            params['valdo_inc'] = valdo_inc
         
         # Execute the query
         result = db.execute(text(query), params)
@@ -288,19 +348,32 @@ def get_total_payroll_headcount(db: Session, month: int = None, year: int = None
         }
 
 
-def get_total_department_count(db: Session, month: int = None, year: int = None) -> int:
-    """Get total number of unique departments (dept_id) from payroll_header for a given month and year. Only counts departments that exist in payroll_cost_owner."""
+def get_total_department_count(db: Session, month: int = None, year: int = None, valdo_inc: int = None) -> int:
+    """Get total number of unique departments (dept_id) from payroll_header for a given month and year, optionally filtered by valdo_inc. Only counts departments that exist in payroll_cost_owner."""
     
     try:
         # Build the query to count unique dept_id
         # Join with payroll_cost_owner to filter only valid departments
-        query = """
-        SELECT COUNT(DISTINCT ph.dept_id) as total_department_count
-        FROM payroll_header ph
-        INNER JOIN payroll_cost_owner pco ON ph.dept_id = pco.id_department
-        WHERE 1=1
-        AND ph.dept_id != 0
-        """
+        # If valdo_inc filter is provided, join through payroll_detail to td_karyawan
+        if valdo_inc is not None:
+            query = """
+            SELECT COUNT(DISTINCT ph.dept_id) as total_department_count
+            FROM payroll_header ph
+            INNER JOIN payroll_cost_owner pco ON ph.dept_id = pco.id_department
+            INNER JOIN payroll_detail pd ON pd.payroll_id = ph.payroll_id
+            INNER JOIN td_karyawan tk ON pd.id_karyawan = tk.id_karyawan
+            WHERE 1=1
+            AND ph.dept_id != 0
+            AND tk.valdo_inc = :valdo_inc
+            """
+        else:
+            query = """
+            SELECT COUNT(DISTINCT ph.dept_id) as total_department_count
+            FROM payroll_header ph
+            INNER JOIN payroll_cost_owner pco ON ph.dept_id = pco.id_department
+            WHERE 1=1
+            AND ph.dept_id != 0
+            """
         
         params = {}
         
@@ -313,6 +386,10 @@ def get_total_department_count(db: Session, month: int = None, year: int = None)
         if year is not None:
             query += " AND ph.year = :year"
             params['year'] = year
+        
+        # Add valdo_inc filter if provided (already in query if valdo_inc is not None)
+        if valdo_inc is not None:
+            params['valdo_inc'] = valdo_inc
         
         # Execute the query
         result = db.execute(text(query), params)
@@ -329,22 +406,37 @@ def get_total_department_count(db: Session, month: int = None, year: int = None)
         return 0
 
 
-def get_department_filters(db: Session, month: int = None, year: int = None) -> list:
-    """Get list of departments (dept_id and department_name) from payroll_header joined with payroll_cost_owner for a given month and year"""
+def get_department_filters(db: Session, month: int = None, year: int = None, valdo_inc: int = None) -> list:
+    """Get list of departments (dept_id and department_name) from payroll_header joined with payroll_cost_owner for a given month and year, optionally filtered by valdo_inc"""
     
     try:
         # Build the query to get distinct dept_id and department_name
         # Join payroll_header.dept_id with payroll_cost_owner.id_department
         # Use INNER JOIN to only show departments that exist in payroll_cost_owner
-        query = """
-        SELECT DISTINCT 
-            ph.dept_id,
-            pco.department_name
-        FROM payroll_header ph
-        INNER JOIN payroll_cost_owner pco ON ph.dept_id = pco.id_department
-        WHERE 1=1
-        AND ph.dept_id != 0
-        """
+        # If valdo_inc filter is provided, join through payroll_detail to td_karyawan
+        if valdo_inc is not None:
+            query = """
+            SELECT DISTINCT 
+                ph.dept_id,
+                pco.department_name
+            FROM payroll_header ph
+            INNER JOIN payroll_cost_owner pco ON ph.dept_id = pco.id_department
+            INNER JOIN payroll_detail pd ON pd.payroll_id = ph.payroll_id
+            INNER JOIN td_karyawan tk ON pd.id_karyawan = tk.id_karyawan
+            WHERE 1=1
+            AND ph.dept_id != 0
+            AND tk.valdo_inc = :valdo_inc
+            """
+        else:
+            query = """
+            SELECT DISTINCT 
+                ph.dept_id,
+                pco.department_name
+            FROM payroll_header ph
+            INNER JOIN payroll_cost_owner pco ON ph.dept_id = pco.id_department
+            WHERE 1=1
+            AND ph.dept_id != 0
+            """
         
         params = {}
         
@@ -357,6 +449,10 @@ def get_department_filters(db: Session, month: int = None, year: int = None) -> 
         if year is not None:
             query += " AND ph.year = :year"
             params['year'] = year
+        
+        # Add valdo_inc filter if provided (already in query if valdo_inc is not None)
+        if valdo_inc is not None:
+            params['valdo_inc'] = valdo_inc
         
         # Order by dept_id
         query += " ORDER BY ph.dept_id"
@@ -384,7 +480,7 @@ def get_department_filters(db: Session, month: int = None, year: int = None) -> 
         return []
 
 
-def get_monthly_payroll_summary(db: Session, start_month_str: str, end_month_str: str, dept_id: int = None, status_kontrak: int = None) -> dict:
+def get_monthly_payroll_summary(db: Session, start_month_str: str, end_month_str: str, dept_id: int = None, status_kontrak: int = None, valdo_inc: int = None) -> dict:
     """Get monthly payroll summaries combining total_disbursed and headcount for each month in the range. 
     Only counts departments that exist in payroll_cost_owner.
     
@@ -393,6 +489,7 @@ def get_monthly_payroll_summary(db: Session, start_month_str: str, end_month_str
         end_month_str: End month in MM-YYYY format (e.g., "08-2025")
         dept_id: Optional department ID filter
         status_kontrak: Optional status kontrak filter (1=PKWTT, 2=PKWT, 3=Mitra)
+        valdo_inc: Optional valdo_inc filter
     """
     
     try:
@@ -452,7 +549,8 @@ def get_monthly_payroll_summary(db: Session, start_month_str: str, end_month_str
                 month=month,
                 year=year,
                 dept_id=dept_id,
-                status_kontrak=status_kontrak
+                status_kontrak=status_kontrak,
+                valdo_inc=valdo_inc
             )
             
             # Get headcount for this month
@@ -460,7 +558,8 @@ def get_monthly_payroll_summary(db: Session, start_month_str: str, end_month_str
                 db,
                 month=month,
                 year=year,
-                dept_id=dept_id
+                dept_id=dept_id,
+                valdo_inc=valdo_inc
             )
             
             # Format month name (e.g., "January 2025")
@@ -483,12 +582,12 @@ def get_monthly_payroll_summary(db: Session, start_month_str: str, end_month_str
         return {}
 
 
-def get_department_summary(db: Session, month: int = None, year: int = None, status_kontrak: int = None) -> list:
+def get_department_summary(db: Session, month: int = None, year: int = None, status_kontrak: int = None, valdo_inc: int = None) -> list:
     """Get department summary with headcount breakdown, distribution ratio, and total disbursed. Only includes departments that exist in payroll_cost_owner."""
     
     try:
         # First, get total payroll headcount for distribution ratio calculation
-        total_headcount_data = get_total_payroll_headcount(db, month=month, year=year, status_kontrak=status_kontrak)
+        total_headcount_data = get_total_payroll_headcount(db, month=month, year=year, status_kontrak=status_kontrak, valdo_inc=valdo_inc)
         total_payroll_headcount = total_headcount_data.get("total_headcount", 1)  # Use 1 to avoid division by zero
         
         # Build the query to get department summaries grouped by department
@@ -506,6 +605,13 @@ def get_department_summary(db: Session, month: int = None, year: int = None, sta
         FROM payroll_detail pd
         INNER JOIN payroll_header ph ON pd.payroll_id = ph.payroll_id
         INNER JOIN payroll_cost_owner pco ON ph.dept_id = pco.id_department
+        """
+        
+        # Join td_karyawan if valdo_inc filter is needed
+        if valdo_inc is not None:
+            query += " INNER JOIN td_karyawan tk ON pd.id_karyawan = tk.id_karyawan"
+        
+        query += """
         WHERE 1=1
         AND ph.dept_id != 0
         """
@@ -526,6 +632,11 @@ def get_department_summary(db: Session, month: int = None, year: int = None, sta
         if status_kontrak is not None:
             query += " AND pd.status_kontrak = :status_kontrak"
             params['status_kontrak'] = status_kontrak
+        
+        # Add valdo_inc filter if provided
+        if valdo_inc is not None:
+            query += " AND tk.valdo_inc = :valdo_inc"
+            params['valdo_inc'] = valdo_inc
         
         # Group by department
         query += " GROUP BY pco.id_department, pco.department_name, pco.unit_head"
@@ -572,12 +683,12 @@ def get_department_summary(db: Session, month: int = None, year: int = None, sta
         return []
 
 
-def get_cost_owner_summary(db: Session, month: int = None, year: int = None, status_kontrak: int = None) -> list:
+def get_cost_owner_summary(db: Session, month: int = None, year: int = None, status_kontrak: int = None, valdo_inc: int = None) -> list:
     """Get cost owner summary with headcount breakdown, distribution ratio, and total disbursed. Only includes departments that exist in payroll_cost_owner."""
     
     try:
         # First, get total payroll headcount for distribution ratio calculation
-        total_headcount_data = get_total_payroll_headcount(db, month=month, year=year, status_kontrak=status_kontrak)
+        total_headcount_data = get_total_payroll_headcount(db, month=month, year=year, status_kontrak=status_kontrak, valdo_inc=valdo_inc)
         total_payroll_headcount = total_headcount_data.get("total_headcount", 1)  # Use 1 to avoid division by zero
         
         # Build the query to get cost owner summaries grouped by unit_head
@@ -592,6 +703,13 @@ def get_cost_owner_summary(db: Session, month: int = None, year: int = None, sta
         FROM payroll_detail pd
         INNER JOIN payroll_header ph ON pd.payroll_id = ph.payroll_id
         INNER JOIN payroll_cost_owner pco ON ph.dept_id = pco.id_department
+        """
+        
+        # Join td_karyawan if valdo_inc filter is needed
+        if valdo_inc is not None:
+            query += " INNER JOIN td_karyawan tk ON pd.id_karyawan = tk.id_karyawan"
+        
+        query += """
         WHERE 1=1
         AND ph.dept_id != 0
         """
@@ -612,6 +730,11 @@ def get_cost_owner_summary(db: Session, month: int = None, year: int = None, sta
         if status_kontrak is not None:
             query += " AND pd.status_kontrak = :status_kontrak"
             params['status_kontrak'] = status_kontrak
+        
+        # Add valdo_inc filter if provided
+        if valdo_inc is not None:
+            query += " AND tk.valdo_inc = :valdo_inc"
+            params['valdo_inc'] = valdo_inc
         
         # Group by cost owner (unit_head)
         query += " GROUP BY pco.unit_head"
