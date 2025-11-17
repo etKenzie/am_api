@@ -7,3 +7,4 @@ pymysql
 openai
 PyPDF2
 openai-agents
+boto3

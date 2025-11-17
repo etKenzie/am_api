@@ -1,11 +1,20 @@
 import json
 import os
 import tempfile
+import uuid
+import asyncio
+import urllib.request
 from typing import List, Optional
-from fastapi import APIRouter, UploadFile, File, Form, HTTPException
+from fastapi import APIRouter, UploadFile, File, Form, Query, HTTPException
 from pydantic import BaseModel
 from PyPDF2 import PdfReader
+import boto3
+from botocore.exceptions import ClientError
+from dotenv import load_dotenv
 from .resume_scorer import score_resume, enhance_job_requirements
+
+# Load environment variables
+load_dotenv()
 
 router = APIRouter(prefix="/ai", tags=["AI"])
 
@@ -44,6 +53,16 @@ class JobRequirementsEnhancementResponse(BaseModel):
     enhanced_requirements: Optional[str] = None
     error: Optional[str] = None
     message: str
+
+
+class TranscribeResponse(BaseModel):
+    """Transcription Response Schema"""
+    job_name: str
+    status: str
+    language_code: str
+    media_format: str
+    transcription: Optional[str] = None
+    error: Optional[str] = None
 
 
 async def extract_text_from_upload(upload_file: UploadFile) -> str:
@@ -213,9 +232,208 @@ async def root():
             "score_resume": "/score-resume",
             "score_pdf": "/score-pdf",
             "enhance_job_requirements": "/enhance_job_requirements",
+            "transcribe": "/transcribe",
             "docs": "/docs"
         }
     }
+
+
+@router.post("/transcribe", response_model=TranscribeResponse)
+async def transcribe_audio(
+    file: UploadFile = File(..., description="Audio file to transcribe (MP3, MP4, etc.)"),
+    language_code: str = Query("en-US", description="Language code for transcription (default: en-US)")
+) -> TranscribeResponse:
+    """
+    Transcribe an audio file using Amazon Transcribe.
+    
+    The file is uploaded to S3, then a transcription job is started.
+    The endpoint waits for the job to complete and returns the transcription.
+    
+    Args:
+        file: Audio file (MP3, MP4, WAV, etc.)
+        language_code: Language code for transcription (default: en-US)
+    
+    Returns:
+        Transcription result with job details and transcribed text
+    """
+    # Get AWS configuration from environment variables
+    aws_region = os.getenv("AWS_REGION", "us-east-1")
+    s3_bucket = os.getenv("S3_BUCKET")
+    
+    if not s3_bucket:
+        return TranscribeResponse(
+            job_name="",
+            status="FAILED",
+            language_code=language_code,
+            media_format="",
+            error="S3_BUCKET environment variable not set"
+        )
+    
+    # Initialize AWS clients
+    try:
+        s3_client = boto3.client('s3', region_name=aws_region)
+        transcribe_client = boto3.client('transcribe', region_name=aws_region)
+    except Exception as e:
+        return TranscribeResponse(
+            job_name="",
+            status="FAILED",
+            language_code=language_code,
+            media_format="",
+            error=f"Failed to initialize AWS clients: {str(e)}"
+        )
+    
+    # Generate unique job name and S3 key
+    job_name = f"transcribe-{uuid.uuid4().hex[:8]}"
+    file_extension = os.path.splitext(file.filename)[1].lower() if file.filename else ".mp3"
+    s3_key = f"transcriptions/{job_name}{file_extension}"
+    
+    # Determine media format from file extension
+    media_format_map = {
+        ".mp3": "mp3",
+        ".mp4": "mp4",
+        ".wav": "wav",
+        ".flac": "flac",
+        ".ogg": "ogg",
+        ".amr": "amr",
+        ".webm": "webm"
+    }
+    media_format = media_format_map.get(file_extension, "mp3")
+    
+    try:
+        # Read file content
+        file_content = await file.read()
+        
+        # Upload file to S3
+        try:
+            s3_client.put_object(
+                Bucket=s3_bucket,
+                Key=s3_key,
+                Body=file_content,
+                ContentType=file.content_type or f"audio/{media_format}"
+            )
+        except ClientError as e:
+            return TranscribeResponse(
+                job_name=job_name,
+                status="FAILED",
+                language_code=language_code,
+                media_format=media_format,
+                error=f"Failed to upload file to S3: {str(e)}"
+            )
+        
+        # Create S3 URI
+        s3_uri = f"s3://{s3_bucket}/{s3_key}"
+        
+        # Start transcription job
+        try:
+            transcribe_client.start_transcription_job(
+                TranscriptionJobName=job_name,
+                Media={'MediaFileUri': s3_uri},
+                MediaFormat=media_format,
+                LanguageCode=language_code
+            )
+        except ClientError as e:
+            # Clean up S3 file if transcription job creation fails
+            try:
+                s3_client.delete_object(Bucket=s3_bucket, Key=s3_key)
+            except:
+                pass
+            return TranscribeResponse(
+                job_name=job_name,
+                status="FAILED",
+                language_code=language_code,
+                media_format=media_format,
+                error=f"Failed to start transcription job: {str(e)}"
+            )
+        
+        # Poll for job completion
+        max_wait_time = 300  # 5 minutes
+        poll_interval = 5  # 5 seconds
+        elapsed_time = 0
+        
+        while elapsed_time < max_wait_time:
+            try:
+                response = transcribe_client.get_transcription_job(TranscriptionJobName=job_name)
+                job_status = response['TranscriptionJob']['TranscriptionJobStatus']
+                
+                if job_status == 'COMPLETED':
+                    # Get transcription result
+                    transcript_uri = response['TranscriptionJob']['Transcript']['TranscriptFileUri']
+                    
+                    # Download and parse the transcript
+                    with urllib.request.urlopen(transcript_uri) as url:
+                        transcript_data = json.loads(url.read().decode())
+                        transcription = transcript_data['results']['transcripts'][0]['transcript']
+                    
+                    # Clean up S3 file
+                    try:
+                        s3_client.delete_object(Bucket=s3_bucket, Key=s3_key)
+                    except:
+                        pass
+                    
+                    return TranscribeResponse(
+                        job_name=job_name,
+                        status="COMPLETED",
+                        language_code=language_code,
+                        media_format=media_format,
+                        transcription=transcription
+                    )
+                elif job_status == 'FAILED':
+                    failure_reason = response['TranscriptionJob'].get('FailureReason', 'Unknown error')
+                    # Clean up S3 file
+                    try:
+                        s3_client.delete_object(Bucket=s3_bucket, Key=s3_key)
+                    except:
+                        pass
+                    return TranscribeResponse(
+                        job_name=job_name,
+                        status="FAILED",
+                        language_code=language_code,
+                        media_format=media_format,
+                        error=f"Transcription job failed: {failure_reason}"
+                    )
+                
+                # Wait before next poll
+                await asyncio.sleep(poll_interval)
+                elapsed_time += poll_interval
+                
+            except ClientError as e:
+                return TranscribeResponse(
+                    job_name=job_name,
+                    status="FAILED",
+                    language_code=language_code,
+                    media_format=media_format,
+                    error=f"Error checking transcription job status: {str(e)}"
+                )
+        
+        # Timeout - job is still in progress
+        return TranscribeResponse(
+            job_name=job_name,
+            status="IN_PROGRESS",
+            language_code=language_code,
+            media_format=media_format,
+            error="Transcription job is taking longer than expected. Please check the job status later."
+        )
+        
+    except Exception as e:
+        # Clean up S3 file on any error
+        try:
+            s3_client.delete_object(Bucket=s3_bucket, Key=s3_key)
+        except:
+            pass
+        
+        # Try to delete transcription job if it was created
+        try:
+            transcribe_client.delete_transcription_job(TranscriptionJobName=job_name)
+        except:
+            pass
+        
+        return TranscribeResponse(
+            job_name=job_name,
+            status="FAILED",
+            language_code=language_code,
+            media_format=media_format,
+            error=f"Unexpected error: {str(e)}"
+        )
 
 
 @router.get("/test-agents")
