@@ -25,7 +25,7 @@ async def get_total_payroll_disbursed(
     valdo_inc: int = None,
     db: Session = Depends(get_db)
 ):
-    """Get total payroll disbursed (sum of take_home_pay) for internal payroll (dept_id = 0) for a given month and year, optionally filtered by status_kontrak (1=PKWTT, 2=PKWT, 3=Mitra), and valdo_inc"""
+    """Get total payroll disbursed (sum of take_home_pay) for internal payroll (dept_id != 0) for a given month and year, optionally filtered by status_kontrak (1=PKWTT, 2=PKWT, 3=Mitra), and valdo_inc"""
     try:
         total_payroll_disbursed = crud.get_total_payroll_disbursed(
             db,
@@ -40,8 +40,7 @@ async def get_total_payroll_disbursed(
             "status": "success",
             "total_payroll_disbursed": total_payroll_disbursed,
             "month": month,
-            "year": year,
-            "dept_id": 0
+            "year": year
         }
     except Exception as e:
         return {
@@ -49,8 +48,7 @@ async def get_total_payroll_disbursed(
             "message": str(e),
             "total_payroll_disbursed": 0,
             "month": month,
-            "year": year,
-            "dept_id": 0
+            "year": year
         }
 
 
@@ -63,7 +61,7 @@ async def get_total_payroll_headcount(
     valdo_inc: int = None,
     db: Session = Depends(get_db)
 ):
-    """Get total payroll headcount with breakdown by status_kontrak (count of unique id_karyawan) for internal payroll (dept_id = 0) for a given month and year, optionally filtered by status_kontrak (1=PKWTT, 2=PKWT, 3=Mitra), and valdo_inc"""
+    """Get total payroll headcount with breakdown by status_kontrak (count of unique id_karyawan) for internal payroll (dept_id != 0) for a given month and year, optionally filtered by status_kontrak (1=PKWTT, 2=PKWT, 3=Mitra), and valdo_inc"""
     try:
         headcount_data = crud.get_total_payroll_headcount(
             db,
@@ -81,8 +79,7 @@ async def get_total_payroll_headcount(
             "pkwt_headcount": headcount_data["pkwt_headcount"],
             "mitra_headcount": headcount_data["mitra_headcount"],
             "month": month,
-            "year": year,
-            "dept_id": 0
+            "year": year
         }
     except Exception as e:
         return {
@@ -93,8 +90,7 @@ async def get_total_payroll_headcount(
             "pkwt_headcount": 0,
             "mitra_headcount": 0,
             "month": month,
-            "year": year,
-            "dept_id": 0
+            "year": year
         }
 
 
@@ -105,7 +101,7 @@ async def get_total_department_count(
     valdo_inc: int = None,
     db: Session = Depends(get_db)
 ):
-    """Get total number of unique departments for internal payroll. For internal payroll, this will always be 1 (dept_id = 0) or 0 if no data exists."""
+    """Get total number of unique departments for internal payroll (dept_id != 0)."""
     try:
         total_department_count = crud.get_total_department_count(
             db,
@@ -139,7 +135,7 @@ async def get_total_bpsjtk(
     valdo_inc: int = None,
     db: Session = Depends(get_db)
 ):
-    """Get total BPJS TK (sum of all_bpjs_tk_comp) for internal payroll (dept_id = 0) for a given month and year, optionally filtered by status_kontrak (1=PKWTT, 2=PKWT, 3=Mitra), and valdo_inc"""
+    """Get total BPJS TK (sum of all_bpjs_tk_comp) for internal payroll (dept_id != 0) for a given month and year, optionally filtered by status_kontrak (1=PKWTT, 2=PKWT, 3=Mitra), and valdo_inc"""
     try:
         total_bpsjtk = crud.get_total_bpsjtk(
             db,
@@ -154,8 +150,7 @@ async def get_total_bpsjtk(
             "status": "success",
             "total_bpsjtk": total_bpsjtk,
             "month": month,
-            "year": year,
-            "dept_id": 0
+            "year": year
         }
     except Exception as e:
         return {
@@ -163,8 +158,7 @@ async def get_total_bpsjtk(
             "message": str(e),
             "total_bpsjtk": 0,
             "month": month,
-            "year": year,
-            "dept_id": 0
+            "year": year
         }
 
 
@@ -177,7 +171,7 @@ async def get_total_kesehatan(
     valdo_inc: int = None,
     db: Session = Depends(get_db)
 ):
-    """Get total BPJS Kesehatan (sum of all_bpjs_kesehatan_comp) for internal payroll (dept_id = 0) for a given month and year, optionally filtered by status_kontrak (1=PKWTT, 2=PKWT, 3=Mitra), and valdo_inc"""
+    """Get total BPJS Kesehatan (sum of all_bpjs_kesehatan_comp) for internal payroll (dept_id != 0) for a given month and year, optionally filtered by status_kontrak (1=PKWTT, 2=PKWT, 3=Mitra), and valdo_inc"""
     try:
         total_kesehatan = crud.get_total_kesehatan(
             db,
@@ -192,8 +186,7 @@ async def get_total_kesehatan(
             "status": "success",
             "total_kesehatan": total_kesehatan,
             "month": month,
-            "year": year,
-            "dept_id": 0
+            "year": year
         }
     except Exception as e:
         return {
@@ -201,8 +194,7 @@ async def get_total_kesehatan(
             "message": str(e),
             "total_kesehatan": 0,
             "month": month,
-            "year": year,
-            "dept_id": 0
+            "year": year
         }
 
 
@@ -215,7 +207,7 @@ async def get_total_pensiun(
     valdo_inc: int = None,
     db: Session = Depends(get_db)
 ):
-    """Get total BPJS Pensiun (sum of all_bpjs_pensiun_comp) for internal payroll (dept_id = 0) for a given month and year, optionally filtered by status_kontrak (1=PKWTT, 2=PKWT, 3=Mitra), and valdo_inc"""
+    """Get total BPJS Pensiun (sum of all_bpjs_pensiun_comp) for internal payroll (dept_id != 0) for a given month and year, optionally filtered by status_kontrak (1=PKWTT, 2=PKWT, 3=Mitra), and valdo_inc"""
     try:
         total_pensiun = crud.get_total_pensiun(
             db,
@@ -230,8 +222,7 @@ async def get_total_pensiun(
             "status": "success",
             "total_pensiun": total_pensiun,
             "month": month,
-            "year": year,
-            "dept_id": 0
+            "year": year
         }
     except Exception as e:
         return {
@@ -239,8 +230,7 @@ async def get_total_pensiun(
             "message": str(e),
             "total_pensiun": 0,
             "month": month,
-            "year": year,
-            "dept_id": 0
+            "year": year
         }
 
 
@@ -251,7 +241,7 @@ async def get_department_filters(
     valdo_inc: int = None,
     db: Session = Depends(get_db)
 ):
-    """Get list of departments for internal payroll. For internal payroll, this will return dept_id = 0 with a default name."""
+    """Get list of departments for internal payroll (dept_id != 0)."""
     try:
         departments = crud.get_department_filters(
             db,
@@ -287,12 +277,12 @@ async def get_monthly_payroll_summary(
     valdo_inc: int = None,
     db: Session = Depends(get_db)
 ):
-    """Get monthly payroll summaries combining total_disbursed and headcount for each month in the range for internal payroll (dept_id = 0).
+    """Get monthly payroll summaries combining total_disbursed and headcount for each month in the range for internal payroll (dept_id != 0).
     
     Args:
         start_month: Start month in MM-YYYY format (e.g., "01-2025")
         end_month: End month in MM-YYYY format (e.g., "08-2025")
-        dept_id: Not applicable for internal payroll (always 0)
+        dept_id: Optional department ID filter (applies to dept_id != 0)
         status_kontrak: Optional status kontrak filter (1=PKWTT, 2=PKWT, 3=Mitra)
         valdo_inc: Optional valdo_inc filter
     """
@@ -307,7 +297,6 @@ async def get_monthly_payroll_summary(
                 "summaries": {},
                 "start_month": start_month,
                 "end_month": end_month,
-                "dept_id": 0
             }
         
         if not date_pattern.match(end_month):
@@ -316,8 +305,7 @@ async def get_monthly_payroll_summary(
                 "message": "end_month must be in MM-YYYY format (e.g., '08-2025')",
                 "summaries": {},
                 "start_month": start_month,
-                "end_month": end_month,
-                "dept_id": 0
+                "end_month": end_month
             }
         
         # Parse to validate months are valid
@@ -333,8 +321,7 @@ async def get_monthly_payroll_summary(
                     "message": "start_month month must be between 01 and 12",
                     "summaries": {},
                     "start_month": start_month,
-                    "end_month": end_month,
-                    "dept_id": 0
+                    "end_month": end_month
                 }
             
             if end_month_int < 1 or end_month_int > 12:
@@ -343,8 +330,7 @@ async def get_monthly_payroll_summary(
                     "message": "end_month month must be between 01 and 12",
                     "summaries": {},
                     "start_month": start_month,
-                    "end_month": end_month,
-                    "dept_id": 0
+                    "end_month": end_month
                 }
         except ValueError:
             return {
@@ -352,15 +338,14 @@ async def get_monthly_payroll_summary(
                 "message": "Invalid month format. Must be MM-YYYY",
                 "summaries": {},
                 "start_month": start_month,
-                "end_month": end_month,
-                "dept_id": 0
+                "end_month": end_month
             }
         
         monthly_summaries = crud.get_monthly_payroll_summary(
             db,
             start_month_str=start_month,
             end_month_str=end_month,
-            dept_id=None,  # Not applicable for internal
+            dept_id=dept_id,
             status_kontrak=status_kontrak,
             valdo_inc=valdo_inc
         )
@@ -369,8 +354,7 @@ async def get_monthly_payroll_summary(
             "status": "success",
             "summaries": monthly_summaries,
             "start_month": start_month,
-            "end_month": end_month,
-            "dept_id": 0
+            "end_month": end_month
         }
     except Exception as e:
         return {
@@ -378,8 +362,7 @@ async def get_monthly_payroll_summary(
             "message": str(e),
             "summaries": {},
             "start_month": start_month,
-            "end_month": end_month,
-            "dept_id": 0
+            "end_month": end_month
         }
 
 
@@ -391,7 +374,7 @@ async def get_department_summary(
     valdo_inc: int = None,
     db: Session = Depends(get_db)
 ):
-    """Get department summary with headcount breakdown, distribution ratio, and total disbursed for internal payroll (dept_id = 0). Optionally filtered by status_kontrak (1=PKWTT, 2=PKWT, 3=Mitra) and valdo_inc."""
+    """Get department summary with headcount breakdown, distribution ratio, and total disbursed for internal payroll (dept_id != 0). Optionally filtered by status_kontrak (1=PKWTT, 2=PKWT, 3=Mitra) and valdo_inc."""
     try:
         departments = crud.get_department_summary(
             db,
@@ -427,7 +410,7 @@ async def get_cost_owner_summary(
     valdo_inc: int = None,
     db: Session = Depends(get_db)
 ):
-    """Get cost owner summary with headcount breakdown, distribution ratio, and total disbursed for internal payroll (dept_id = 0). Optionally filtered by status_kontrak (1=PKWTT, 2=PKWT, 3=Mitra) and valdo_inc."""
+    """Get cost owner summary with headcount breakdown, distribution ratio, and total disbursed for internal payroll (dept_id != 0). Optionally filtered by status_kontrak (1=PKWTT, 2=PKWT, 3=Mitra) and valdo_inc."""
     try:
         cost_owners = crud.get_cost_owner_summary(
             db,
