@@ -248,7 +248,6 @@ async def get_total_pensiun(
 async def get_department_filters(
     month: int = None,
     year: int = None,
-    valdo_inc: int = None,
     db: Session = Depends(get_db)
 ):
     """Get list of departments for internal payroll. For internal payroll, this will return dept_id = 0 with a default name."""
@@ -257,7 +256,7 @@ async def get_department_filters(
             db,
             month=month,
             year=year,
-            valdo_inc=valdo_inc
+            valdo_inc=None
         )
         
         return {

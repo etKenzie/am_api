@@ -2,6 +2,13 @@ from sqlalchemy.orm import Session
 from sqlalchemy import text
 
 
+# Internal payroll: only include these valdo_inc values (VI and VSDM). Excludes VSI, TOPAN.
+# If your DB uses different integer codes, change these (common: 1=VI, 2=VSDM).
+VALDO_INC_VI = 1
+VALDO_INC_VSDM = 2
+INTERNAL_PAYROLL_VALDO_INC_ALLOWED = (VALDO_INC_VI, VALDO_INC_VSDM)
+
+
 def format_department_name(name: str) -> str:
     """Format department name to title case (first letter of each word capitalized)"""
     if not name:
@@ -15,24 +22,26 @@ def get_total_payroll_disbursed(db: Session, month: int = None, year: int = None
     
     try:
         # Build the query to sum take_home_pay
-        # Always join with payroll_header and payroll_cost_owner to filter only valid departments
+        # Always join with payroll_header, payroll_cost_owner, and td_karyawan to filter only valid departments
+        # and restrict internal payroll to allowed valdo_inc values (VI, VSDM)
         query = """
         SELECT SUM(pd.take_home_pay) as total_payroll_disbursed
         FROM payroll_detail pd
         INNER JOIN payroll_header ph ON pd.payroll_id = ph.payroll_id
         INNER JOIN payroll_cost_owner pco ON ph.dept_id = pco.id_department
+        INNER JOIN td_karyawan tk ON pd.id_karyawan = tk.id_karyawan
         """
-        
-        # Join td_karyawan if valdo_inc filter is needed
-        if valdo_inc is not None:
-            query += " INNER JOIN td_karyawan tk ON pd.id_karyawan = tk.id_karyawan"
         
         query += """
         WHERE 1=1
         AND ph.dept_id != 0
+        AND tk.valdo_inc IN (:valdo_inc_vi, :valdo_inc_vsdm)
         """
         
-        params = {}
+        params = {
+            'valdo_inc_vi': VALDO_INC_VI,
+            'valdo_inc_vsdm': VALDO_INC_VSDM,
+        }
         
         # Add month filter if provided
         if month is not None:
@@ -54,7 +63,7 @@ def get_total_payroll_disbursed(db: Session, month: int = None, year: int = None
             query += " AND pd.status_kontrak = :status_kontrak"
             params['status_kontrak'] = status_kontrak
         
-        # Add valdo_inc filter if provided
+        # Add valdo_inc filter if provided (further restricts to a single allowed value)
         if valdo_inc is not None:
             query += " AND tk.valdo_inc = :valdo_inc"
             params['valdo_inc'] = valdo_inc
@@ -79,24 +88,26 @@ def get_total_bpsjtk(db: Session, month: int = None, year: int = None, dept_id: 
     
     try:
         # Build the query to sum all_bpjs_tk_comp
-        # Always join with payroll_header and payroll_cost_owner to filter only valid departments
+        # Always join with payroll_header, payroll_cost_owner, and td_karyawan to filter only valid departments
+        # and restrict internal payroll to allowed valdo_inc values (VI, VSDM)
         query = """
         SELECT SUM(pd.all_bpjs_tk_comp) as total_bpsjtk
         FROM payroll_detail pd
         INNER JOIN payroll_header ph ON pd.payroll_id = ph.payroll_id
         INNER JOIN payroll_cost_owner pco ON ph.dept_id = pco.id_department
+        INNER JOIN td_karyawan tk ON pd.id_karyawan = tk.id_karyawan
         """
-        
-        # Join td_karyawan if valdo_inc filter is needed
-        if valdo_inc is not None:
-            query += " INNER JOIN td_karyawan tk ON pd.id_karyawan = tk.id_karyawan"
         
         query += """
         WHERE 1=1
         AND ph.dept_id != 0
+        AND tk.valdo_inc IN (:valdo_inc_vi, :valdo_inc_vsdm)
         """
         
-        params = {}
+        params = {
+            'valdo_inc_vi': VALDO_INC_VI,
+            'valdo_inc_vsdm': VALDO_INC_VSDM,
+        }
         
         # Add month filter if provided
         if month is not None:
@@ -118,7 +129,7 @@ def get_total_bpsjtk(db: Session, month: int = None, year: int = None, dept_id: 
             query += " AND pd.status_kontrak = :status_kontrak"
             params['status_kontrak'] = status_kontrak
         
-        # Add valdo_inc filter if provided
+        # Add valdo_inc filter if provided (further restricts to a single allowed value)
         if valdo_inc is not None:
             query += " AND tk.valdo_inc = :valdo_inc"
             params['valdo_inc'] = valdo_inc
@@ -143,24 +154,26 @@ def get_total_kesehatan(db: Session, month: int = None, year: int = None, dept_i
     
     try:
         # Build the query to sum all_bpjs_kesehatan_comp
-        # Always join with payroll_header and payroll_cost_owner to filter only valid departments
+        # Always join with payroll_header, payroll_cost_owner, and td_karyawan to filter only valid departments
+        # and restrict internal payroll to allowed valdo_inc values (VI, VSDM)
         query = """
         SELECT SUM(pd.all_bpjs_kesehatan_comp) as total_kesehatan
         FROM payroll_detail pd
         INNER JOIN payroll_header ph ON pd.payroll_id = ph.payroll_id
         INNER JOIN payroll_cost_owner pco ON ph.dept_id = pco.id_department
+        INNER JOIN td_karyawan tk ON pd.id_karyawan = tk.id_karyawan
         """
-        
-        # Join td_karyawan if valdo_inc filter is needed
-        if valdo_inc is not None:
-            query += " INNER JOIN td_karyawan tk ON pd.id_karyawan = tk.id_karyawan"
         
         query += """
         WHERE 1=1
         AND ph.dept_id != 0
+        AND tk.valdo_inc IN (:valdo_inc_vi, :valdo_inc_vsdm)
         """
         
-        params = {}
+        params = {
+            'valdo_inc_vi': VALDO_INC_VI,
+            'valdo_inc_vsdm': VALDO_INC_VSDM,
+        }
         
         # Add month filter if provided
         if month is not None:
@@ -182,7 +195,7 @@ def get_total_kesehatan(db: Session, month: int = None, year: int = None, dept_i
             query += " AND pd.status_kontrak = :status_kontrak"
             params['status_kontrak'] = status_kontrak
         
-        # Add valdo_inc filter if provided
+        # Add valdo_inc filter if provided (further restricts to a single allowed value)
         if valdo_inc is not None:
             query += " AND tk.valdo_inc = :valdo_inc"
             params['valdo_inc'] = valdo_inc
@@ -207,24 +220,26 @@ def get_total_pensiun(db: Session, month: int = None, year: int = None, dept_id:
     
     try:
         # Build the query to sum all_bpjs_pensiun_comp
-        # Always join with payroll_header and payroll_cost_owner to filter only valid departments
+        # Always join with payroll_header, payroll_cost_owner, and td_karyawan to filter only valid departments
+        # and restrict internal payroll to allowed valdo_inc values (VI, VSDM)
         query = """
         SELECT SUM(pd.all_bpjs_pensiun_comp) as total_pensiun
         FROM payroll_detail pd
         INNER JOIN payroll_header ph ON pd.payroll_id = ph.payroll_id
         INNER JOIN payroll_cost_owner pco ON ph.dept_id = pco.id_department
+        INNER JOIN td_karyawan tk ON pd.id_karyawan = tk.id_karyawan
         """
-        
-        # Join td_karyawan if valdo_inc filter is needed
-        if valdo_inc is not None:
-            query += " INNER JOIN td_karyawan tk ON pd.id_karyawan = tk.id_karyawan"
         
         query += """
         WHERE 1=1
         AND ph.dept_id != 0
+        AND tk.valdo_inc IN (:valdo_inc_vi, :valdo_inc_vsdm)
         """
         
-        params = {}
+        params = {
+            'valdo_inc_vi': VALDO_INC_VI,
+            'valdo_inc_vsdm': VALDO_INC_VSDM,
+        }
         
         # Add month filter if provided
         if month is not None:
@@ -246,7 +261,7 @@ def get_total_pensiun(db: Session, month: int = None, year: int = None, dept_id:
             query += " AND pd.status_kontrak = :status_kontrak"
             params['status_kontrak'] = status_kontrak
         
-        # Add valdo_inc filter if provided
+        # Add valdo_inc filter if provided (further restricts to a single allowed value)
         if valdo_inc is not None:
             query += " AND tk.valdo_inc = :valdo_inc"
             params['valdo_inc'] = valdo_inc
@@ -272,7 +287,8 @@ def get_total_payroll_headcount(db: Session, month: int = None, year: int = None
     try:
         # Build the query to count unique id_karyawan with breakdowns by status_kontrak
         # status_kontrak is in payroll_detail table
-        # Always join with payroll_header and payroll_cost_owner to filter only valid departments
+        # Always join with payroll_header, payroll_cost_owner, and td_karyawan to filter only valid departments
+        # and restrict internal payroll to allowed valdo_inc values (VI, VSDM)
         query = """
         SELECT 
             COUNT(DISTINCT pd.id_karyawan) as total_headcount,
@@ -282,18 +298,19 @@ def get_total_payroll_headcount(db: Session, month: int = None, year: int = None
         FROM payroll_detail pd
         INNER JOIN payroll_header ph ON pd.payroll_id = ph.payroll_id
         INNER JOIN payroll_cost_owner pco ON ph.dept_id = pco.id_department
+        INNER JOIN td_karyawan tk ON pd.id_karyawan = tk.id_karyawan
         """
-        
-        # Join td_karyawan if valdo_inc filter is needed
-        if valdo_inc is not None:
-            query += " INNER JOIN td_karyawan tk ON pd.id_karyawan = tk.id_karyawan"
         
         query += """
         WHERE 1=1
         AND ph.dept_id != 0
+        AND tk.valdo_inc IN (:valdo_inc_vi, :valdo_inc_vsdm)
         """
         
-        params = {}
+        params = {
+            'valdo_inc_vi': VALDO_INC_VI,
+            'valdo_inc_vsdm': VALDO_INC_VSDM,
+        }
         
         # Add month filter if provided
         if month is not None:
@@ -315,7 +332,7 @@ def get_total_payroll_headcount(db: Session, month: int = None, year: int = None
             query += " AND pd.status_kontrak = :status_kontrak"
             params['status_kontrak'] = status_kontrak
         
-        # Add valdo_inc filter if provided
+        # Add valdo_inc filter if provided (further restricts to a single allowed value)
         if valdo_inc is not None:
             query += " AND tk.valdo_inc = :valdo_inc"
             params['valdo_inc'] = valdo_inc
@@ -353,29 +370,23 @@ def get_total_department_count(db: Session, month: int = None, year: int = None,
     
     try:
         # Build the query to count unique dept_id
-        # Join with payroll_cost_owner to filter only valid departments
-        # If valdo_inc filter is provided, join through payroll_detail to td_karyawan
-        if valdo_inc is not None:
-            query = """
-            SELECT COUNT(DISTINCT ph.dept_id) as total_department_count
-            FROM payroll_header ph
-            INNER JOIN payroll_cost_owner pco ON ph.dept_id = pco.id_department
-            INNER JOIN payroll_detail pd ON pd.payroll_id = ph.payroll_id
-            INNER JOIN td_karyawan tk ON pd.id_karyawan = tk.id_karyawan
-            WHERE 1=1
-            AND ph.dept_id != 0
-            AND tk.valdo_inc = :valdo_inc
-            """
-        else:
-            query = """
-            SELECT COUNT(DISTINCT ph.dept_id) as total_department_count
-            FROM payroll_header ph
-            INNER JOIN payroll_cost_owner pco ON ph.dept_id = pco.id_department
-            WHERE 1=1
-            AND ph.dept_id != 0
-            """
+        # Join with payroll_cost_owner and td_karyawan to filter only valid departments
+        # and restrict internal payroll to allowed valdo_inc values (VI, VSDM)
+        query = """
+        SELECT COUNT(DISTINCT ph.dept_id) as total_department_count
+        FROM payroll_header ph
+        INNER JOIN payroll_cost_owner pco ON ph.dept_id = pco.id_department
+        INNER JOIN payroll_detail pd ON pd.payroll_id = ph.payroll_id
+        INNER JOIN td_karyawan tk ON pd.id_karyawan = tk.id_karyawan
+        WHERE 1=1
+        AND ph.dept_id != 0
+        AND tk.valdo_inc IN (:valdo_inc_vi, :valdo_inc_vsdm)
+        """
         
-        params = {}
+        params = {
+            'valdo_inc_vi': VALDO_INC_VI,
+            'valdo_inc_vsdm': VALDO_INC_VSDM,
+        }
         
         # Add month filter if provided
         if month is not None:
@@ -387,8 +398,9 @@ def get_total_department_count(db: Session, month: int = None, year: int = None,
             query += " AND ph.year = :year"
             params['year'] = year
         
-        # Add valdo_inc filter if provided (already in query if valdo_inc is not None)
+        # Add valdo_inc filter if provided (further restricts to a single allowed value)
         if valdo_inc is not None:
+            query += " AND tk.valdo_inc = :valdo_inc"
             params['valdo_inc'] = valdo_inc
         
         # Execute the query
@@ -411,34 +423,26 @@ def get_department_filters(db: Session, month: int = None, year: int = None, val
     
     try:
         # Build the query to get distinct dept_id and department_name
-        # Join payroll_header.dept_id with payroll_cost_owner.id_department
+        # Join payroll_header.dept_id with payroll_cost_owner.id_department and td_karyawan
         # Use INNER JOIN to only show departments that exist in payroll_cost_owner
-        # If valdo_inc filter is provided, join through payroll_detail to td_karyawan
-        if valdo_inc is not None:
-            query = """
-            SELECT DISTINCT 
-                ph.dept_id,
-                pco.department_name
-            FROM payroll_header ph
-            INNER JOIN payroll_cost_owner pco ON ph.dept_id = pco.id_department
-            INNER JOIN payroll_detail pd ON pd.payroll_id = ph.payroll_id
-            INNER JOIN td_karyawan tk ON pd.id_karyawan = tk.id_karyawan
-            WHERE 1=1
-            AND ph.dept_id != 0
-            AND tk.valdo_inc = :valdo_inc
-            """
-        else:
-            query = """
-            SELECT DISTINCT 
-                ph.dept_id,
-                pco.department_name
-            FROM payroll_header ph
-            INNER JOIN payroll_cost_owner pco ON ph.dept_id = pco.id_department
-            WHERE 1=1
-            AND ph.dept_id != 0
-            """
+        # and restrict internal payroll to allowed valdo_inc values (VI, VSDM)
+        query = """
+        SELECT DISTINCT 
+            ph.dept_id,
+            pco.department_name
+        FROM payroll_header ph
+        INNER JOIN payroll_cost_owner pco ON ph.dept_id = pco.id_department
+        INNER JOIN payroll_detail pd ON pd.payroll_id = ph.payroll_id
+        INNER JOIN td_karyawan tk ON pd.id_karyawan = tk.id_karyawan
+        WHERE 1=1
+        AND ph.dept_id != 0
+        AND tk.valdo_inc IN (:valdo_inc_vi, :valdo_inc_vsdm)
+        """
         
-        params = {}
+        params = {
+            'valdo_inc_vi': VALDO_INC_VI,
+            'valdo_inc_vsdm': VALDO_INC_VSDM,
+        }
         
         # Add month filter if provided
         if month is not None:
@@ -450,8 +454,9 @@ def get_department_filters(db: Session, month: int = None, year: int = None, val
             query += " AND ph.year = :year"
             params['year'] = year
         
-        # Add valdo_inc filter if provided (already in query if valdo_inc is not None)
+        # Add valdo_inc filter if provided (further restricts to a single allowed value)
         if valdo_inc is not None:
+            query += " AND tk.valdo_inc = :valdo_inc"
             params['valdo_inc'] = valdo_inc
         
         # Order by dept_id
@@ -592,6 +597,7 @@ def get_department_summary(db: Session, month: int = None, year: int = None, sta
         
         # Build the query to get department summaries grouped by department
         # Use unit_head from payroll_cost_owner as cost_owner
+        # Always join td_karyawan to restrict internal payroll to allowed valdo_inc values (VI, VSDM)
         query = """
         SELECT 
             pco.id_department as dept_id,
@@ -605,18 +611,19 @@ def get_department_summary(db: Session, month: int = None, year: int = None, sta
         FROM payroll_detail pd
         INNER JOIN payroll_header ph ON pd.payroll_id = ph.payroll_id
         INNER JOIN payroll_cost_owner pco ON ph.dept_id = pco.id_department
+        INNER JOIN td_karyawan tk ON pd.id_karyawan = tk.id_karyawan
         """
-        
-        # Join td_karyawan if valdo_inc filter is needed
-        if valdo_inc is not None:
-            query += " INNER JOIN td_karyawan tk ON pd.id_karyawan = tk.id_karyawan"
         
         query += """
         WHERE 1=1
         AND ph.dept_id != 0
+        AND tk.valdo_inc IN (:valdo_inc_vi, :valdo_inc_vsdm)
         """
         
-        params = {}
+        params = {
+            'valdo_inc_vi': VALDO_INC_VI,
+            'valdo_inc_vsdm': VALDO_INC_VSDM,
+        }
         
         # Add month filter if provided
         if month is not None:
@@ -633,7 +640,7 @@ def get_department_summary(db: Session, month: int = None, year: int = None, sta
             query += " AND pd.status_kontrak = :status_kontrak"
             params['status_kontrak'] = status_kontrak
         
-        # Add valdo_inc filter if provided
+        # Add valdo_inc filter if provided (further restricts to a single allowed value)
         if valdo_inc is not None:
             query += " AND tk.valdo_inc = :valdo_inc"
             params['valdo_inc'] = valdo_inc
@@ -692,6 +699,7 @@ def get_cost_owner_summary(db: Session, month: int = None, year: int = None, sta
         total_payroll_headcount = total_headcount_data.get("total_headcount", 1)  # Use 1 to avoid division by zero
         
         # Build the query to get cost owner summaries grouped by unit_head
+        # Always join td_karyawan to restrict internal payroll to allowed valdo_inc values (VI, VSDM)
         query = """
         SELECT 
             pco.unit_head as cost_owner,
@@ -703,18 +711,19 @@ def get_cost_owner_summary(db: Session, month: int = None, year: int = None, sta
         FROM payroll_detail pd
         INNER JOIN payroll_header ph ON pd.payroll_id = ph.payroll_id
         INNER JOIN payroll_cost_owner pco ON ph.dept_id = pco.id_department
+        INNER JOIN td_karyawan tk ON pd.id_karyawan = tk.id_karyawan
         """
-        
-        # Join td_karyawan if valdo_inc filter is needed
-        if valdo_inc is not None:
-            query += " INNER JOIN td_karyawan tk ON pd.id_karyawan = tk.id_karyawan"
         
         query += """
         WHERE 1=1
         AND ph.dept_id != 0
+        AND tk.valdo_inc IN (:valdo_inc_vi, :valdo_inc_vsdm)
         """
         
-        params = {}
+        params = {
+            'valdo_inc_vi': VALDO_INC_VI,
+            'valdo_inc_vsdm': VALDO_INC_VSDM,
+        }
         
         # Add month filter if provided
         if month is not None:
@@ -731,7 +740,7 @@ def get_cost_owner_summary(db: Session, month: int = None, year: int = None, sta
             query += " AND pd.status_kontrak = :status_kontrak"
             params['status_kontrak'] = status_kontrak
         
-        # Add valdo_inc filter if provided
+        # Add valdo_inc filter if provided (further restricts to a single allowed value)
         if valdo_inc is not None:
             query += " AND tk.valdo_inc = :valdo_inc"
             params['valdo_inc'] = valdo_inc
