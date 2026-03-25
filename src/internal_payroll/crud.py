@@ -40,9 +40,7 @@ def get_total_payroll_disbursed(db: Session, month: int = None, year: int = None
         INNER JOIN td_karyawan tk ON pd.id_karyawan = tk.id_karyawan
         """
         
-        # Join td_karyawan when filtering on karyawan fields
-        if valdo_inc is not None or dept_code is not None:
-            query += " INNER JOIN td_karyawan tk ON pd.id_karyawan = tk.id_karyawan"
+        # td_karyawan is already joined above (tk)
         
         query += """
         WHERE 1=1
@@ -114,9 +112,7 @@ def get_total_bpsjtk(db: Session, month: int = None, year: int = None, dept_id: 
         INNER JOIN td_karyawan tk ON pd.id_karyawan = tk.id_karyawan
         """
         
-        # Join td_karyawan when filtering on karyawan fields
-        if valdo_inc is not None or dept_code is not None:
-            query += " INNER JOIN td_karyawan tk ON pd.id_karyawan = tk.id_karyawan"
+        # td_karyawan is already joined above (tk)
         
         query += """
         WHERE 1=1
@@ -188,9 +184,7 @@ def get_total_kesehatan(db: Session, month: int = None, year: int = None, dept_i
         INNER JOIN td_karyawan tk ON pd.id_karyawan = tk.id_karyawan
         """
         
-        # Join td_karyawan when filtering on karyawan fields
-        if valdo_inc is not None or dept_code is not None:
-            query += " INNER JOIN td_karyawan tk ON pd.id_karyawan = tk.id_karyawan"
+        # td_karyawan is already joined above (tk)
         
         query += """
         WHERE 1=1
@@ -262,9 +256,7 @@ def get_total_pensiun(db: Session, month: int = None, year: int = None, dept_id:
         INNER JOIN td_karyawan tk ON pd.id_karyawan = tk.id_karyawan
         """
         
-        # Join td_karyawan when filtering on karyawan fields
-        if valdo_inc is not None or dept_code is not None:
-            query += " INNER JOIN td_karyawan tk ON pd.id_karyawan = tk.id_karyawan"
+        # td_karyawan is already joined above (tk)
         
         query += """
         WHERE 1=1
@@ -341,9 +333,7 @@ def get_total_payroll_headcount(db: Session, month: int = None, year: int = None
         INNER JOIN td_karyawan tk ON pd.id_karyawan = tk.id_karyawan
         """
         
-        # Join td_karyawan when filtering on karyawan fields
-        if valdo_inc is not None or dept_code is not None:
-            query += " INNER JOIN td_karyawan tk ON pd.id_karyawan = tk.id_karyawan"
+        # td_karyawan is already joined above (tk)
         
         query += """
         WHERE 1=1
