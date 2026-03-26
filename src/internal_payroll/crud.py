@@ -673,10 +673,6 @@ def get_department_summary(db: Session, month: int = None, year: int = None, sta
         INNER JOIN td_karyawan tk ON pd.id_karyawan = tk.id_karyawan
         """
         
-        # Join td_karyawan when filtering on karyawan fields
-        if valdo_inc is not None or dept_code is not None:
-            query += " INNER JOIN td_karyawan tk ON pd.id_karyawan = tk.id_karyawan"
-        
         query += """
         WHERE 1=1
         AND ph.dept_id != 0
@@ -782,10 +778,6 @@ def get_cost_owner_summary(db: Session, month: int = None, year: int = None, sta
         INNER JOIN payroll_cost_owner pco ON ph.dept_id = pco.id_department
         INNER JOIN td_karyawan tk ON pd.id_karyawan = tk.id_karyawan
         """
-        
-        # Join td_karyawan when filtering on karyawan fields
-        if valdo_inc is not None or dept_code is not None:
-            query += " INNER JOIN td_karyawan tk ON pd.id_karyawan = tk.id_karyawan"
         
         query += """
         WHERE 1=1
