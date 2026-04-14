@@ -3,10 +3,14 @@ from sqlalchemy import text
 from typing import List
 
 # Loan type constants
-LOAN_CONDITIONS = "l.duration = 1 AND l.loan_id != 35"
-EXTRADANA_LOAN_CONDITIONS = "l.duration != 1 AND l.disbursement != 4 AND l.loan_id != 35"
-AKU_CICIL_CONDITION = "l.loan_id = 35"
-KASBON_CONDITION = "l.duration = 1 AND l.loan_id != 35"  # Same as LOAN_CONDITIONS but will be used in td_loan_history context
+# Aku Cicil is identified in loan_setting by loan_type (e.g. id 44); keep in sync with DB.
+_AKU_CICIL_SETTING_IDS = "SELECT ls.id FROM loan_setting ls WHERE ls.loan_type = 'AkuCicil'"
+LOAN_CONDITIONS = f"l.duration = 1 AND l.loan_id NOT IN ({_AKU_CICIL_SETTING_IDS})"
+EXTRADANA_LOAN_CONDITIONS = (
+    f"l.duration != 1 AND l.disbursement != 4 AND l.loan_id NOT IN ({_AKU_CICIL_SETTING_IDS})"
+)
+AKU_CICIL_CONDITION = f"l.loan_id IN ({_AKU_CICIL_SETTING_IDS})"
+KASBON_CONDITION = LOAN_CONDITIONS  # Same as LOAN_CONDITIONS; used in td_loan_history context
 
 
 def get_enhanced_karyawan(db: Session, limit: int = 1000000, 
