@@ -1,0 +1,45 @@
+{
+  "job_title": "Staff HRD",
+  "job_description": "Bertanggung jawab atas rekrutmen end-to-end, pengelolaan kehadiran dan disiplin karyawan, administrasi SDM, onboarding karyawan baru, dan penyusunan kebijakan HR operasional.",
+  "target_skills": [
+    "rekrutmen",
+    "manajemen SDM",
+    "administrasi",
+    "employee relations",
+    "onboarding",
+    "disiplin karyawan"
+  ],
+  "resume_text": "Siti Rahmawati — 4 tahun pengalaman sebagai HR Generalist di PT Sinar Logistik (250 karyawan). Pendidikan: S1 Psikologi Industri, Universitas Indonesia. Pencapaian: memimpin rekrutmen 45 karyawan operasional dalam 6 bulan, mengurangi turnover 18% menjadi 11% melalui program onboarding terstruktur, mengimplementasikan sistem absensi digital untuk 3 cabang.",
+  "qa_pairs": [
+    {
+      "question_number": 1,
+      "question": "Silakan perkenalkan diri Anda dan pengalaman relevan untuk posisi Staff HRD ini.",
+      "answer": "Nama saya Siti Rahmawati, lulusan S1 Psikologi Industri UI dengan 4 tahun pengalaman sebagai HR Generalist di PT Sinar Logistik yang bergerak di bidang distribusi dengan sekitar 250 karyawan. Selama 4 tahun terakhir, saya menangani rekrutmen operasional, onboarding, pengelolaan absensi, dan penanganan kasus disiplin ringan hingga sedang. Saya tertarik pada posisi ini karena lingkup kerjanya selaras dengan pengalaman saya di rekrutmen volume tinggi dan administrasi SDM harian."
+    },
+    {
+      "question_number": 2,
+      "question": "Ceritakan pengalaman Anda dalam proses rekrutmen dari awal hingga kandidat bergabung.",
+      "answer": "Di perusahaan sebelumnya, saya memimpin rekrutmen untuk posisi operasional gudang dan driver selama periode ekspansi 2023. Prosesnya dimulai dari analisis kebutuhan bersama kepala operasional, penyusunan job description, posting lowongan di kanal internal dan job board, screening CV, wawancara HR dan user, hingga offering. Dalam 6 bulan, kami berhasil merekrut 45 karyawan dengan time-to-hire rata-rata 21 hari. Setelah kandidat diterima, saya memastikan onboarding 30 hari berjalan sesuai checklist: administrasi BPJS, kontrak kerja, orientasi SOP, dan evaluasi minggu ke-2. Hasilnya, tingkat kelulusan masa percobaan naik dari 72% menjadi 89%."
+    },
+    {
+      "question_number": 3,
+      "question": "Kendala apa yang pernah Anda hadapi terkait disiplin atau kehadiran karyawan, dan bagaimana Anda menyelesaikannya?",
+      "answer": "Kendala terbesar adalah tingginya keterlambatan di shift pagi pada cabang Bekasi, mencapai 23% karyawan terlambat lebih dari 3 kali per bulan. Saya mulai dengan menganalisis data absensi 3 bulan untuk memastikan pola, lalu berdiskusi dengan supervisor shift untuk memahami akar masalah — ternyata kombinasi transportasi dan kurangnya sosialisasi aturan. Solusi yang saya terapkan: sosialisasi ulang kebijakan kehadiran, reminder otomatis via grup internal, dan program reward kehadiran sempurna per kuartal. Dalam 4 bulan, keterlambatan turun menjadi 9%. Saya juga mendokumentasikan setiap penanganan kasus disiplin agar konsisten dan adil."
+    },
+    {
+      "question_number": 4,
+      "question": "Bagaimana Anda menghadapi tekanan ketika deadline rekrutmen ketat dan permintaan dari banyak departemen bersamaan?",
+      "answer": "Situasi seperti itu sering terjadi saat peak season. Contohnya pada Q4 2024, operasional membutuhkan 15 driver dalam 3 minggu sementara finance meminta proses administrasi onboarding tidak tertunda. Saya memprioritaskan dengan matriks urgensi: posisi yang langsung berdampak pada operasional harian didahulukan. Saya membuat tracker rekrutmen harian yang dibagikan ke hiring manager agar ekspektasi transparan. Untuk menjaga kualitas, saya tidak mengorbankan tahap wawancara user meski timeline ketat. Hasilnya, 15 posisi terisi dalam 18 hari dan tidak ada komplain signifikan dari departemen terkait. Saya juga rutin melakukan debrief setelah peak season untuk memperbaiki proses berikutnya."
+    },
+    {
+      "question_number": 5,
+      "question": "Keahlian apa yang paling Anda kuasai dan bagaimana hal itu mendukung peran Staff HRD?",
+      "answer": "Tiga keahlian utama saya: pertama, rekrutmen operasional volume tinggi — saya terbiasa mengelola pipeline 30-50 kandidat aktif sekaligus. Kedua, administrasi SDM dan compliance dasar seperti kontrak, BPJS, dan dokumentasi employee file. Ketiga, analisis data HR sederhana untuk pengambilan keputusan, misalnya menggunakan data turnover dan absensi untuk merekomendasikan intervensi. Keahlian ini mendukung peran Staff HRD karena posisi ini membutuhkan eksekusi cepat yang tetap rapi secara administrasi dan berbasis data, bukan hanya bersifat reaktif."
+    },
+    {
+      "question_number": 6,
+      "question": "Apa motivasi Anda melamar di posisi ini dan target karier Anda dalam 3 tahun ke depan?",
+      "answer": "Motivasi saya adalah ingin berkontribusi di perusahaan yang sedang memperkuat fondasi HR operasional, di mana pengalaman saya di rekrutmen dan administrasi SDM bisa langsung memberikan dampak. Dalam 3 tahun ke depan, saya ingin berkembang menjadi HR Officer yang tidak hanya kuat di operasional, tetapi juga mampu menyusun SOP HR dan memimpin proyek perbaikan people process. Saya sudah mengikuti sertifikasi HR Analytics dasar tahun lalu dan berencana melanjutkan ke sertifikasi manajemen SDM untuk mendukung target tersebut."
+    }
+  ]
+}

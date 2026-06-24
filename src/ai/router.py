@@ -1,17 +1,19 @@
+import asyncio
 import json
 import os
+import shutil
 import tempfile
-import uuid
-import asyncio
-import urllib.request
 from typing import List, Optional
+
 from fastapi import APIRouter, UploadFile, File, Form, Query, HTTPException
-from pydantic import BaseModel
-from PyPDF2 import PdfReader
-import boto3
-from botocore.exceptions import ClientError
+from pydantic import BaseModel, ConfigDict, Field
 from dotenv import load_dotenv
+
 from .resume_scorer import score_resume, enhance_job_requirements
+from .resume_extractor import extract_resume_text_from_upload
+from .interview_scorer import InterviewQAItem, score_interview
+from .interview_zip import process_interview_zip
+from .transcribe import ALLOWED_EXTENSIONS, save_upload_to_temp, transcribe_file
 
 # Load environment variables
 load_dotenv()
@@ -65,34 +67,160 @@ class TranscribeResponse(BaseModel):
     error: Optional[str] = None
 
 
-async def extract_text_from_upload(upload_file: UploadFile) -> str:
-    content = await upload_file.read()
-    file_extension = os.path.splitext(upload_file.filename)[1].lower()
-    with tempfile.NamedTemporaryFile(delete=False, suffix=file_extension) as temp_file:
-        temp_file.write(content)
-        temp_path = temp_file.name
-    try:
-        if file_extension == ".pdf":
-            reader = PdfReader(temp_path)
-            text = ""
-            for page in reader.pages:
-                page_text = page.extract_text()
-                if page_text:
-                    text += page_text
-            if not text.strip():
-                raise HTTPException(status_code=400, detail="Could not extract text from PDF")
-            return text
-        elif file_extension == ".txt":
-            with open(temp_path, "r", encoding="utf-8") as f:
-                text = f.read()
-            if not text.strip():
-                raise HTTPException(status_code=400, detail="TXT file is empty")
-            return text
-        else:
-            raise HTTPException(status_code=400, detail="Only PDF and TXT files are supported")
-    finally:
-        os.unlink(temp_path)
+class InterviewScoringRequest(BaseModel):
+    """
+    Request body for POST /ai/score-interview.
 
+    You must send one Q&A object per interview question. Each video from /ai/transcribe
+    maps to one qa_pairs entry: put the interviewer question in `question` and the
+    candidate transcript in `answer`.
+    """
+
+    job_description: str = Field(
+        ...,
+        min_length=1,
+        description="Deskripsi pekerjaan / persyaratan posisi yang dilamar kandidat.",
+        examples=[
+            "Bertanggung jawab atas rekrutmen, disiplin karyawan, administrasi SDM, "
+            "dan pengembangan kebijakan HR."
+        ],
+    )
+    job_title: Optional[str] = Field(
+        None,
+        description="Judul posisi (opsional, membantu penilaian job fit).",
+        examples=["Staff HRD"],
+    )
+    target_skills: List[str] = Field(
+        default_factory=list,
+        description="Skill yang dibutuhkan untuk posisi ini (opsional).",
+        examples=[["rekrutmen", "manajemen SDM", "administrasi"]],
+    )
+    resume_text: Optional[str] = Field(
+        None,
+        description="Teks CV kandidat (opsional). Jika diisi, skor consistency_score akan dihitung.",
+    )
+    qa_pairs: List[InterviewQAItem] = Field(
+        ...,
+        min_length=1,
+        description=(
+            "Daftar pertanyaan dan jawaban wawancara. Wajib. "
+            "Satu item = satu pertanyaan. Urutkan dengan question_number mulai 1."
+        ),
+    )
+
+    model_config = ConfigDict(
+        json_schema_extra={
+            "example": {
+                "job_title": "Staff HRD",
+                "job_description": (
+                    "Bertanggung jawab atas rekrutmen, disiplin karyawan, "
+                    "administrasi SDM, dan pengembangan kebijakan HR."
+                ),
+                "target_skills": ["rekrutmen", "manajemen SDM", "administrasi"],
+                "resume_text": "Pengalaman 3 tahun sebagai HRD di perusahaan manufaktur...",
+                "qa_pairs": [
+                    {
+                        "question_number": 1,
+                        "question": (
+                            "HALO PERKENALKAN SAYA FANDY. SAYA YANG AKAN MELAKUKAN WAWANCARA "
+                            "DENGAN ANDA. APAKAH ANDA SUDAH SIAP? SILAKAN PERKENALKAN DIRI ANDA"
+                        ),
+                        "answer": "",
+                    },
+                    {
+                        "question_number": 2,
+                        "question": "Boleh diceritakan, apa kesibukan Anda saat ini?",
+                        "answer": (
+                            "Saat ini saya ee sedang menganggur, selama ee selama saya menganggur, "
+                            "saya fokus memperbaiki CV saya dan memperluas network jaringan ter- "
+                            "terutama di- di media sosial seperti LinkedIn. Saya juga sempat "
+                            "beberapa kali melakukan tes interview yang membantu saya untuk "
+                            "memahami berbagai macam jenis industri. uh dan juga saya uh di rumah, "
+                            "uh juga jualan-jualan uh bahan baking ataupun baking."
+                        ),
+                    },
+                    {
+                        "question_number": 3,
+                        "question": (
+                            "Pada pekerjaan yang Anda jalani saat ini tentunya pernah terjadi "
+                            "kendala. Kendala apa ya pernah Anda hadapi dan bagaimana cara Anda "
+                            "menyelesaikan kendala tersebut?"
+                        ),
+                        "answer": (
+                            "ee kendala yang saya hadapi, terutama berhubungan selama saya bekerja "
+                            "sebagai HRD yaitu ee proses uh kehadiran karyawan, terus kedisiplinan "
+                            "karyawan. serta perekrutan karyawan. ee Untuk me- menghadapi kendala "
+                            "tersebut seperti proses perekrutan karyawan, saya melakukan ee iklan "
+                            "lowongan ee iklan lowongan kerja, melakukan ee. walk in interview yang "
+                            "bekerjasama baik dengan swasta maupun pemerintah, terus me melakukan "
+                            "proses rekrutmen, terus uh untuk me- seperti kedisiplinan karyawan, "
+                            "ya, tidak seperti integritas karyawan, terus mengelola beberagam macam "
+                            "uh Semua latar belakang. uh yang berhubungan dengan ee karyawan"
+                        ),
+                    },
+                    {
+                        "question_number": 4,
+                        "question": "Bagaimana cara Anda menghadapi tekanan dalam pekerjaan Anda saat ini?",
+                        "answer": (
+                            "ee Pertama saya melakukan keseimbangan waktu. antara pekerjaan, "
+                            "aktivitas sosial dan untuk diri sendiri, terus menjaga kesehatan dengan "
+                            "berolahraga, istirahat yang cukup, terus melakukan uh relaksasi, terus "
+                            "uh melakukan pemahaman terhadap diri sendiri. Fokus terhadap pekerjaan, "
+                            "hindari pikiran negatif, komunikasi dengan rekan kerja maupun atasan. "
+                            "serta mencari dukungan dengan tim ee atasan, teman dan keluarga"
+                        ),
+                    },
+                    {
+                        "question_number": 5,
+                        "question": (
+                            "Keahlian apa saja yang Anda miliki dan kuasai dari pekerjaan saat ini?"
+                        ),
+                        "answer": (
+                            "ee saya memiliki keahlian dalam bidang administrasi. Kenapa? Karena "
+                            "administrasi sangat membantu karir saya di bidang HRD. untuk mempelajari "
+                            "manajemen, SDM, meningkatkan keterampilan, cara berkomunikasi, dan cara "
+                            "uh Kim kepemimpinan."
+                        ),
+                    },
+                    {
+                        "question_number": 6,
+                        "question": "Apa yang memotivasi Anda untuk melamar di posisi ini?",
+                        "answer": (
+                            "Saya tertarik di dunia HRD karena uh dunia HRD ini mencakup uh bidang "
+                            "manajemen, uh kep- kepemimpinan, uh SDM. Serta ee karakteristik juga ee "
+                            "untuk perusahaan."
+                        ),
+                    },
+                    {
+                        "question_number": 7,
+                        "question": "Apa harapan Anda dalam 3 tahun ke depan?",
+                        "answer": "Apa ya.",
+                    },
+                ],
+            }
+        }
+    )
+
+
+class InterviewScoringResponse(BaseModel):
+    """Interview Scoring Response Schema"""
+    success: bool
+    data: Optional[dict] = None
+    error: Optional[str] = None
+    message: str
+
+
+class ProcessInterviewZipItem(BaseModel):
+    question_number: int
+    question: str
+    answer: str
+
+
+class ProcessInterviewZipResponse(BaseModel):
+    success: bool
+    qa_pairs: Optional[List[ProcessInterviewZipItem]] = None
+    error: Optional[str] = None
+    message: str
 
 
 @router.post("/score-resume", response_model=ResumeScoringResponse)
@@ -134,12 +262,20 @@ async def score_resume_endpoint(
 
 @router.post("/score-pdf", response_model=ResumeScoringResponse)
 async def score_pdf_endpoint(
-    resume: UploadFile = File(..., description="Resume file (PDF or text)"),
+    resume: UploadFile = File(
+        ...,
+        description="Resume file: PDF, TXT, or image (JPG, PNG, WEBP, etc.)",
+    ),
     job_description: str = Form(..., description="Job description text"),
     target_skills: str = Form("[]", description="JSON string of target skills")
 ) -> ResumeScoringResponse:
     """
-    Score a resume (PDF or TXT) against a job description and target skills.
+    Score a resume file against a job description and target skills.
+
+    Supported uploads:
+    - PDF (text-based)
+    - TXT
+    - Images: JPG, JPEG, PNG, WEBP, GIF, BMP (uses vision OCR for photos/scans)
     """
     try:
         if not resume.filename:
@@ -151,8 +287,7 @@ async def score_pdf_endpoint(
         except json.JSONDecodeError:
             target_skills_list = []
         
-        # Extract text from file
-        resume_text = await extract_text_from_upload(resume)
+        resume_text = await extract_resume_text_from_upload(resume)
         
         # Score the resume
         result = await score_resume(resume_text, job_description, target_skills_list)
@@ -232,208 +367,141 @@ async def root():
             "score_resume": "/score-resume",
             "score_pdf": "/score-pdf",
             "enhance_job_requirements": "/enhance_job_requirements",
-            "transcribe": "/transcribe",
+            "transcribe": "/ai/transcribe",
+            "process_interview_zip": "/ai/process-interview-zip",
+            "score_interview": "/ai/score-interview",
             "docs": "/docs"
         }
     }
 
 
+@router.post("/score-interview", response_model=InterviewScoringResponse)
+async def score_interview_endpoint(
+    request: InterviewScoringRequest,
+) -> InterviewScoringResponse:
+    """
+    Score a job interview from structured Q&A pairs.
+
+    **Required:** `job_description` and `qa_pairs` (min 1 item).
+
+    **How to build qa_pairs:**
+    - Upload the interview zip to `POST /ai/process-interview-zip`, or
+    - Transcribe each video manually via `POST /ai/transcribe` and assemble pairs yourself.
+
+    **Optional:** `resume_text` enables CV consistency scoring.
+    """
+    try:
+        result = await score_interview(
+            qa_pairs=request.qa_pairs,
+            job_description=request.job_description,
+            job_title=request.job_title,
+            resume_text=request.resume_text,
+            target_skills=request.target_skills,
+        )
+        return InterviewScoringResponse(
+            success=True,
+            data=result,
+            message="Wawancara berhasil dinilai",
+        )
+    except Exception as e:
+        return InterviewScoringResponse(
+            success=False,
+            error=str(e),
+            message="Gagal menilai wawancara",
+        )
+
+
+@router.post("/process-interview-zip", response_model=ProcessInterviewZipResponse)
+async def process_interview_zip_endpoint(
+    file: UploadFile = File(
+        ...,
+        description=(
+            "Interview zip containing questions_list.txt and "
+            "Question{N}_*.mp4 video files"
+        ),
+    ),
+    language_code: str = Query(
+        "id-ID",
+        description="Amazon Transcribe language code (default: id-ID for Indonesian)",
+    ),
+) -> ProcessInterviewZipResponse:
+    """
+    Process an interview zip into `qa_pairs` ready for `/ai/score-interview`.
+
+    **Expected zip contents:**
+    - `questions_list.txt` — numbered questions (1. ..., 2. ..., etc.)
+    - `Question1_*.mp4`, `Question2_*.mp4`, ... — one video per question
+
+    Videos are transcribed and matched to questions by number.
+
+    Returns only `qa_pairs`: question_number, question, answer — ready to paste into `/ai/score-interview`.
+    """
+    if not file.filename or not file.filename.lower().endswith(".zip"):
+        raise HTTPException(status_code=400, detail="Upload a .zip file")
+
+    zip_path = None
+    try:
+        with tempfile.NamedTemporaryFile(delete=False, suffix=".zip") as temp_zip:
+            shutil.copyfileobj(file.file, temp_zip)
+            zip_path = temp_zip.name
+
+        qa_pairs = await process_interview_zip(
+            zip_path=zip_path,
+            language_code=language_code,
+        )
+        return ProcessInterviewZipResponse(
+            success=True,
+            qa_pairs=qa_pairs,
+            message="Zip wawancara berhasil diproses",
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        return ProcessInterviewZipResponse(
+            success=False,
+            error=str(e),
+            message="Gagal memproses zip wawancara",
+        )
+    finally:
+        if zip_path and os.path.exists(zip_path):
+            os.unlink(zip_path)
+
+
 @router.post("/transcribe", response_model=TranscribeResponse)
 async def transcribe_audio(
     file: UploadFile = File(..., description="Audio file to transcribe (MP3, MP4, etc.)"),
-    language_code: str = Query("en-US", description="Language code for transcription (default: en-US)")
+    language_code: str = Query("en-US", description="Language code for transcription (default: en-US)"),
 ) -> TranscribeResponse:
     """
-    Transcribe an audio file using Amazon Transcribe.
-    
-    The file is uploaded to S3, then a transcription job is started.
-    The endpoint waits for the job to complete and returns the transcription.
-    
-    Args:
-        file: Audio file (MP3, MP4, WAV, etc.)
-        language_code: Language code for transcription (default: en-US)
-    
-    Returns:
-        Transcription result with job details and transcribed text
+    Upload an audio/video file and get transcription using Amazon Transcribe.
+
+    The file is uploaded to S3 (required by Amazon Transcribe), a transcription job
+    is started, and the endpoint waits for completion before returning the result.
     """
-    # Get AWS configuration from environment variables
-    aws_region = os.getenv("AWS_REGION", "us-east-1")
-    s3_bucket = os.getenv("S3_BUCKET")
-    
-    if not s3_bucket:
-        return TranscribeResponse(
-            job_name="",
-            status="FAILED",
-            language_code=language_code,
-            media_format="",
-            error="S3_BUCKET environment variable not set"
+    if not file.filename:
+        raise HTTPException(status_code=400, detail="No file provided")
+
+    file_ext = file.filename.split(".")[-1].lower() if "." in file.filename else ""
+    if file_ext not in ALLOWED_EXTENSIONS:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Unsupported file type. Allowed: {', '.join(ALLOWED_EXTENSIONS)}",
         )
-    
-    # Initialize AWS clients
+
+    temp_file_path = None
     try:
-        s3_client = boto3.client('s3', region_name=aws_region)
-        transcribe_client = boto3.client('transcribe', region_name=aws_region)
+        temp_file_path = save_upload_to_temp(file.file, file_ext)
+        result = await asyncio.to_thread(
+            transcribe_file, temp_file_path, file.filename, language_code
+        )
+        return TranscribeResponse(**result)
+    except HTTPException:
+        raise
     except Exception as e:
-        return TranscribeResponse(
-            job_name="",
-            status="FAILED",
-            language_code=language_code,
-            media_format="",
-            error=f"Failed to initialize AWS clients: {str(e)}"
-        )
-    
-    # Generate unique job name and S3 key
-    job_name = f"transcribe-{uuid.uuid4().hex[:8]}"
-    file_extension = os.path.splitext(file.filename)[1].lower() if file.filename else ".mp3"
-    s3_key = f"transcriptions/{job_name}{file_extension}"
-    
-    # Determine media format from file extension
-    media_format_map = {
-        ".mp3": "mp3",
-        ".mp4": "mp4",
-        ".wav": "wav",
-        ".flac": "flac",
-        ".ogg": "ogg",
-        ".amr": "amr",
-        ".webm": "webm"
-    }
-    media_format = media_format_map.get(file_extension, "mp3")
-    
-    try:
-        # Read file content
-        file_content = await file.read()
-        
-        # Upload file to S3
-        try:
-            s3_client.put_object(
-                Bucket=s3_bucket,
-                Key=s3_key,
-                Body=file_content,
-                ContentType=file.content_type or f"audio/{media_format}"
-            )
-        except ClientError as e:
-            return TranscribeResponse(
-                job_name=job_name,
-                status="FAILED",
-                language_code=language_code,
-                media_format=media_format,
-                error=f"Failed to upload file to S3: {str(e)}"
-            )
-        
-        # Create S3 URI
-        s3_uri = f"s3://{s3_bucket}/{s3_key}"
-        
-        # Start transcription job
-        try:
-            transcribe_client.start_transcription_job(
-                TranscriptionJobName=job_name,
-                Media={'MediaFileUri': s3_uri},
-                MediaFormat=media_format,
-                LanguageCode=language_code
-            )
-        except ClientError as e:
-            # Clean up S3 file if transcription job creation fails
-            try:
-                s3_client.delete_object(Bucket=s3_bucket, Key=s3_key)
-            except:
-                pass
-            return TranscribeResponse(
-                job_name=job_name,
-                status="FAILED",
-                language_code=language_code,
-                media_format=media_format,
-                error=f"Failed to start transcription job: {str(e)}"
-            )
-        
-        # Poll for job completion
-        max_wait_time = 300  # 5 minutes
-        poll_interval = 5  # 5 seconds
-        elapsed_time = 0
-        
-        while elapsed_time < max_wait_time:
-            try:
-                response = transcribe_client.get_transcription_job(TranscriptionJobName=job_name)
-                job_status = response['TranscriptionJob']['TranscriptionJobStatus']
-                
-                if job_status == 'COMPLETED':
-                    # Get transcription result
-                    transcript_uri = response['TranscriptionJob']['Transcript']['TranscriptFileUri']
-                    
-                    # Download and parse the transcript
-                    with urllib.request.urlopen(transcript_uri) as url:
-                        transcript_data = json.loads(url.read().decode())
-                        transcription = transcript_data['results']['transcripts'][0]['transcript']
-                    
-                    # Clean up S3 file
-                    try:
-                        s3_client.delete_object(Bucket=s3_bucket, Key=s3_key)
-                    except:
-                        pass
-                    
-                    return TranscribeResponse(
-                        job_name=job_name,
-                        status="COMPLETED",
-                        language_code=language_code,
-                        media_format=media_format,
-                        transcription=transcription
-                    )
-                elif job_status == 'FAILED':
-                    failure_reason = response['TranscriptionJob'].get('FailureReason', 'Unknown error')
-                    # Clean up S3 file
-                    try:
-                        s3_client.delete_object(Bucket=s3_bucket, Key=s3_key)
-                    except:
-                        pass
-                    return TranscribeResponse(
-                        job_name=job_name,
-                        status="FAILED",
-                        language_code=language_code,
-                        media_format=media_format,
-                        error=f"Transcription job failed: {failure_reason}"
-                    )
-                
-                # Wait before next poll
-                await asyncio.sleep(poll_interval)
-                elapsed_time += poll_interval
-                
-            except ClientError as e:
-                return TranscribeResponse(
-                    job_name=job_name,
-                    status="FAILED",
-                    language_code=language_code,
-                    media_format=media_format,
-                    error=f"Error checking transcription job status: {str(e)}"
-                )
-        
-        # Timeout - job is still in progress
-        return TranscribeResponse(
-            job_name=job_name,
-            status="IN_PROGRESS",
-            language_code=language_code,
-            media_format=media_format,
-            error="Transcription job is taking longer than expected. Please check the job status later."
-        )
-        
-    except Exception as e:
-        # Clean up S3 file on any error
-        try:
-            s3_client.delete_object(Bucket=s3_bucket, Key=s3_key)
-        except:
-            pass
-        
-        # Try to delete transcription job if it was created
-        try:
-            transcribe_client.delete_transcription_job(TranscriptionJobName=job_name)
-        except:
-            pass
-        
-        return TranscribeResponse(
-            job_name=job_name,
-            status="FAILED",
-            language_code=language_code,
-            media_format=media_format,
-            error=f"Unexpected error: {str(e)}"
-        )
+        raise HTTPException(status_code=500, detail=f"Unexpected error: {str(e)}")
+    finally:
+        if temp_file_path and os.path.exists(temp_file_path):
+            os.unlink(temp_file_path)
 
 
 @router.get("/test-agents")
