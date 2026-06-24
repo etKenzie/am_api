@@ -3,9 +3,10 @@ import json
 import sys
 from datetime import datetime
 from dataclasses import dataclass
-from typing import List
+from typing import List, Optional
 from pydantic import BaseModel, Field, field_validator
 from openai import AsyncOpenAI
+from fastapi import UploadFile
 import os
 import agents
 from agents import (
@@ -17,6 +18,8 @@ from agents import (
     OutputGuardrailTripwireTriggered,
     output_guardrail
 )
+
+from .resume_extractor import extract_resume_text_from_upload
 
 # Print environment information for debugging
 print(f"Python version: {sys.version}")
@@ -1030,6 +1033,22 @@ async def score_resume(
         import traceback
         print(f"Traceback: {traceback.format_exc()}")
         raise 
+
+
+async def score_resume_file(
+    resume: UploadFile,
+    job_description: str,
+    target_skills: Optional[List[str]] = None,
+) -> dict:
+    """
+    Extract text from a resume upload (PDF, TXT, or image) and run the scoring pipeline.
+
+    Images and photo scans are OCR'd via resume_extractor (OpenAI vision).
+    """
+    if target_skills is None:
+        target_skills = []
+    resume_text = await extract_resume_text_from_upload(resume)
+    return await score_resume(resume_text, job_description, target_skills)
 
 
 async def score_pdf(

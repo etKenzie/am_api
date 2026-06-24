@@ -9,8 +9,7 @@ from fastapi import APIRouter, UploadFile, File, Form, Query, HTTPException
 from pydantic import BaseModel, ConfigDict, Field
 from dotenv import load_dotenv
 
-from .resume_scorer import score_resume, enhance_job_requirements
-from .resume_extractor import extract_resume_text_from_upload
+from .resume_scorer import score_resume, score_resume_file, enhance_job_requirements
 from .interview_scorer import InterviewQAItem, score_interview
 from .interview_zip import process_interview_zip
 from .transcribe import ALLOWED_EXTENSIONS, save_upload_to_temp, transcribe_file
@@ -287,10 +286,7 @@ async def score_pdf_endpoint(
         except json.JSONDecodeError:
             target_skills_list = []
         
-        resume_text = await extract_resume_text_from_upload(resume)
-        
-        # Score the resume
-        result = await score_resume(resume_text, job_description, target_skills_list)
+        result = await score_resume_file(resume, job_description, target_skills_list)
         
         return ResumeScoringResponse(
             success=True,
