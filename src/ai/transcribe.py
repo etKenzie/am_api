@@ -5,11 +5,14 @@ import tempfile
 import time
 import urllib.request
 import uuid
+from typing import Optional, Tuple
 
 import boto3
 from botocore.exceptions import ClientError
 from dotenv import load_dotenv
 from fastapi import HTTPException
+
+from .url_fetch import download_url_to_temp, filename_from_url
 
 load_dotenv(os.path.join(os.path.dirname(__file__), "..", "..", ".env"))
 
@@ -142,3 +145,26 @@ def save_upload_to_temp(upload_file, file_ext: str) -> str:
     with tempfile.NamedTemporaryFile(delete=False, suffix=f".{file_ext}") as temp_file:
         shutil.copyfileobj(upload_file, temp_file)
         return temp_file.name
+
+
+def resolve_media_source(
+    file_path: Optional[str],
+    filename: Optional[str],
+    url: Optional[str],
+) -> Tuple[str, str, bool]:
+    """
+    Resolve transcribe input from local path or URL.
+    Returns (path, filename, should_delete_temp).
+    """
+    if file_path and url:
+        raise HTTPException(status_code=400, detail="Provide either a file upload or url, not both")
+    if not file_path and not url:
+        raise HTTPException(status_code=400, detail="Provide a file upload or url")
+
+    if file_path:
+        if not filename:
+            raise HTTPException(status_code=400, detail="Filename is required for file upload")
+        return file_path, filename, False
+
+    temp_path, downloaded_name = download_url_to_temp(url)
+    return temp_path, downloaded_name, True

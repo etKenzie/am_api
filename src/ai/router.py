@@ -5,19 +5,32 @@ import shutil
 import tempfile
 from typing import List, Optional
 
-from fastapi import APIRouter, UploadFile, File, Form, Query, HTTPException
+from fastapi import APIRouter, UploadFile, File, Form, Query, HTTPException, Request
 from pydantic import BaseModel, ConfigDict, Field
 from dotenv import load_dotenv
 
 from .resume_scorer import score_resume, score_resume_file, enhance_job_requirements
 from .interview_scorer import InterviewQAItem, score_interview
-from .interview_zip import process_interview_zip
-from .transcribe import ALLOWED_EXTENSIONS, save_upload_to_temp, transcribe_file
+from .interview_zip import process_interview_zip, process_interview_zip_from_url
+from .transcribe import ALLOWED_EXTENSIONS, resolve_media_source, save_upload_to_temp, transcribe_file
 
 # Load environment variables
 load_dotenv()
 
 router = APIRouter(prefix="/ai", tags=["AI"])
+
+
+async def _optional_upload_file(request: Request) -> Optional[UploadFile]:
+    """Parse multipart file only when the client actually sends multipart form data."""
+    content_type = request.headers.get("content-type", "")
+    if "multipart/form-data" not in content_type:
+        return None
+
+    form = await request.form()
+    file = form.get("file")
+    if not isinstance(file, UploadFile) or not file.filename:
+        return None
+    return file
 
 
 class ResumeScoringRequest(BaseModel):
@@ -409,12 +422,10 @@ async def score_interview_endpoint(
 
 @router.post("/process-interview-zip", response_model=ProcessInterviewZipResponse)
 async def process_interview_zip_endpoint(
-    file: UploadFile = File(
-        ...,
-        description=(
-            "Interview zip containing questions_list.txt and "
-            "Question{N}_*.mp4 video files"
-        ),
+    request: Request,
+    url: Optional[str] = Query(
+        None,
+        description="HTTPS URL to a .zip interview bundle (no file upload needed)",
     ),
     language_code: str = Query(
         "id-ID",
@@ -424,27 +435,35 @@ async def process_interview_zip_endpoint(
     """
     Process an interview zip into `qa_pairs` ready for `/ai/score-interview`.
 
-    **Expected zip contents:**
-    - `questions_list.txt` — numbered questions (1. ..., 2. ..., etc.)
-    - `Question1_*.mp4`, `Question2_*.mp4`, ... — one video per question
-
-    Videos are transcribed and matched to questions by number.
-
-    Returns only `qa_pairs`: question_number, question, answer — ready to paste into `/ai/score-interview`.
+    Provide **either** `url` (no body required) **or** a multipart `file` upload — not both.
     """
-    if not file.filename or not file.filename.lower().endswith(".zip"):
-        raise HTTPException(status_code=400, detail="Upload a .zip file")
+    file = await _optional_upload_file(request) if not url else None
+
+    if not file and not url:
+        raise HTTPException(status_code=400, detail="Provide either url or a zip file upload")
+    if file and url:
+        raise HTTPException(status_code=400, detail="Provide either url or a zip file upload, not both")
 
     zip_path = None
     try:
-        with tempfile.NamedTemporaryFile(delete=False, suffix=".zip") as temp_zip:
-            shutil.copyfileobj(file.file, temp_zip)
-            zip_path = temp_zip.name
+        if url:
+            qa_pairs = await process_interview_zip_from_url(
+                url=url,
+                language_code=language_code,
+            )
+        else:
+            if not file.filename.lower().endswith(".zip"):
+                raise HTTPException(status_code=400, detail="Upload a .zip file")
 
-        qa_pairs = await process_interview_zip(
-            zip_path=zip_path,
-            language_code=language_code,
-        )
+            with tempfile.NamedTemporaryFile(delete=False, suffix=".zip") as temp_zip:
+                shutil.copyfileobj(file.file, temp_zip)
+                zip_path = temp_zip.name
+
+            qa_pairs = await process_interview_zip(
+                zip_path=zip_path,
+                language_code=language_code,
+            )
+
         return ProcessInterviewZipResponse(
             success=True,
             qa_pairs=qa_pairs,
@@ -465,30 +484,48 @@ async def process_interview_zip_endpoint(
 
 @router.post("/transcribe", response_model=TranscribeResponse)
 async def transcribe_audio(
-    file: UploadFile = File(..., description="Audio file to transcribe (MP3, MP4, etc.)"),
+    request: Request,
+    url: Optional[str] = Query(
+        None,
+        description="HTTPS URL to an audio/video file (no file upload needed)",
+    ),
     language_code: str = Query("en-US", description="Language code for transcription (default: en-US)"),
 ) -> TranscribeResponse:
     """
-    Upload an audio/video file and get transcription using Amazon Transcribe.
+    Transcribe an audio/video file using Amazon Transcribe.
 
-    The file is uploaded to S3 (required by Amazon Transcribe), a transcription job
-    is started, and the endpoint waits for completion before returning the result.
+    Provide **either** `url` (no body required) **or** a multipart `file` upload — not both.
     """
-    if not file.filename:
-        raise HTTPException(status_code=400, detail="No file provided")
-
-    file_ext = file.filename.split(".")[-1].lower() if "." in file.filename else ""
-    if file_ext not in ALLOWED_EXTENSIONS:
-        raise HTTPException(
-            status_code=400,
-            detail=f"Unsupported file type. Allowed: {', '.join(ALLOWED_EXTENSIONS)}",
-        )
-
+    file = await _optional_upload_file(request) if not url else None
     temp_file_path = None
+
     try:
-        temp_file_path = save_upload_to_temp(file.file, file_ext)
+        if url:
+            temp_file_path, filename, _should_delete = resolve_media_source(
+                file_path=None, filename=None, url=url
+            )
+        else:
+            if not file:
+                raise HTTPException(status_code=400, detail="Provide url or upload a file")
+
+            file_ext = file.filename.split(".")[-1].lower() if "." in file.filename else ""
+            if file_ext not in ALLOWED_EXTENSIONS:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Unsupported file type. Allowed: {', '.join(ALLOWED_EXTENSIONS)}",
+                )
+            temp_file_path = save_upload_to_temp(file.file, file_ext)
+            filename = file.filename
+
+        file_ext = filename.split(".")[-1].lower() if "." in filename else ""
+        if file_ext not in ALLOWED_EXTENSIONS:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Unsupported file type. Allowed: {', '.join(ALLOWED_EXTENSIONS)}",
+            )
+
         result = await asyncio.to_thread(
-            transcribe_file, temp_file_path, file.filename, language_code
+            transcribe_file, temp_file_path, filename, language_code
         )
         return TranscribeResponse(**result)
     except HTTPException:

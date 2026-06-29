@@ -8,6 +8,7 @@ from typing import Dict, List, Optional, Tuple
 
 from fastapi import HTTPException
 
+from .url_fetch import download_url_to_temp, filename_from_url
 from .transcribe import ALLOWED_EXTENSIONS, transcribe_file
 
 VIDEO_EXTENSIONS = tuple(f".{ext}" for ext in ALLOWED_EXTENSIONS)
@@ -148,10 +149,29 @@ async def process_interview_zip(
                 "answer": answer,
             }
 
-        qa_pairs = list(
+        return list(
             await asyncio.gather(*(transcribe_for_number(n) for n in all_numbers))
         )
-
-        return qa_pairs
     finally:
         shutil.rmtree(extract_dir, ignore_errors=True)
+
+
+async def process_interview_zip_from_url(
+    url: str,
+    language_code: str = "id-ID",
+    max_concurrent_transcriptions: int = 3,
+) -> List[dict]:
+    filename = filename_from_url(url)
+    if not filename.lower().endswith(".zip"):
+        raise HTTPException(status_code=400, detail="URL must point to a .zip file")
+
+    zip_path, _ = download_url_to_temp(url)
+    try:
+        return await process_interview_zip(
+            zip_path=zip_path,
+            language_code=language_code,
+            max_concurrent_transcriptions=max_concurrent_transcriptions,
+        )
+    finally:
+        if os.path.exists(zip_path):
+            os.unlink(zip_path)
