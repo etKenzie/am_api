@@ -105,6 +105,14 @@ class SummaryMonthlyResponse(BaseModel):
         from_attributes = True
 
 
+class FilterOption(BaseModel):
+    option_id: str
+    option_name: str
+
+    class Config:
+        from_attributes = True
+
+
 class LoanResponse(BaseModel):
     """Response model for loan data with enhanced karyawan information"""
     id: int
@@ -128,7 +136,12 @@ class LoanResponse(BaseModel):
     # Enhanced karyawan data
     employer_name: Optional[str] = None
     sourced_to_name: Optional[str] = None
+    project_code: Optional[str] = None
     project_name: Optional[str] = None
+    client_segment_id: Optional[str] = None
+    client_segment_name: Optional[str] = None
+    product_type_id: Optional[str] = None
+    product_type_name: Optional[str] = None
 
     class Config:
         from_attributes = True

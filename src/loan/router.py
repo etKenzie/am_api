@@ -1,8 +1,7 @@
-from typing import List
+from typing import List, Optional
+
 from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
-
-# Flexible imports that work both locally and in Docker
 try:
     # Try relative imports first (for Docker)
     from . import crud, schemas
@@ -62,15 +61,19 @@ async def get_client_summary(
     month: int = None,
     year: int = None,
     loan_type: str = "loan",
+    client_segment: str = None,
+    product_type: str = None,
     db: Session = Depends(get_db)
 ):
-    """Get comprehensive client summary with disbursement and other metrics"""
+    """Get comprehensive client summary. Use loan_type=all to combine kasbon, extradana, and aku_cicil."""
     try:
         client_summaries = crud.get_client_summary(
             db, 
             month_filter=month,
             year_filter=year,
-            loan_type=loan_type
+            loan_type=loan_type,
+            client_segment_filter=client_segment,
+            product_type_filter=product_type,
         )
         
         return {
@@ -94,7 +97,9 @@ async def get_summary(
     id_karyawan: int = None,
     employer: str = None, 
     sourced_to: str = None, 
-    project: str = None, 
+    project: str = None,
+    client_segment: str = None,
+    product_type: str = None,
     db: Session = Depends(get_db)
 ):
     """Get loan summary with eligible count and loan request metrics"""
@@ -105,6 +110,8 @@ async def get_summary(
             employer_filter=employer,
             sourced_to_filter=sourced_to,
             project_filter=project,
+            client_segment_filter=client_segment,
+            product_type_filter=product_type,
             month_filter=month,
             year_filter=year
         )
@@ -153,7 +160,9 @@ async def get_requests(
     id_karyawan: int = None,
     employer: str = None, 
     sourced_to: str = None, 
-    project: str = None, 
+    project: str = None,
+    client_segment: str = None,
+    product_type: str = None,
     db: Session = Depends(get_db)
 ):
     """Get requests metrics: total_approved_requests, total_rejected_requests, approval_rate, average_approval_time"""
@@ -164,6 +173,8 @@ async def get_requests(
             employer_filter=employer,
             sourced_to_filter=sourced_to,
             project_filter=project,
+            client_segment_filter=client_segment,
+            product_type_filter=product_type,
             month_filter=month,
             year_filter=year
         )
@@ -196,7 +207,9 @@ async def get_disbursement(
     id_karyawan: int = None,
     employer: str = None, 
     sourced_to: str = None, 
-    project: str = None, 
+    project: str = None,
+    client_segment: str = None,
+    product_type: str = None,
     db: Session = Depends(get_db)
 ):
     """Get disbursement metrics: total_disbursed_amount, average_disbursed_amount"""
@@ -207,6 +220,8 @@ async def get_disbursement(
             employer_filter=employer,
             sourced_to_filter=sourced_to,
             project_filter=project,
+            client_segment_filter=client_segment,
+            product_type_filter=product_type,
             month_filter=month,
             year_filter=year
         )
@@ -235,7 +250,9 @@ async def get_disbursement_monthly(
     id_karyawan: int = None,
     employer: str = None, 
     sourced_to: str = None, 
-    project: str = None, 
+    project: str = None,
+    client_segment: str = None,
+    product_type: str = None,
     db: Session = Depends(get_db)
 ):
     """Get disbursement monthly data: total disbursed amount and average disbursed amount by month"""
@@ -248,7 +265,9 @@ async def get_disbursement_monthly(
             id_karyawan_filter=id_karyawan,
             employer_filter=employer,
             sourced_to_filter=sourced_to,
-            project_filter=project
+            project_filter=project,
+            client_segment_filter=client_segment,
+            product_type_filter=product_type,
         )
         
         
@@ -309,6 +328,8 @@ async def get_loans(
     employer: str = None, 
     sourced_to: str = None, 
     project: str = None,
+    client_segment: str = None,
+    product_type: str = None,
     loan_status: int = None,
     id_karyawan: int = None,
     db: Session = Depends(get_db)
@@ -320,8 +341,10 @@ async def get_loans(
             employer_filter=employer,
             sourced_to_filter=sourced_to,
             project_filter=project,
+            client_segment_filter=client_segment,
+            product_type_filter=product_type,
             loan_status_filter=loan_status,
-            id_karyawan_filter=id_karyawan
+            id_karyawan_filter=id_karyawan,
         )
         
         
@@ -346,6 +369,8 @@ async def get_loan_purpose_summary(
     employer: str = None, 
     sourced_to: str = None, 
     project: str = None,
+    client_segment: str = None,
+    product_type: str = None,
     loan_status: int = None,
     id_karyawan: int = None,
     month: int = None,
@@ -360,6 +385,8 @@ async def get_loan_purpose_summary(
             employer_filter=employer,
             sourced_to_filter=sourced_to,
             project_filter=project,
+            client_segment_filter=client_segment,
+            product_type_filter=product_type,
             loan_status_filter=loan_status,
             id_karyawan_filter=id_karyawan,
             month_filter=month,
@@ -390,7 +417,7 @@ async def get_available_filters(
     loan_type: str = "loan",
     db: Session = Depends(get_db)
 ):
-    """Get available filter values for enhanced karyawan queries with cascading filters"""
+    """Get available filter values. Use loan_type=all to combine kasbon, extradana, and aku_cicil."""
     
     try:
         filter_values = crud.get_available_filter_values(
@@ -417,6 +444,8 @@ async def get_loan_fees(
     employer: str = None, 
     sourced_to: str = None, 
     project: str = None,
+    client_segment: str = None,
+    product_type: str = None,
     loan_status: int = None,
     id_karyawan: int = None,
     month: int = None,
@@ -431,6 +460,8 @@ async def get_loan_fees(
             employer_filter=employer,
             sourced_to_filter=sourced_to,
             project_filter=project,
+            client_segment_filter=client_segment,
+            product_type_filter=product_type,
             loan_status_filter=loan_status,
             id_karyawan_filter=id_karyawan,
             month_filter=month,
@@ -469,6 +500,8 @@ async def get_loan_fees_monthly(
     employer: str = None, 
     sourced_to: str = None, 
     project: str = None,
+    client_segment: str = None,
+    product_type: str = None,
     loan_status: int = None,
     id_karyawan: int = None,
     db: Session = Depends(get_db)
@@ -486,6 +519,8 @@ async def get_loan_fees_monthly(
             employer_filter=employer,
             sourced_to_filter=sourced_to,
             project_filter=project,
+            client_segment_filter=client_segment,
+            product_type_filter=product_type,
             loan_status_filter=loan_status,
             id_karyawan_filter=id_karyawan,
             start_date=start_date,
@@ -512,6 +547,8 @@ async def get_loan_risk(
     employer: str = None, 
     sourced_to: str = None, 
     project: str = None,
+    client_segment: str = None,
+    product_type: str = None,
     loan_status: int = None,
     id_karyawan: int = None,
     month: int = None,
@@ -526,6 +563,8 @@ async def get_loan_risk(
             employer_filter=employer,
             sourced_to_filter=sourced_to,
             project_filter=project,
+            client_segment_filter=client_segment,
+            product_type_filter=product_type,
             loan_status_filter=loan_status,
             id_karyawan_filter=id_karyawan,
             month_filter=month,
@@ -560,6 +599,8 @@ async def get_loan_risk_monthly(
     employer: str = None, 
     sourced_to: str = None, 
     project: str = None,
+    client_segment: str = None,
+    product_type: str = None,
     loan_status: int = None,
     id_karyawan: int = None,
     db: Session = Depends(get_db)
@@ -577,6 +618,8 @@ async def get_loan_risk_monthly(
             employer_filter=employer,
             sourced_to_filter=sourced_to,
             project_filter=project,
+            client_segment_filter=client_segment,
+            product_type_filter=product_type,
             loan_status_filter=loan_status,
             id_karyawan_filter=id_karyawan,
             start_date=start_date,
@@ -598,11 +641,13 @@ async def get_loan_risk_monthly(
         }
 
 
-@router.get("/karyawan-overdue", response_model=schemas.KaryawanOverdueListResponse)
+@router.get("/karyawan-overdue")
 async def get_karyawan_overdue(
     employer: str = None, 
     sourced_to: str = None, 
     project: str = None,
+    client_segment: str = None,
+    product_type: str = None,
     loan_status: int = None,
     id_karyawan: int = None,
     month: int = None,
@@ -610,7 +655,7 @@ async def get_karyawan_overdue(
     loan_type: str = "loan",
     db: Session = Depends(get_db)
 ):
-    """Get karyawan data for those with overdue loans (status 4)"""
+    """Get karyawan with overdue loans. Use loan_type=all to combine kasbon, extradana, and aku_cicil."""
     
     try:
         overdue_list = crud.get_karyawan_overdue_summary(
@@ -618,6 +663,8 @@ async def get_karyawan_overdue(
             employer_filter=employer,
             sourced_to_filter=sourced_to,
             project_filter=project,
+            client_segment_filter=client_segment,
+            product_type_filter=product_type,
             loan_status_filter=loan_status,
             id_karyawan_filter=id_karyawan,
             month_filter=month,
@@ -642,19 +689,21 @@ async def get_karyawan_overdue(
         }
 
 
-@router.get("/repayment-risk", response_model=schemas.RepaymentRiskResponse)
+@router.get("/repayment-risk")
 async def get_repayment_risk(
     month: int = None,
     year: int = None,
     employer: str = None, 
     sourced_to: str = None, 
     project: str = None,
+    client_segment: str = None,
+    product_type: str = None,
     loan_status: int = None,
     id_karyawan: int = None,
     loan_type: str = "loan",
     db: Session = Depends(get_db)
 ):
-    """Get repayment risk summary with various repayment and risk metrics"""
+    """Get repayment risk summary. Use loan_type=all to combine kasbon, extradana, and aku_cicil."""
     
     try:
         repayment_risk_summary = crud.get_repayment_risk_summary(
@@ -662,6 +711,8 @@ async def get_repayment_risk(
             employer_filter=employer,
             sourced_to_filter=sourced_to,
             project_filter=project,
+            client_segment_filter=client_segment,
+            product_type_filter=product_type,
             loan_status_filter=loan_status,
             id_karyawan_filter=id_karyawan,
             month_filter=month,
@@ -700,24 +751,21 @@ async def get_repayment_risk(
         }
 
 
-@router.get("/repayment-risk-monthly", response_model=schemas.RepaymentRiskMonthlyResponse)
+@router.get("/repayment-risk-monthly")
 async def get_repayment_risk_monthly(
     start_date: str,
     end_date: str,
     employer: str = None, 
     sourced_to: str = None, 
     project: str = None,
+    client_segment: str = None,
+    product_type: str = None,
     loan_status: int = None,
     id_karyawan: int = None,
     loan_type: str = "loan",
     db: Session = Depends(get_db)
 ):
-    """Get repayment risk summary separated by months within a date range
-    
-    Required parameters:
-    - start_date: Start date in YYYY-MM-DD format (e.g., "2024-01-01")
-    - end_date: End date in YYYY-MM-DD format (e.g., "2024-12-31")
-    """
+    """Get monthly repayment risk. Use loan_type=all to combine kasbon, extradana, and aku_cicil."""
     
     try:
         monthly_repayment_risk_summary = crud.get_repayment_risk_monthly_summary(
@@ -725,6 +773,8 @@ async def get_repayment_risk_monthly(
             employer_filter=employer,
             sourced_to_filter=sourced_to,
             project_filter=project,
+            client_segment_filter=client_segment,
+            product_type_filter=product_type,
             loan_status_filter=loan_status,
             id_karyawan_filter=id_karyawan,
             start_date=start_date,
@@ -747,19 +797,21 @@ async def get_repayment_risk_monthly(
         }
 
 
-@router.get("/coverage-utilization", response_model=schemas.CoverageUtilizationResponse)
+@router.get("/coverage-utilization")
 async def get_coverage_utilization(
     month: int = None,
     year: int = None,
     employer: str = None, 
     sourced_to: str = None, 
     project: str = None,
+    client_segment: str = None,
+    product_type: str = None,
     loan_status: int = None,
     id_karyawan: int = None,
     loan_type: str = "loan",
     db: Session = Depends(get_db)
 ):
-    """Get comprehensive coverage and utilization summary combining multiple metrics"""
+    """Get coverage and utilization summary. Use loan_type=all to combine kasbon, extradana, and aku_cicil."""
     
     try:
         coverage_utilization_summary = crud.get_coverage_utilization_summary(
@@ -767,6 +819,8 @@ async def get_coverage_utilization(
             employer_filter=employer,
             sourced_to_filter=sourced_to,
             project_filter=project,
+            client_segment_filter=client_segment,
+            product_type_filter=product_type,
             loan_status_filter=loan_status,
             id_karyawan_filter=id_karyawan,
             month_filter=month,
@@ -811,24 +865,21 @@ async def get_coverage_utilization(
         }
 
 
-@router.get("/coverage-utilization-monthly", response_model=schemas.CoverageUtilizationMonthlyResponse)
+@router.get("/coverage-utilization-monthly")
 async def get_coverage_utilization_monthly(
     start_date: str,
     end_date: str,
     employer: str = None, 
     sourced_to: str = None, 
     project: str = None,
+    client_segment: str = None,
+    product_type: str = None,
     loan_status: int = None,
     id_karyawan: int = None,
     loan_type: str = "loan",
     db: Session = Depends(get_db)
 ):
-    """Get coverage utilization summary separated by months within a date range
-    
-    Required parameters:
-    - start_date: Start date in YYYY-MM-DD format (e.g., "2024-01-01")
-    - end_date: End date in YYYY-MM-DD format (e.g., "2024-12-31")
-    """
+    """Get monthly coverage utilization. Use loan_type=all to combine kasbon, extradana, and aku_cicil."""
     
     try:
         monthly_coverage_utilization_summary = crud.get_coverage_utilization_monthly_summary(
@@ -836,6 +887,8 @@ async def get_coverage_utilization_monthly(
             employer_filter=employer,
             sourced_to_filter=sourced_to,
             project_filter=project,
+            client_segment_filter=client_segment,
+            product_type_filter=product_type,
             loan_status_filter=loan_status,
             id_karyawan_filter=id_karyawan,
             start_date=start_date,
