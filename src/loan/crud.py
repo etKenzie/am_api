@@ -2,6 +2,11 @@ from sqlalchemy.orm import Session
 from sqlalchemy import text
 from typing import List, Optional
 
+try:
+    from .date_filters import append_date_filters, month_bounds
+except ImportError:
+    from loan.date_filters import append_date_filters, month_bounds
+
 # Loan type constants
 # Aku Cicil is identified in loan_setting by loan_type (e.g. id 44); keep in sync with DB.
 _AKU_CICIL_SETTING_IDS = "SELECT ls.id FROM loan_setting ls WHERE ls.loan_type = 'AkuCicil'"
@@ -137,6 +142,83 @@ def _project_management_label_joins_sql() -> str:
             AND pt.aktif = 'Yes'"""
 
 
+CLIENT_SEGMENT_ALL_BFSI = "all_bfsi"
+CLIENT_SEGMENT_ALL_NON_BFSI = "all_non_bfsi"
+
+
+def _normalize_client_segment_category(category_id: str, category_name: str) -> tuple[str | None, str | None]:
+    combined = f"{category_id or ''} {category_name or ''}".lower().replace("-", " ").replace("_", " ")
+    if "non" in combined and "bfsi" in combined:
+        return "non_bfsi", "Non-BFSI"
+    if combined.strip() in ("bfsi",):
+        return "bfsi", "BFSI"
+    if "bfsi" in combined:
+        return "bfsi", "BFSI"
+    return None, None
+
+
+def _aggregate_client_segment_options() -> list[dict]:
+    return [
+        {
+            "option_id": CLIENT_SEGMENT_ALL_BFSI,
+            "option_name": "All BFSI",
+            "category_id": "bfsi",
+            "category_name": "BFSI",
+            "is_aggregate": True,
+        },
+        {
+            "option_id": CLIENT_SEGMENT_ALL_NON_BFSI,
+            "option_name": "All Non-BFSI",
+            "category_id": "non_bfsi",
+            "category_name": "Non-BFSI",
+            "is_aggregate": True,
+        },
+    ]
+
+
+def _empty_client_segment_group(category_id: str, category_name: str) -> dict:
+    return {
+        "category_id": category_id,
+        "category_name": category_name,
+        "options": [],
+    }
+
+
+def _client_segment_codes_in_category_sql(category: str) -> str:
+    if category == "bfsi":
+        parent_match = """
+            (
+                LOWER(parent.kode_gmc) = 'bfsi'
+                OR LOWER(parent.keterangan) = 'bfsi'
+                OR (
+                    LOWER(parent.keterangan) LIKE '%bfsi%'
+                    AND LOWER(parent.keterangan) NOT LIKE '%non%'
+                )
+            )
+        """
+    else:
+        parent_match = """
+            (
+                LOWER(parent.kode_gmc) IN ('non_bfsi', 'non-bfsi')
+                OR LOWER(parent.keterangan) LIKE '%non%bfsi%'
+                OR LOWER(parent.keterangan) LIKE '%non-bfsi%'
+                OR LOWER(parent.keterangan) = 'non bfsi'
+            )
+        """
+    return f"""
+        SELECT child.kode_gmc
+        FROM tbl_gmc child
+        INNER JOIN tbl_gmc parent
+            ON parent.kode_gmc = child.keterangan2
+            AND parent.group_gmc = 'segment'
+            AND parent.aktif = 'Yes'
+        WHERE child.group_gmc = 'segment'
+          AND child.keterangan3 = 1
+          AND child.aktif = 'Yes'
+          AND {parent_match}
+    """
+
+
 def _inject_project_management_join(
     query: str,
     client_segment_filter: str = None,
@@ -170,13 +252,98 @@ def _apply_project_management_filters(
         product_type_filter,
         force_left_join=force_left_join,
     )
-    if client_segment_filter:
+    if client_segment_filter == CLIENT_SEGMENT_ALL_BFSI:
+        query += f" AND tpm.client_segment IN ({_client_segment_codes_in_category_sql('bfsi')})"
+    elif client_segment_filter == CLIENT_SEGMENT_ALL_NON_BFSI:
+        query += f" AND tpm.client_segment IN ({_client_segment_codes_in_category_sql('non_bfsi')})"
+    elif client_segment_filter:
         query += " AND tpm.client_segment = :client_segment"
         params["client_segment"] = client_segment_filter
     if product_type_filter:
         query += " AND tpm.product_type = :product_type"
         params["product_type"] = product_type_filter
     return query
+
+
+def _build_client_segment_filter_options(rows: list) -> dict:
+    grouped: dict[str, dict] = {}
+    flat_segments: list[dict] = []
+
+    for row in rows:
+        option_id, option_name, category_id, category_name = row[0], row[1], row[2], row[3]
+        if option_id is None:
+            continue
+
+        normalized_id, normalized_name = _normalize_client_segment_category(
+            category_id, category_name
+        )
+        option = {
+            "option_id": option_id,
+            "option_name": option_name,
+            "category_id": normalized_id,
+            "category_name": normalized_name,
+        }
+        flat_segments.append(option)
+
+        if normalized_id:
+            group = grouped.setdefault(
+                normalized_id,
+                {
+                    "category_id": normalized_id,
+                    "category_name": normalized_name,
+                    "options": [],
+                },
+            )
+            group["options"].append(
+                {"option_id": option_id, "option_name": option_name}
+            )
+
+    client_segment_groups = []
+    for category_key, category_label in (("bfsi", "BFSI"), ("non_bfsi", "Non-BFSI")):
+        group = grouped.get(category_key) or _empty_client_segment_group(category_key, category_label)
+        aggregate_option = {
+            "option_id": f"all_{category_key}",
+            "option_name": f"All {group['category_name']}",
+            "is_aggregate": True,
+        }
+        child_options = [
+            option
+            for option in group["options"]
+            if option.get("option_id") != f"all_{category_key}"
+        ]
+        group["options"] = [aggregate_option, *child_options]
+        client_segment_groups.append(group)
+
+    for group in grouped.values():
+        if group["category_id"] not in ("bfsi", "non_bfsi"):
+            client_segment_groups.append(group)
+
+    seen_option_ids: set[str] = set()
+    client_segments: list[dict] = []
+    for aggregate in _aggregate_client_segment_options():
+        client_segments.append(aggregate)
+        seen_option_ids.add(aggregate["option_id"])
+
+    for group in client_segment_groups:
+        for option in group["options"]:
+            option_id = option.get("option_id")
+            if not option_id or option_id in seen_option_ids:
+                continue
+            client_segments.append(option)
+            seen_option_ids.add(option_id)
+
+    for option in flat_segments:
+        if option["category_id"] is not None or option["option_id"] in seen_option_ids:
+            continue
+        client_segments.append(
+            {"option_id": option["option_id"], "option_name": option["option_name"]}
+        )
+        seen_option_ids.add(option["option_id"])
+
+    return {
+        "client_segments": client_segments,
+        "client_segment_groups": client_segment_groups,
+    }
 
 
 def _fetch_project_management_filter_options(db: Session) -> dict:
@@ -198,29 +365,33 @@ def _fetch_project_management_filter_options(db: Session) -> dict:
     client_segment_query = """
         SELECT
             tg.kode_gmc AS option_id,
-            tg.keterangan AS option_name
+            tg.keterangan AS option_name,
+            COALESCE(parent.kode_gmc, tg.keterangan2) AS category_id,
+            COALESCE(parent.keterangan, tg.keterangan2) AS category_name
         FROM tbl_project_management AS tpm
         INNER JOIN tbl_gmc AS tg
             ON tg.kode_gmc = tpm.client_segment
             AND tg.group_gmc = 'segment'
             AND tg.keterangan3 = 1
             AND tg.aktif = 'Yes'
+        LEFT JOIN tbl_gmc AS parent
+            ON parent.kode_gmc = tg.keterangan2
+            AND parent.group_gmc = 'segment'
+            AND parent.aktif = 'Yes'
         WHERE tpm.client_segment IS NOT NULL
           AND tpm.client_segment <> ''
-        GROUP BY tg.kode_gmc, tg.keterangan
-        ORDER BY option_id
+        GROUP BY tg.kode_gmc, tg.keterangan, parent.kode_gmc, parent.keterangan, tg.keterangan2
+        ORDER BY category_name, option_id
     """
     product_types = [
         {"option_id": row[0], "option_name": row[1]}
         for row in db.execute(text(product_type_query)).fetchall()
         if row[0] is not None
     ]
-    client_segments = [
-        {"option_id": row[0], "option_name": row[1]}
-        for row in db.execute(text(client_segment_query)).fetchall()
-        if row[0] is not None
-    ]
-    return {"product_types": product_types, "client_segments": client_segments}
+    segment_options = _build_client_segment_filter_options(
+        db.execute(text(client_segment_query)).fetchall()
+    )
+    return {"product_types": product_types, **segment_options}
 
 
 def _append_loan_org_filters(
@@ -308,11 +479,34 @@ def _append_karyawan_org_filters(
 
 
 def _append_proses_date_range(query: str, params: dict, start_date: str, end_date: str) -> str:
-    query += " AND l.proses_date >= :start_date"
-    query += " AND l.proses_date <= :end_date"
-    params["start_date"] = start_date
-    params["end_date"] = end_date
-    return query
+    return append_date_filters(
+        query,
+        params,
+                start_date=start_date,
+        end_date=end_date,
+        date_column="l.proses_date",
+    )
+
+
+def _apply_date_filters_to_named_queries(
+    queries: dict[str, str],
+    params: dict,
+    *,
+    start_date: str = None,
+    end_date: str = None,
+    date_columns: dict[str, str] | None = None,
+) -> dict[str, str]:
+    date_columns = date_columns or {}
+    return {
+        name: append_date_filters(
+            query,
+            params,
+                start_date=start_date,
+            end_date=end_date,
+            date_column=date_columns.get(name, "l.proses_date"),
+        )
+        for name, query in queries.items()
+    }
 
 
 def is_all_loan_types(loan_type: str) -> bool:
@@ -507,8 +701,7 @@ def get_enhanced_karyawan(db: Session, limit: int = 1000000,
 
 def get_user_coverage_summary(db: Session, 
                              employer_filter: str = None, sourced_to_filter: str = None, 
-                             project_filter: str = None, client_segment_filter: str = None, product_type_filter: str = None, id_karyawan_filter: int = None,
-                             month_filter: int = None, year_filter: int = None) -> dict:
+                             project_filter: str = None, client_segment_filter: str = None, product_type_filter: str = None, id_karyawan_filter: int = None, start_date: str = None, end_date: str = None) -> dict:
     """Get user coverage summary with eligible count and loan request metrics"""
     
     try:
@@ -795,26 +988,31 @@ def get_user_coverage_summary(db: Session,
             total_disbursed_amount_query += " AND prj.keterangan = :project"
             total_loans_query += " AND prj.keterangan = :project"
             params['project'] = project_filter
-        if month_filter:
-            processed_requests_query += " AND MONTH(l.proses_date) = :month"
-            pending_requests_query += " AND MONTH(l.received_date) = :month"
-            first_borrow_query += " AND MONTH(l.proses_date) = :month"
-            approved_requests_query += " AND MONTH(l.proses_date) = :month"
-            rejected_requests_query += " AND MONTH(l.proses_date) = :month"
-            avg_approval_time_query += " AND MONTH(l.proses_date) = :month"
-            total_disbursed_amount_query += " AND MONTH(l.proses_date) = :month"
-            total_loans_query += " AND MONTH(l.proses_date) = :month"
-            params['month'] = month_filter
-        if year_filter:
-            processed_requests_query += " AND YEAR(l.proses_date) = :year"
-            pending_requests_query += " AND YEAR(l.received_date) = :year"
-            first_borrow_query += " AND YEAR(l.proses_date) = :year"
-            approved_requests_query += " AND YEAR(l.proses_date) = :year"
-            rejected_requests_query += " AND YEAR(l.proses_date) = :year"
-            avg_approval_time_query += " AND YEAR(l.proses_date) = :year"
-            total_disbursed_amount_query += " AND YEAR(l.proses_date) = :year"
-            total_loans_query += " AND YEAR(l.proses_date) = :year"
-            params['year'] = year_filter
+        if start_date and end_date:
+            updated = _apply_date_filters_to_named_queries(
+                {
+                    "processed": processed_requests_query,
+                    "pending": pending_requests_query,
+                    "first": first_borrow_query,
+                    "approved": approved_requests_query,
+                    "rejected": rejected_requests_query,
+                    "avg": avg_approval_time_query,
+                    "disbursed": total_disbursed_amount_query,
+                    "loans": total_loans_query,
+                },
+                params,
+                start_date=start_date,
+                end_date=end_date,
+                date_columns={"pending": "l.received_date"},
+            )
+            processed_requests_query = updated["processed"]
+            pending_requests_query = updated["pending"]
+            first_borrow_query = updated["first"]
+            approved_requests_query = updated["approved"]
+            rejected_requests_query = updated["rejected"]
+            avg_approval_time_query = updated["avg"]
+            total_disbursed_amount_query = updated["disbursed"]
+            total_loans_query = updated["loans"]
 
         _coverage_loan_queries = (
             processed_requests_query,
@@ -928,8 +1126,7 @@ def get_user_coverage_summary(db: Session,
 
 def get_requests_endpoint(db: Session, 
                          employer_filter: str = None, sourced_to_filter: str = None, 
-                         project_filter: str = None, client_segment_filter: str = None, product_type_filter: str = None, id_karyawan_filter: int = None,
-                         month_filter: int = None, year_filter: int = None) -> dict:
+                         project_filter: str = None, client_segment_filter: str = None, product_type_filter: str = None, id_karyawan_filter: int = None, start_date: str = None, end_date: str = None) -> dict:
     """Get requests metrics: total_approved_requests, total_rejected_requests, approval_rate, average_approval_time"""
     
     try:
@@ -1072,18 +1269,22 @@ def get_requests_endpoint(db: Session,
             total_processed_query += " AND prj.keterangan = :project"
             avg_approval_time_query += " AND prj.keterangan = :project"
             params['project'] = project_filter
-        if month_filter:
-            approved_requests_query += " AND MONTH(l.proses_date) = :month"
-            rejected_requests_query += " AND MONTH(l.proses_date) = :month"
-            total_processed_query += " AND MONTH(l.proses_date) = :month"
-            avg_approval_time_query += " AND MONTH(l.proses_date) = :month"
-            params['month'] = month_filter
-        if year_filter:
-            approved_requests_query += " AND YEAR(l.proses_date) = :year"
-            rejected_requests_query += " AND YEAR(l.proses_date) = :year"
-            total_processed_query += " AND YEAR(l.proses_date) = :year"
-            avg_approval_time_query += " AND YEAR(l.proses_date) = :year"
-            params['year'] = year_filter
+        if start_date and end_date:
+            updated = _apply_date_filters_to_named_queries(
+                {
+                    "approved": approved_requests_query,
+                    "rejected": rejected_requests_query,
+                    "processed": total_processed_query,
+                    "avg": avg_approval_time_query,
+                },
+                params,
+                start_date=start_date,
+                end_date=end_date,
+            )
+            approved_requests_query = updated["approved"]
+            rejected_requests_query = updated["rejected"]
+            total_processed_query = updated["processed"]
+            avg_approval_time_query = updated["avg"]
 
         approved_requests_query = _apply_project_management_filters(
             approved_requests_query, params, client_segment_filter, product_type_filter
@@ -1139,8 +1340,7 @@ def get_requests_endpoint(db: Session,
 
 def get_disbursement_endpoint(db: Session, 
                              employer_filter: str = None, sourced_to_filter: str = None, 
-                             project_filter: str = None, client_segment_filter: str = None, product_type_filter: str = None, id_karyawan_filter: int = None,
-                             month_filter: int = None, year_filter: int = None) -> dict:
+                             project_filter: str = None, client_segment_filter: str = None, product_type_filter: str = None, id_karyawan_filter: int = None, start_date: str = None, end_date: str = None) -> dict:
     """Get disbursement metrics: total_disbursed_amount, average_disbursed_amount"""
     
     try:
@@ -1215,14 +1415,18 @@ def get_disbursement_endpoint(db: Session,
             total_disbursed_amount_query += " AND prj.keterangan = :project"
             total_loans_query += " AND prj.keterangan = :project"
             params['project'] = project_filter
-        if month_filter:
-            total_disbursed_amount_query += " AND MONTH(l.proses_date) = :month"
-            total_loans_query += " AND MONTH(l.proses_date) = :month"
-            params['month'] = month_filter
-        if year_filter:
-            total_disbursed_amount_query += " AND YEAR(l.proses_date) = :year"
-            total_loans_query += " AND YEAR(l.proses_date) = :year"
-            params['year'] = year_filter
+        if start_date and end_date:
+            updated = _apply_date_filters_to_named_queries(
+                {
+                    "disbursed": total_disbursed_amount_query,
+                    "loans": total_loans_query,
+                },
+                params,
+                start_date=start_date,
+                end_date=end_date,
+            )
+            total_disbursed_amount_query = updated["disbursed"]
+            total_loans_query = updated["loans"]
 
         total_disbursed_amount_query = _apply_project_management_filters(
             total_disbursed_amount_query, params, client_segment_filter, product_type_filter
@@ -1259,7 +1463,7 @@ def get_disbursement_endpoint(db: Session,
         }
 
 
-def get_disbursement_monthly_endpoint(db: Session, start_date: str, end_date: str,
+def get_disbursement_monthly_endpoint(db: Session, start_date: str = None, end_date: str = None,
                                     employer_filter: str = None, sourced_to_filter: str = None, 
                                     project_filter: str = None, client_segment_filter: str = None,
                                     product_type_filter: str = None, id_karyawan_filter: int = None) -> dict:
@@ -1583,17 +1787,20 @@ def get_available_filter_values(db: Session, employer_filter: str = None, placem
             "placements": placements,
             "projects": projects,
             "client_segments": pm_options["client_segments"],
+            "client_segment_groups": pm_options["client_segment_groups"],
             "product_types": pm_options["product_types"],
         }
         
     except Exception as e:
         import traceback
         traceback.print_exc()
+        fallback_segments = _build_client_segment_filter_options([])
         return {
             "employers": [],
             "placements": [],
             "projects": [],
-            "client_segments": [],
+            "client_segments": fallback_segments["client_segments"],
+            "client_segment_groups": fallback_segments["client_segment_groups"],
             "product_types": [],
         }
 
@@ -1601,8 +1808,7 @@ def get_available_filter_values(db: Session, employer_filter: str = None, placem
 def get_loan_fees_summary(db: Session, 
                           employer_filter: str = None, sourced_to_filter: str = None, 
                           project_filter: str = None, client_segment_filter: str = None, product_type_filter: str = None, loan_status_filter: int = None,
-                          id_karyawan_filter: int = None, month_filter: int = None,
-                          year_filter: int = None) -> dict:
+                          id_karyawan_filter: int = None, start_date: str = None, end_date: str = None) -> dict:
     """Get loan fees summary (total expected and collected admin fees)"""
     
     try:
@@ -1663,15 +1869,14 @@ def get_loan_fees_summary(db: Session,
             fees_query += " AND l.loan_status = :loan_status"
             params['loan_status'] = loan_status_filter
             
-        # Add month and year filters based on proses_date
-        if month_filter is not None:
-            fees_query += " AND MONTH(l.proses_date) = :month"
-            params['month'] = month_filter
-            
-        if year_filter is not None:
-            fees_query += " AND YEAR(l.proses_date) = :year"
-            params['year'] = year_filter
-        
+        # Add date filters based on proses_date
+        if start_date and end_date:
+            fees_query = append_date_filters(
+                fees_query,
+                params,
+                start_date=start_date,
+                end_date=end_date,
+            )
 
         # Execute the query
         result = db.execute(text(fees_query), params)
@@ -1833,8 +2038,7 @@ def get_loan_fees_monthly_summary(db: Session,
 def get_loan_risk_summary(db: Session, 
                           employer_filter: str = None, sourced_to_filter: str = None, 
                           project_filter: str = None, client_segment_filter: str = None, product_type_filter: str = None, loan_status_filter: int = None,
-                          id_karyawan_filter: int = None, month_filter: int = None,
-                          year_filter: int = None) -> dict:
+                          id_karyawan_filter: int = None, start_date: str = None, end_date: str = None) -> dict:
     """Get loan risk summary with various risk metrics"""
     
     try:
@@ -1896,14 +2100,14 @@ def get_loan_risk_summary(db: Session,
             params['loan_status'] = loan_status_filter
             
         # Add month and year filters based on proses_date
-        if month_filter is not None:
-            risk_query += " AND MONTH(l.proses_date) = :month"
-            params['month'] = month_filter
-            
-        if year_filter is not None:
-            risk_query += " AND YEAR(l.proses_date) = :year"
-            params['year'] = year_filter
-        
+        if start_date and end_date:
+            risk_query = append_date_filters(
+                risk_query,
+                params,
+                start_date=start_date,
+                end_date=end_date,
+            )
+
         # Execute the query
         result = db.execute(text(risk_query), params)
         record = result.fetchone()
@@ -2065,8 +2269,7 @@ def get_loan_risk_monthly_summary(db: Session,
 def get_karyawan_overdue_summary(db: Session, 
                                  employer_filter: str = None, sourced_to_filter: str = None, 
                                  project_filter: str = None, client_segment_filter: str = None, product_type_filter: str = None, loan_status_filter: int = None,
-                                 id_karyawan_filter: int = None, month_filter: int = None,
-                                 year_filter: int = None, loan_type: str = "loan") -> List[dict]:
+                                 id_karyawan_filter: int = None, start_date: str = None, end_date: str = None, loan_type: str = "loan") -> List[dict]:
     """Get karyawan data for those with overdue loans (status 4)"""
     
     try:
@@ -2079,8 +2282,6 @@ def get_karyawan_overdue_summary(db: Session,
                     project_filter=project_filter,
                     loan_status_filter=loan_status_filter,
                     id_karyawan_filter=id_karyawan_filter,
-                    month_filter=month_filter,
-                    year_filter=year_filter,
                     loan_type="kasbon",
                 ),
                 get_karyawan_overdue_summary(
@@ -2090,8 +2291,6 @@ def get_karyawan_overdue_summary(db: Session,
                     project_filter=project_filter,
                     loan_status_filter=loan_status_filter,
                     id_karyawan_filter=id_karyawan_filter,
-                    month_filter=month_filter,
-                    year_filter=year_filter,
                     loan_type="installment",
                 ),
             ])
@@ -2216,53 +2415,32 @@ def get_karyawan_overdue_summary(db: Session,
             else:
                 overdue_query += " AND tlh.status = :loan_status"
             params['loan_status'] = loan_status_filter
-            
-        # Add month and year filters
-        if month_filter is not None and year_filter is not None:
-            import calendar
-            start_date = f"{year_filter}-{month_filter:02d}-01"
-            
+
+        if start_date and end_date:
             if use_td_loan:
-                # For kasbon/default, filter by repayment_date in td_loan using range format
-                last_day = calendar.monthrange(year_filter, month_filter)[1]
-                end_date = f"{year_filter}-{month_filter:02d}-{last_day:02d}"
                 overdue_query += " AND l.repayment_date >= :start_date"
                 overdue_query += " AND l.repayment_date <= :end_date"
-                params['start_date'] = start_date
-                params['end_date'] = end_date
             else:
-                # For extradana and aku_cicil, filter by due_date in td_loan_history
-                if month_filter == 12:
-                    next_month_date = f"{year_filter + 1}-01-01"
-                else:
-                    next_month_date = f"{year_filter}-{month_filter + 1:02d}-01"
                 overdue_query += " AND tlh.due_date >= :start_date"
-                overdue_query += " AND tlh.due_date < :next_month_date"
-                params['start_date'] = start_date
-                params['next_month_date'] = next_month_date
-        
-        # Group by karyawan and order by total amount owed (descending)
+                overdue_query += " AND tlh.due_date <= :end_date"
+            params["start_date"] = start_date
+            params["end_date"] = end_date
+
         overdue_query += """
         GROUP BY tk.id_karyawan, tk.nama, tk.ktp, emp.keterangan, src.keterangan, prj.keterangan
         ORDER BY total_amount_owed DESC
         """
-        
 
-        
-        # Execute the query
         result = db.execute(text(overdue_query), params)
         records = result.fetchall()
-        
-        # Convert to list of dictionaries
+
         overdue_list = []
         for record in records:
-            # Skip records with NULL id_karyawan (shouldn't happen due to WHERE clause, but just in case)
             if record[0] is None:
                 continue
-                
-            # Calculate days overdue
+
             days_overdue = 0
-            if record[7] is not None:  # repayment_date
+            if record[7] is not None:
                 from datetime import datetime, date
                 try:
                     repayment_date = record[7]
@@ -2270,14 +2448,11 @@ def get_karyawan_overdue_summary(db: Session,
                         repayment_date = datetime.strptime(repayment_date, '%Y-%m-%d').date()
                     elif hasattr(repayment_date, 'date'):
                         repayment_date = repayment_date.date()
-                    else:
-                        repayment_date = repayment_date
-                    
                     today = date.today()
                     days_overdue = (today - repayment_date).days
-                except:
+                except Exception:
                     days_overdue = 0
-            
+
             overdue_list.append({
                 "id_karyawan": record[0],
                 "ktp": record[1],
@@ -2291,35 +2466,30 @@ def get_karyawan_overdue_summary(db: Session,
                 "admin_fee": record[8] if record[8] is not None else 0,
                 "total_payment": record[9] if record[9] is not None else 0
             })
-        
 
-        
         return overdue_list
-        
+
     except Exception as e:
         import traceback
         traceback.print_exc()
         return []
 
 
-def get_loan_purpose_summary(db: Session, 
-                            employer_filter: str = None, sourced_to_filter: str = None, 
+def get_loan_purpose_summary(db: Session,
+                            employer_filter: str = None, sourced_to_filter: str = None,
                             project_filter: str = None, client_segment_filter: str = None, product_type_filter: str = None, loan_status_filter: int = None,
-                            id_karyawan_filter: int = None, month_filter: int = None, 
-                                 year_filter: int = None, loan_type: str = "loan") -> List[dict]:
+                            id_karyawan_filter: int = None, start_date: str = None,
+                            end_date: str = None, loan_type: str = "loan") -> List[dict]:
     """Get loan summary grouped by purpose with filters"""
-    
 
     try:
-        # Determine loan conditions based on loan type
         if loan_type == "loan":
             loan_conditions = LOAN_CONDITIONS
         elif loan_type == "extradana":
             loan_conditions = EXTRADANA_LOAN_CONDITIONS
         else:
-            loan_conditions = LOAN_CONDITIONS  
+            loan_conditions = LOAN_CONDITIONS
 
-        # Build the query to analyze loans by purpose
         purpose_query = """
         SELECT
             lp.id as purpose_id,
@@ -2349,54 +2519,46 @@ def get_loan_purpose_summary(db: Session,
         WHERE 1=1
         AND {loan_conditions}
         """.format(loan_conditions=loan_conditions)
-        
-        # Build parameters dict for filters
+
         params = {}
-        
-        # Add filters
+
         if id_karyawan_filter:
             purpose_query += " AND l.id_karyawan = :id_karyawan"
             params['id_karyawan'] = id_karyawan_filter
-            
+
         if employer_filter:
             purpose_query += " AND emp.keterangan = :employer"
             params['employer'] = employer_filter
-            
+
         if sourced_to_filter:
             purpose_query += " AND src.keterangan = :sourced_to"
             params['sourced_to'] = sourced_to_filter
-            
+
         if project_filter:
             purpose_query += " AND prj.keterangan = :project"
             params['project'] = project_filter
-            
+
         purpose_query = _apply_project_management_filters(purpose_query, params, client_segment_filter, product_type_filter)
 
         if loan_status_filter is not None:
             purpose_query += " AND l.loan_status = :loan_status"
             params['loan_status'] = loan_status_filter
-            
-        # Add month and year filters based on proses_date
-        if month_filter is not None:
-            purpose_query += " AND MONTH(l.proses_date) = :month"
-            params['month'] = month_filter
-            
-        if year_filter is not None:
-            purpose_query += " AND YEAR(l.proses_date) = :year"
-            params['year'] = year_filter
-        
-        # Group by purpose and order by total amount (descending)
+
+        purpose_query = append_date_filters(
+            purpose_query,
+            params,
+            start_date=start_date,
+            end_date=end_date,
+        )
+
         purpose_query += """
         GROUP BY lp.id, lp.purpose
         ORDER BY total_amount DESC
         """
-        
-        
-        # Execute the query
+
         result = db.execute(text(purpose_query), params)
         records = result.fetchall()
-        
-        # Convert to list of dictionaries
+
         purpose_list = []
         for record in records:
             purpose_list.append({
@@ -2405,24 +2567,22 @@ def get_loan_purpose_summary(db: Session,
                 "total_count": record[2] if record[2] is not None else 0,
                 "total_amount": record[3] if record[3] is not None else 0
             })
-        
+
         return purpose_list
-        
+
     except Exception as e:
         import traceback
         traceback.print_exc()
         return []
 
 
-def get_total_admin_fee_collected(db: Session, 
-                                 employer_filter: str = None, sourced_to_filter: str = None, 
+def get_total_admin_fee_collected(db: Session,
+                                 employer_filter: str = None, sourced_to_filter: str = None,
                                  project_filter: str = None, client_segment_filter: str = None, product_type_filter: str = None, loan_status_filter: int = None,
-                                 id_karyawan_filter: int = None, month_filter: int = None,
-                                 year_filter: int = None, loan_type: str = "loan") -> float:
+                                 id_karyawan_filter: int = None, start_date: str = None, end_date: str = None, loan_type: str = "loan") -> float:
     """Get total admin fee collected amount based on loan type"""
-    
+
     try:
-        # Determine loan conditions based on loan type
         if loan_type == "loan":
             loan_conditions = LOAN_CONDITIONS
         elif loan_type == "extradana":
@@ -2430,13 +2590,11 @@ def get_total_admin_fee_collected(db: Session,
         elif loan_type == "aku_cicil":
             loan_conditions = AKU_CICIL_CONDITION
         else:
-            loan_conditions = LOAN_CONDITIONS  # default to loan
-        
-        # Build parameters dict for filters
+            loan_conditions = LOAN_CONDITIONS
+
         params = {}
-        
+
         if loan_type == "loan":
-            # For loan, use the existing logic from td_loan table
             admin_fee_collected_query = """
             SELECT SUM(CASE WHEN l.loan_status = 2 THEN l.admin_fee ELSE 0 END) as total_admin_fee_collected
             FROM td_loan l
@@ -2459,17 +2617,13 @@ def get_total_admin_fee_collected(db: Session,
                 AND prj.keterangan3 = 1
             WHERE {loan_conditions}
             """.format(loan_conditions=loan_conditions)
-            
-        else:  # extradana or aku_cicil
-            # For extradana and aku_cicil, use td_loan_history table with monthly admin fee calculation
-            # Note: td_loan is aliased as 'l' in this query, so loan_conditions with 'l.' prefix work correctly
-            # Special handling for extradana - use loan_setting table
+
+        else:
             if loan_type == "extradana":
                 loan_conditions_tl = "l.loan_id IN (SELECT ls.id FROM loan_setting ls WHERE ls.loan_type LIKE 'Extradana%')"
             else:
-                # For aku_cicil, loan_conditions already use 'l.' prefix which matches the alias
                 loan_conditions_tl = loan_conditions
-            
+
             admin_fee_collected_query = """
             SELECT SUM(ROUND(l.admin_fee / l.duration, 0)) as total_admin_fee_collected
             FROM td_loan_history tlh
@@ -2494,84 +2648,44 @@ def get_total_admin_fee_collected(db: Session,
             AND l.loan_status IN (1, 2, 4)
             AND {loan_conditions_tl}
             """.format(loan_conditions_tl=loan_conditions_tl)
-        
-        # Add filters
+
         if id_karyawan_filter:
             admin_fee_collected_query += " AND l.id_karyawan = :id_karyawan"
             params['id_karyawan'] = id_karyawan_filter
-            
-        # Restrict to only PT Valdo companies (conditional based on loan type)
-        if loan_type == "extradana":
-            # For extradana, include all three companies (based on the example query)
-            company_filter = "('PT Valdo Sumber Daya Mandiri', 'PT Valdo International', 'PT Toko Pandai')"
-        elif loan_type == "aku_cicil":
-            # For aku_cicil, include all three companies
-            company_filter = "('PT Valdo Sumber Daya Mandiri', 'PT Valdo International', 'PT Toko Pandai')"
-        else:
-            # For loan, include all three companies
-            company_filter = "('PT Valdo Sumber Daya Mandiri', 'PT Valdo International', 'PT Toko Pandai')"
-            
+
+        company_filter = "('PT Valdo Sumber Daya Mandiri', 'PT Valdo International', 'PT Toko Pandai')"
         admin_fee_collected_query += f" AND emp.keterangan IN {company_filter}"
-        
-        # If employer_filter is provided and it's one of the allowed companies, filter further
+
         if employer_filter and employer_filter in ['PT Valdo Sumber Daya Mandiri', 'PT Valdo International', 'PT Toko Pandai']:
             admin_fee_collected_query += " AND emp.keterangan = :employer"
             params['employer'] = employer_filter
-            
+
         if sourced_to_filter:
             admin_fee_collected_query += " AND src.keterangan = :sourced_to"
             params['sourced_to'] = sourced_to_filter
-            
+
         if project_filter:
             admin_fee_collected_query += " AND prj.keterangan = :project"
             params['project'] = project_filter
-            
+
         admin_fee_collected_query = _apply_project_management_filters(admin_fee_collected_query, params, client_segment_filter, product_type_filter)
 
         if loan_status_filter is not None:
             admin_fee_collected_query += " AND l.loan_status = :loan_status"
             params['loan_status'] = loan_status_filter
-            
-        # Add month and year filters based on due_date for extradana, proses_date for loan
-        if month_filter is not None and year_filter is not None:
-            import calendar
-            start_date = f"{year_filter}-{month_filter:02d}-01"
-            # For extradana, use < next month format like the example
-            if month_filter == 12:
-                next_month_date = f"{year_filter + 1}-01-01"
-            else:
-                next_month_date = f"{year_filter}-{month_filter + 1:02d}-01"
 
-            if loan_type == "extradana":
-                # For extradana, filter by due_date in td_loan_history using the example format
-                admin_fee_collected_query += " AND tlh.due_date >= :start_date"
-                admin_fee_collected_query += " AND tlh.due_date < :next_month_date"
-                params['start_date'] = start_date
-                params['next_month_date'] = next_month_date
-            elif loan_type == "aku_cicil":
-                # For aku_cicil, filter by due_date in td_loan_history using the example format
-                admin_fee_collected_query += " AND tlh.due_date >= :start_date"
-                admin_fee_collected_query += " AND tlh.due_date < :next_month_date"
-                params['start_date'] = start_date
-                params['next_month_date'] = next_month_date
+        if start_date and end_date:
+            if loan_type in ("extradana", "aku_cicil"):
+                admin_fee_collected_query += " AND tlh.due_date >= :start_date AND tlh.due_date <= :end_date"
             else:
-                # For loan, filter by proses_date in td_loan using range format
-                last_day = calendar.monthrange(year_filter, month_filter)[1]
-                end_date = f"{year_filter}-{month_filter:02d}-{last_day:02d}"
-                admin_fee_collected_query += " AND l.proses_date >= :start_date"
-                admin_fee_collected_query += " AND l.proses_date <= :end_date"
-                params['start_date'] = start_date
-                params['end_date'] = end_date
-        
-        # Execute the query
+                admin_fee_collected_query += " AND l.proses_date >= :start_date AND l.proses_date <= :end_date"
+            params["start_date"] = start_date
+            params["end_date"] = end_date
+
         result = db.execute(text(admin_fee_collected_query), params)
         record = result.fetchone()
-        
-        # Extract the value (handle None values)
-        total_admin_fee_collected = record[0] if record[0] is not None else 0
-        
-        return total_admin_fee_collected
-        
+        return record[0] if record[0] is not None else 0
+
     except Exception as e:
         import traceback
         traceback.print_exc()
@@ -2581,8 +2695,7 @@ def get_total_admin_fee_collected(db: Session,
 def get_total_loan_principal_collected(db: Session, 
                                         employer_filter: str = None, sourced_to_filter: str = None, 
                                         project_filter: str = None, client_segment_filter: str = None, product_type_filter: str = None, loan_status_filter: int = None,
-                                        id_karyawan_filter: int = None, month_filter: int = None,
-                                        year_filter: int = None, loan_type: str = "loan") -> float:
+                                        id_karyawan_filter: int = None, start_date: str = None, end_date: str = None, loan_type: str = "loan") -> float:
     """Get total loan principal collected amount based on loan type"""
     
     try:
@@ -2696,38 +2809,15 @@ def get_total_loan_principal_collected(db: Session,
             principal_collected_query += " AND l.loan_status = :loan_status"
             params['loan_status'] = loan_status_filter
             
-        # Add month and year filters based on due_date for extradana, proses_date for loan
-        if month_filter is not None and year_filter is not None:
-            import calendar
-            start_date = f"{year_filter}-{month_filter:02d}-01"
-            # For extradana, use < next month format like the example
-            if month_filter == 12:
-                next_month_date = f"{year_filter + 1}-01-01"
+        # Add date filters based on due_date for extradana, proses_date for loan
+        if start_date and end_date:
+            if loan_type in ("extradana", "aku_cicil"):
+                principal_collected_query += " AND tlh.due_date >= :start_date AND tlh.due_date <= :end_date"
             else:
-                next_month_date = f"{year_filter}-{month_filter + 1:02d}-01"
+                principal_collected_query += " AND l.proses_date >= :start_date AND l.proses_date <= :end_date"
+            params["start_date"] = start_date
+            params["end_date"] = end_date
 
-            if loan_type == "extradana":
-                # For extradana, filter by due_date in td_loan_history using the example format
-                principal_collected_query += " AND tlh.due_date >= :start_date"
-                principal_collected_query += " AND tlh.due_date < :next_month_date"
-                params['start_date'] = start_date
-                params['next_month_date'] = next_month_date
-            elif loan_type == "aku_cicil":
-                # For aku_cicil, filter by due_date in td_loan_history using the example format
-                principal_collected_query += " AND tlh.due_date >= :start_date"
-                principal_collected_query += " AND tlh.due_date < :next_month_date"
-                params['start_date'] = start_date
-                params['next_month_date'] = next_month_date
-            else:
-                # For loan, filter by proses_date in td_loan using range format
-                last_day = calendar.monthrange(year_filter, month_filter)[1]
-                end_date = f"{year_filter}-{month_filter:02d}-{last_day:02d}"
-                principal_collected_query += " AND l.proses_date >= :start_date"
-                principal_collected_query += " AND l.proses_date <= :end_date"
-                params['start_date'] = start_date
-                params['end_date'] = end_date
-        
-        # Execute the query
         result = db.execute(text(principal_collected_query), params)
         record = result.fetchone()
         
@@ -2745,8 +2835,7 @@ def get_total_loan_principal_collected(db: Session,
 def get_expected_repayment(db: Session, 
                           employer_filter: str = None, sourced_to_filter: str = None, 
                           project_filter: str = None, client_segment_filter: str = None, product_type_filter: str = None, loan_status_filter: int = None,
-                          id_karyawan_filter: int = None, month_filter: int = None,
-                                        year_filter: int = None, loan_type: str = "loan") -> float:
+                          id_karyawan_filter: int = None, start_date: str = None, end_date: str = None, loan_type: str = "loan") -> float:
     """Get expected repayment amount based on loan type"""
     
     try:
@@ -2860,36 +2949,14 @@ def get_expected_repayment(db: Session,
             expected_repayment_query += " AND l.loan_status = :loan_status"
             params['loan_status'] = loan_status_filter
             
-        # Add month and year filters based on due_date for extradana, proses_date for loan
-        if month_filter is not None and year_filter is not None:
-            import calendar
-            start_date = f"{year_filter}-{month_filter:02d}-01"
-            # For extradana, use < next month format like the example
-            if month_filter == 12:
-                next_month_date = f"{year_filter + 1}-01-01"
+        # Add date filters based on due_date for extradana, proses_date for loan
+        if start_date and end_date:
+            if loan_type in ("extradana", "aku_cicil"):
+                expected_repayment_query += " AND tlh.due_date >= :start_date AND tlh.due_date <= :end_date"
             else:
-                next_month_date = f"{year_filter}-{month_filter + 1:02d}-01"
-
-            if loan_type == "extradana":
-                # For extradana, filter by due_date in td_loan_history using the example format
-                expected_repayment_query += " AND tlh.due_date >= :start_date"
-                expected_repayment_query += " AND tlh.due_date < :next_month_date"
-                params['start_date'] = start_date
-                params['next_month_date'] = next_month_date
-            elif loan_type == "aku_cicil":
-                # For aku_cicil, filter by due_date in td_loan_history using the example format
-                expected_repayment_query += " AND tlh.due_date >= :start_date"
-                expected_repayment_query += " AND tlh.due_date < :next_month_date"
-                params['start_date'] = start_date
-                params['next_month_date'] = next_month_date
-            else:
-                # For loan, filter by proses_date in td_loan using range format
-                last_day = calendar.monthrange(year_filter, month_filter)[1]
-                end_date = f"{year_filter}-{month_filter:02d}-{last_day:02d}"
-                expected_repayment_query += " AND l.proses_date >= :start_date"
-                expected_repayment_query += " AND l.proses_date <= :end_date"
-                params['start_date'] = start_date
-                params['end_date'] = end_date
+                expected_repayment_query += " AND l.proses_date >= :start_date AND l.proses_date <= :end_date"
+            params["start_date"] = start_date
+            params["end_date"] = end_date
         
         # Execute the query
         result = db.execute(text(expected_repayment_query), params)
@@ -2909,8 +2976,7 @@ def get_expected_repayment(db: Session,
 def get_repayment_risk_summary(db: Session, 
                                employer_filter: str = None, sourced_to_filter: str = None, 
                                project_filter: str = None, client_segment_filter: str = None, product_type_filter: str = None, loan_status_filter: int = None,
-                               id_karyawan_filter: int = None, month_filter: int = None,
-                               year_filter: int = None, loan_type: str = "loan") -> dict:
+                               id_karyawan_filter: int = None, start_date: str = None, end_date: str = None, loan_type: str = "loan") -> dict:
     """Get repayment risk summary with various repayment and risk metrics"""
     
     try:
@@ -2923,8 +2989,8 @@ def get_repayment_risk_summary(db: Session,
                     project_filter=project_filter,
                     loan_status_filter=loan_status_filter,
                     id_karyawan_filter=id_karyawan_filter,
-                    month_filter=month_filter,
-                    year_filter=year_filter,
+                    start_date=start_date,
+                    end_date=end_date,
                     loan_type=product_type,
                 )
                 for product_type in ALL_LOAN_TYPES
@@ -3004,14 +3070,14 @@ def get_repayment_risk_summary(db: Session,
             params['loan_status'] = loan_status_filter
             
         # Add month and year filters based on proses_date
-        if month_filter is not None:
-            risk_query += " AND MONTH(l.proses_date) = :month"
-            params['month'] = month_filter
-            
-        if year_filter is not None:
-            risk_query += " AND YEAR(l.proses_date) = :year"
-            params['year'] = year_filter
-        
+        if start_date and end_date:
+            risk_query = append_date_filters(
+                risk_query,
+                params,
+                start_date=start_date,
+                end_date=end_date,
+            )
+
         # Execute the query
         result = db.execute(text(risk_query), params)
         record = result.fetchone()
@@ -3033,8 +3099,8 @@ def get_repayment_risk_summary(db: Session,
                 project_filter=project_filter,
                 loan_status_filter=loan_status_filter,
                 id_karyawan_filter=id_karyawan_filter,
-                month_filter=month_filter,
-                year_filter=year_filter,
+                    start_date=start_date,
+                end_date=end_date,
                 loan_type=loan_type
             )
             total_loan_principal_collected = get_total_loan_principal_collected(
@@ -3044,8 +3110,8 @@ def get_repayment_risk_summary(db: Session,
                 project_filter=project_filter,
                 loan_status_filter=loan_status_filter,
                 id_karyawan_filter=id_karyawan_filter,
-                month_filter=month_filter,
-                year_filter=year_filter,
+                    start_date=start_date,
+                end_date=end_date,
                 loan_type=loan_type
             )
             total_admin_fee_collected = get_total_admin_fee_collected(
@@ -3055,8 +3121,8 @@ def get_repayment_risk_summary(db: Session,
                 project_filter=project_filter,
                 loan_status_filter=loan_status_filter,
                 id_karyawan_filter=id_karyawan_filter,
-                month_filter=month_filter,
-                year_filter=year_filter,
+                    start_date=start_date,
+                end_date=end_date,
                 loan_type=loan_type
             )
         elif loan_type == "aku_cicil":
@@ -3067,8 +3133,8 @@ def get_repayment_risk_summary(db: Session,
                 project_filter=project_filter,
                 loan_status_filter=loan_status_filter,
                 id_karyawan_filter=id_karyawan_filter,
-                month_filter=month_filter,
-                year_filter=year_filter,
+                    start_date=start_date,
+                end_date=end_date,
                 loan_type=loan_type
             )
             total_loan_principal_collected = get_total_loan_principal_collected(
@@ -3078,8 +3144,8 @@ def get_repayment_risk_summary(db: Session,
                 project_filter=project_filter,
                 loan_status_filter=loan_status_filter,
                 id_karyawan_filter=id_karyawan_filter,
-                month_filter=month_filter,
-                year_filter=year_filter,
+                    start_date=start_date,
+                end_date=end_date,
                 loan_type=loan_type
             )
             total_admin_fee_collected = get_total_admin_fee_collected(
@@ -3089,8 +3155,8 @@ def get_repayment_risk_summary(db: Session,
                 project_filter=project_filter,
                 loan_status_filter=loan_status_filter,
                 id_karyawan_filter=id_karyawan_filter,
-                month_filter=month_filter,
-                year_filter=year_filter,
+                    start_date=start_date,
+                end_date=end_date,
                 loan_type=loan_type
             )
         
@@ -3163,18 +3229,7 @@ def get_repayment_risk_summary(db: Session,
                 unrecovered_query += " AND tlh.status = :loan_status"
                 unrecovered_params['loan_status'] = loan_status_filter
             
-            # Add month and year filters based on due_date
-            if month_filter is not None and year_filter is not None:
-                start_date = f"{year_filter}-{month_filter:02d}-01"
-                if month_filter == 12:
-                    next_month_date = f"{year_filter + 1}-01-01"
-                else:
-                    next_month_date = f"{year_filter}-{month_filter + 1:02d}-01"
-                unrecovered_query += " AND tlh.due_date >= :start_date"
-                unrecovered_query += " AND tlh.due_date < :next_month_date"
-                unrecovered_params['start_date'] = start_date
-                unrecovered_params['next_month_date'] = next_month_date
-            
+            # Add month and year filters based on due_date            
             # Execute unrecovered query
             unrecovered_result = db.execute(text(unrecovered_query), unrecovered_params)
             unrecovered_record = unrecovered_result.fetchone()
@@ -3404,7 +3459,8 @@ def get_repayment_risk_monthly_summary(db: Session,
                 'January': 1, 'February': 2, 'March': 3, 'April': 4, 'May': 5, 'June': 6,
                 'July': 7, 'August': 8, 'September': 9, 'October': 10, 'November': 11, 'December': 12
             }[month_name]
-            
+            month_start, month_end = month_bounds(month_num, year)
+
             # For kasbon (loan), get total_expected_repayment from query results
             # For extradana and aku_cicil, use the dedicated function
             if loan_type == "extradana" or loan_type == "aku_cicil":
@@ -3415,8 +3471,8 @@ def get_repayment_risk_monthly_summary(db: Session,
                     project_filter=project_filter,
                     loan_status_filter=loan_status_filter,
                     id_karyawan_filter=id_karyawan_filter,
-                    month_filter=month_num,
-                    year_filter=year,
+                    start_date=month_start,
+                    end_date=month_end,
                     loan_type=loan_type
                 )
             else:
@@ -3441,8 +3497,8 @@ def get_repayment_risk_monthly_summary(db: Session,
                     project_filter=project_filter,
                     loan_status_filter=loan_status_filter,
                     id_karyawan_filter=id_karyawan_filter,
-                    month_filter=month_num,
-                    year_filter=year,
+                    start_date=month_start,
+                    end_date=month_end,
                     loan_type=loan_type
                 )
                 total_admin_fee_collected = get_total_admin_fee_collected(
@@ -3452,8 +3508,8 @@ def get_repayment_risk_monthly_summary(db: Session,
                     project_filter=project_filter,
                     loan_status_filter=loan_status_filter,
                     id_karyawan_filter=id_karyawan_filter,
-                    month_filter=month_num,
-                    year_filter=year,
+                    start_date=month_start,
+                    end_date=month_end,
                     loan_type=loan_type
                 )
             else:
@@ -3601,8 +3657,7 @@ def get_disbursed_amount(db: Session,
 def get_coverage_utilization_summary(db: Session, 
                                     employer_filter: str = None, sourced_to_filter: str = None, 
                                     project_filter: str = None, client_segment_filter: str = None, product_type_filter: str = None, loan_status_filter: int = None,
-                                    id_karyawan_filter: int = None, month_filter: int = None,
-                                    year_filter: int = None, loan_type: str = "loan") -> dict:
+                                    id_karyawan_filter: int = None, start_date: str = None, end_date: str = None, loan_type: str = "loan") -> dict:
     """Get comprehensive coverage and utilization summary combining multiple metrics"""
     
     try:
@@ -3623,7 +3678,7 @@ def get_coverage_utilization_summary(db: Session,
             employee_count_query,
             params,
             id_karyawan_filter=id_karyawan_filter,
-            employer_filter=employer_filter,
+                    employer_filter=employer_filter,
             sourced_to_filter=sourced_to_filter,
             project_filter=project_filter,
             company_filter=company_filter,
@@ -3655,7 +3710,7 @@ def get_coverage_utilization_summary(db: Session,
             loan_metrics_query,
             params,
             id_karyawan_filter=id_karyawan_filter,
-            employer_filter=employer_filter,
+                    employer_filter=employer_filter,
             sourced_to_filter=sourced_to_filter,
             project_filter=project_filter,
             client_segment_filter=client_segment_filter,
@@ -3683,7 +3738,7 @@ def get_coverage_utilization_summary(db: Session,
             first_borrow_query,
             params,
             id_karyawan_filter=id_karyawan_filter,
-            employer_filter=employer_filter,
+                    employer_filter=employer_filter,
             sourced_to_filter=sourced_to_filter,
             project_filter=project_filter,
             client_segment_filter=client_segment_filter,
@@ -3692,13 +3747,16 @@ def get_coverage_utilization_summary(db: Session,
             company_filter=company_filter,
         )
 
-        if month_filter is not None and year_filter is not None:
-            import calendar
-            start_date = f"{year_filter}-{month_filter:02d}-01"
-            last_day = calendar.monthrange(year_filter, month_filter)[1]
-            end_date = f"{year_filter}-{month_filter:02d}-{last_day:02d}"
-            loan_metrics_query = _append_proses_date_range(loan_metrics_query, params, start_date, end_date)
-            first_borrow_query = _append_proses_date_range(first_borrow_query, params, start_date, end_date)
+        date_bounds = None
+        if start_date and end_date:
+            date_bounds = (start_date, end_date)
+        if date_bounds:
+            loan_metrics_query = _append_proses_date_range(
+                loan_metrics_query, params, date_bounds[0], date_bounds[1]
+            )
+            first_borrow_query = _append_proses_date_range(
+                first_borrow_query, params, date_bounds[0], date_bounds[1]
+            )
 
         employee_row = db.execute(text(employee_count_query), params).fetchone()
         total_eligible_employees = employee_row[0] or 0
@@ -4151,7 +4209,7 @@ def get_coverage_utilization_monthly_summary(db: Session,
         }
 
 
-def get_client_summary(db: Session, month_filter: int = None, year_filter: int = None, loan_type: str = "kasbon",
+def get_client_summary(db: Session, start_date: str = None, end_date: str = None, loan_type: str = "kasbon",
                        client_segment_filter: str = None, product_type_filter: str = None) -> list:
     """Get comprehensive client summary with disbursement and other metrics"""
     
@@ -4161,12 +4219,6 @@ def get_client_summary(db: Session, month_filter: int = None, year_filter: int =
         
         # Build parameters dict for filters (needed for both queries)
         params = {}
-        
-        # Add month and year filters to params
-        if month_filter is not None:
-            params['month'] = month_filter
-        if year_filter is not None:
-            params['year'] = year_filter
         
         # Get employee counts using the exact same approach as coverage utilization
         # For each sourced_to and project combination, we'll run the same query as coverage utilization
@@ -4200,10 +4252,13 @@ def get_client_summary(db: Session, month_filter: int = None, year_filter: int =
         AND emp.keterangan IN {company_filter}
         """
         
-        if month_filter is not None:
-            combinations_query += " AND MONTH(l.proses_date) = :month"
-        if year_filter is not None:
-            combinations_query += " AND YEAR(l.proses_date) = :year"
+        if start_date and end_date:
+            combinations_query = append_date_filters(
+                combinations_query,
+                params,
+                start_date=start_date,
+                end_date=end_date,
+            )
 
         combinations_query = _apply_project_management_filters(
             combinations_query, params, client_segment_filter, product_type_filter
@@ -4271,12 +4326,13 @@ def get_client_summary(db: Session, month_filter: int = None, year_filter: int =
             client_summary_query, params, client_segment_filter, product_type_filter
         )
         
-        # Add month and year filters to the main query (params already defined above)
-        if month_filter is not None:
-            client_summary_query += " AND MONTH(l.proses_date) = :month"
-            
-        if year_filter is not None:
-            client_summary_query += " AND YEAR(l.proses_date) = :year"
+        if start_date and end_date:
+            client_summary_query = append_date_filters(
+                client_summary_query,
+                params,
+                start_date=start_date,
+                end_date=end_date,
+            )
         
         # Group by sourced_to and project
         client_summary_query += """

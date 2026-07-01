@@ -108,6 +108,18 @@ class SummaryMonthlyResponse(BaseModel):
 class FilterOption(BaseModel):
     option_id: str
     option_name: str
+    category_id: Optional[str] = None
+    category_name: Optional[str] = None
+    is_aggregate: Optional[bool] = None
+
+    class Config:
+        from_attributes = True
+
+
+class ClientSegmentGroup(BaseModel):
+    category_id: str
+    category_name: str
+    options: List[FilterOption]
 
     class Config:
         from_attributes = True

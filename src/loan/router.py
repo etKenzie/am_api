@@ -15,6 +15,7 @@ except ImportError:
 router = APIRouter(prefix="/loan", tags=["loan"])
 
 
+
 @router.get("/karyawan", response_model=schemas.KaryawanEnhancedListResponse)
 async def get_karyawan(
     id_karyawan: int = None,
@@ -58,8 +59,8 @@ async def get_karyawan(
 
 @router.get("/client-summary")
 async def get_client_summary(
-    month: int = None,
-    year: int = None,
+    start_date: str = None,
+    end_date: str = None,
     loan_type: str = "loan",
     client_segment: str = None,
     product_type: str = None,
@@ -69,8 +70,8 @@ async def get_client_summary(
     try:
         client_summaries = crud.get_client_summary(
             db, 
-            month_filter=month,
-            year_filter=year,
+            start_date=start_date,
+            end_date=end_date,
             loan_type=loan_type,
             client_segment_filter=client_segment,
             product_type_filter=product_type,
@@ -92,8 +93,8 @@ async def get_client_summary(
 
 @router.get("/summary", response_model=schemas.SummaryResponse)
 async def get_summary(
-    month: int,
-    year: int,
+    start_date: str = None,
+    end_date: str = None,
     id_karyawan: int = None,
     employer: str = None, 
     sourced_to: str = None, 
@@ -112,8 +113,8 @@ async def get_summary(
             project_filter=project,
             client_segment_filter=client_segment,
             product_type_filter=product_type,
-            month_filter=month,
-            year_filter=year
+            start_date=start_date,
+            end_date=end_date,
         )
         
         # Return structured response
@@ -155,8 +156,8 @@ async def get_summary(
 
 @router.get("/requests", response_model=schemas.RequestsResponse)
 async def get_requests(
-    month: int = None,
-    year: int = None,
+    start_date: str = None,
+    end_date: str = None,
     id_karyawan: int = None,
     employer: str = None, 
     sourced_to: str = None, 
@@ -175,8 +176,8 @@ async def get_requests(
             project_filter=project,
             client_segment_filter=client_segment,
             product_type_filter=product_type,
-            month_filter=month,
-            year_filter=year
+            start_date=start_date,
+            end_date=end_date,
         )
         
         # Return structured response
@@ -202,8 +203,8 @@ async def get_requests(
 
 @router.get("/disbursement", response_model=schemas.DisbursementResponse)
 async def get_disbursement(
-    month: int = None,
-    year: int = None,
+    start_date: str = None,
+    end_date: str = None,
     id_karyawan: int = None,
     employer: str = None, 
     sourced_to: str = None, 
@@ -222,8 +223,8 @@ async def get_disbursement(
             project_filter=project,
             client_segment_filter=client_segment,
             product_type_filter=product_type,
-            month_filter=month,
-            year_filter=year
+            start_date=start_date,
+            end_date=end_date,
         )
         
         # Return structured response
@@ -366,6 +367,7 @@ async def get_loans(
 
 @router.get("/loan-purpose", response_model=schemas.LoanPurposeSummaryListResponse)
 async def get_loan_purpose_summary(
+    loan_type: str = "loan",
     employer: str = None, 
     sourced_to: str = None, 
     project: str = None,
@@ -373,8 +375,8 @@ async def get_loan_purpose_summary(
     product_type: str = None,
     loan_status: int = None,
     id_karyawan: int = None,
-    month: int = None,
-    year: int = None,
+    start_date: str = None,
+    end_date: str = None,
     db: Session = Depends(get_db)
 ):
     """Get loan summary grouped by purpose with total count and sum of total_loan"""
@@ -382,6 +384,7 @@ async def get_loan_purpose_summary(
     try:
         purpose_summary = crud.get_loan_purpose_summary(
             db, 
+            loan_type=loan_type,
             employer_filter=employer,
             sourced_to_filter=sourced_to,
             project_filter=project,
@@ -389,8 +392,8 @@ async def get_loan_purpose_summary(
             product_type_filter=product_type,
             loan_status_filter=loan_status,
             id_karyawan_filter=id_karyawan,
-            month_filter=month,
-            year_filter=year
+            start_date=start_date,
+            end_date=end_date,
         )
         
         
@@ -448,8 +451,8 @@ async def get_loan_fees(
     product_type: str = None,
     loan_status: int = None,
     id_karyawan: int = None,
-    month: int = None,
-    year: int = None,
+    start_date: str = None,
+    end_date: str = None,
     db: Session = Depends(get_db)
 ):
     """Get loan fees summary (total expected and collected admin fees)"""
@@ -464,8 +467,8 @@ async def get_loan_fees(
             product_type_filter=product_type,
             loan_status_filter=loan_status,
             id_karyawan_filter=id_karyawan,
-            month_filter=month,
-            year_filter=year
+            start_date=start_date,
+            end_date=end_date,
         )
         
         
@@ -551,8 +554,8 @@ async def get_loan_risk(
     product_type: str = None,
     loan_status: int = None,
     id_karyawan: int = None,
-    month: int = None,
-    year: int = None,
+    start_date: str = None,
+    end_date: str = None,
     db: Session = Depends(get_db)
 ):
     """Get loan risk summary with various risk metrics"""
@@ -567,8 +570,8 @@ async def get_loan_risk(
             product_type_filter=product_type,
             loan_status_filter=loan_status,
             id_karyawan_filter=id_karyawan,
-            month_filter=month,
-            year_filter=year
+            start_date=start_date,
+            end_date=end_date,
         )
         
         
@@ -650,8 +653,8 @@ async def get_karyawan_overdue(
     product_type: str = None,
     loan_status: int = None,
     id_karyawan: int = None,
-    month: int = None,
-    year: int = None,
+    start_date: str = None,
+    end_date: str = None,
     loan_type: str = "loan",
     db: Session = Depends(get_db)
 ):
@@ -667,8 +670,8 @@ async def get_karyawan_overdue(
             product_type_filter=product_type,
             loan_status_filter=loan_status,
             id_karyawan_filter=id_karyawan,
-            month_filter=month,
-            year_filter=year,
+            start_date=start_date,
+            end_date=end_date,
             loan_type=loan_type
         )
         
@@ -691,8 +694,8 @@ async def get_karyawan_overdue(
 
 @router.get("/repayment-risk")
 async def get_repayment_risk(
-    month: int = None,
-    year: int = None,
+    start_date: str = None,
+    end_date: str = None,
     employer: str = None, 
     sourced_to: str = None, 
     project: str = None,
@@ -715,8 +718,8 @@ async def get_repayment_risk(
             product_type_filter=product_type,
             loan_status_filter=loan_status,
             id_karyawan_filter=id_karyawan,
-            month_filter=month,
-            year_filter=year,
+            start_date=start_date,
+            end_date=end_date,
             loan_type=loan_type
         )
         
@@ -799,8 +802,8 @@ async def get_repayment_risk_monthly(
 
 @router.get("/coverage-utilization")
 async def get_coverage_utilization(
-    month: int = None,
-    year: int = None,
+    start_date: str = None,
+    end_date: str = None,
     employer: str = None, 
     sourced_to: str = None, 
     project: str = None,
@@ -823,8 +826,8 @@ async def get_coverage_utilization(
             product_type_filter=product_type,
             loan_status_filter=loan_status,
             id_karyawan_filter=id_karyawan,
-            month_filter=month,
-            year_filter=year,
+            start_date=start_date,
+            end_date=end_date,
             loan_type=loan_type
         )
         

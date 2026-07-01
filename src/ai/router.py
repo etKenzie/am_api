@@ -1,5 +1,6 @@
 import asyncio
 import json
+import logging
 import os
 import shutil
 import tempfile
@@ -13,11 +14,13 @@ from .resume_scorer import score_resume, score_resume_file, enhance_job_requirem
 from .interview_scorer import InterviewQAItem, score_interview
 from .interview_zip import process_interview_zip, process_interview_zip_from_url
 from .transcribe import ALLOWED_EXTENSIONS, resolve_media_source, save_upload_to_temp, transcribe_file
+from .heygen import HeyGenAPIError, generate_avatar_video, get_video_status
 
 # Load environment variables
 load_dotenv()
 
 router = APIRouter(prefix="/ai", tags=["AI"])
+logger = logging.getLogger(__name__)
 
 
 async def _optional_upload_file(request: Request) -> Optional[UploadFile]:
@@ -235,6 +238,65 @@ class ProcessInterviewZipResponse(BaseModel):
     message: str
 
 
+class TextToSpeechRequest(BaseModel):
+    """Request body for POST /ai/text-to-speech (HeyGen avatar video)."""
+
+    script: str = Field(
+        ...,
+        min_length=1,
+        description="Indonesian script text for the avatar to speak.",
+        examples=[
+            (
+                "Ceritakan pengalaman Anda memimpin sebuah proyek. "
+                "Apa tantangan terbesar yang pernah Anda hadapi, dan bagaimana Anda mengatasinya?"
+            )
+        ],
+    )
+    title: Optional[str] = Field(
+        None,
+        description="Optional video title shown in HeyGen.",
+        examples=["Interview Question — Indonesian"],
+    )
+    avatar_id: Optional[str] = Field(
+        None,
+        description="HeyGen avatar look ID. Defaults to HEYGEN_AVATAR_ID or Maya.",
+    )
+    voice_id: Optional[str] = Field(
+        None,
+        description="HeyGen voice ID. Defaults to HEYGEN_VOICE_ID or Gadis.",
+    )
+    aspect_ratio: str = Field("16:9", description='Video aspect ratio, e.g. "16:9" or "9:16".')
+    resolution: str = Field("1080p", description='Output resolution, e.g. "1080p".')
+    engine_type: Optional[str] = Field(
+        None,
+        description='Optional engine override: "avatar_iv", "avatar_v", "avatar_iii".',
+    )
+    voice_locale: str = Field("id-ID", description="BCP-47 locale hint for the voice.")
+    auto_resolve_defaults: bool = Field(
+        False,
+        description="When true, pick avatar/voice from HeyGen public catalog.",
+    )
+    wait_for_completion: bool = Field(
+        True,
+        description="Poll HeyGen until the video is ready (may take several minutes).",
+    )
+
+
+class TextToSpeechResponse(BaseModel):
+    success: bool
+    video_id: Optional[str] = None
+    status: Optional[str] = None
+    video_url: Optional[str] = None
+    thumbnail_url: Optional[str] = None
+    duration: Optional[float] = None
+    avatar_id: Optional[str] = None
+    voice_id: Optional[str] = None
+    avatar_name: Optional[str] = None
+    voice_name: Optional[str] = None
+    error: Optional[str] = None
+    message: str
+
+
 @router.post("/score-resume", response_model=ResumeScoringResponse)
 async def score_resume_endpoint(
     resume_text: str = Form(..., description="Resume text"),
@@ -379,6 +441,7 @@ async def root():
             "transcribe": "/ai/transcribe",
             "process_interview_zip": "/ai/process-interview-zip",
             "score_interview": "/ai/score-interview",
+            "text_to_speech": "/ai/text-to-speech",
             "docs": "/docs"
         }
     }
@@ -535,6 +598,89 @@ async def transcribe_audio(
     finally:
         if temp_file_path and os.path.exists(temp_file_path):
             os.unlink(temp_file_path)
+
+
+@router.post("/text-to-speech", response_model=TextToSpeechResponse)
+async def text_to_speech_endpoint(request: TextToSpeechRequest) -> TextToSpeechResponse:
+    """
+    Generate a short Indonesian interview-question video via HeyGen v3.
+
+    Requires `HEYGEN_API_KEY` in environment. By default uses Maya avatar + Gadis voice.
+    Set `wait_for_completion=false` to return immediately with a `video_id`, then poll
+    `GET /ai/text-to-speech/{video_id}` for status.
+    """
+    timeout = float(os.getenv("HEYGEN_POLL_TIMEOUT", "600")) + 30 if request.wait_for_completion else 90
+    logger.info(
+        "text-to-speech request (wait=%s, script_len=%d)",
+        request.wait_for_completion,
+        len(request.script),
+    )
+    try:
+        result = await asyncio.wait_for(
+            asyncio.to_thread(
+                generate_avatar_video,
+                script=request.script,
+                title=request.title,
+                avatar_id=request.avatar_id,
+                voice_id=request.voice_id,
+                aspect_ratio=request.aspect_ratio,
+                resolution=request.resolution,
+                engine_type=request.engine_type,
+                voice_locale=request.voice_locale,
+                auto_resolve_defaults=request.auto_resolve_defaults,
+                wait_for_completion=request.wait_for_completion,
+            ),
+            timeout=timeout,
+        )
+        message = (
+            "Video berhasil dibuat"
+            if result.get("status") == "completed"
+            else "Video sedang diproses"
+        )
+        logger.info("text-to-speech done video_id=%s status=%s", result.get("video_id"), result.get("status"))
+        return TextToSpeechResponse(success=True, message=message, **result)
+    except asyncio.TimeoutError:
+        logger.error("text-to-speech timed out after %ss (wait=%s)", timeout, request.wait_for_completion)
+        return TextToSpeechResponse(
+            success=False,
+            error=f"Request timed out after {timeout:.0f}s",
+            message="Gagal membuat video",
+        )
+    except (HeyGenAPIError, ValueError) as exc:
+        logger.error("text-to-speech error: %s", exc)
+        return TextToSpeechResponse(success=False, error=str(exc), message="Gagal membuat video")
+    except Exception as exc:
+        logger.error("text-to-speech unexpected error: %s", exc)
+        return TextToSpeechResponse(
+            success=False,
+            error=str(exc),
+            message="Gagal membuat video",
+        )
+
+
+@router.get("/text-to-speech/{video_id}", response_model=TextToSpeechResponse)
+async def text_to_speech_status_endpoint(video_id: str) -> TextToSpeechResponse:
+    """Check HeyGen video generation status by video ID."""
+    try:
+        result = await asyncio.to_thread(get_video_status, video_id)
+        status = result.get("status")
+        if status == "failed":
+            return TextToSpeechResponse(
+                success=False,
+                message="Video gagal dibuat",
+                error=result.get("failure_message") or "Video generation failed",
+                **{k: v for k, v in result.items() if k in TextToSpeechResponse.model_fields},
+            )
+        message = "Video selesai" if status == "completed" else "Video sedang diproses"
+        return TextToSpeechResponse(success=True, message=message, **result)
+    except (HeyGenAPIError, ValueError) as exc:
+        return TextToSpeechResponse(success=False, error=str(exc), message="Gagal mengambil status video")
+    except Exception as exc:
+        return TextToSpeechResponse(
+            success=False,
+            error=str(exc),
+            message="Gagal mengambil status video",
+        )
 
 
 @router.get("/test-agents")
