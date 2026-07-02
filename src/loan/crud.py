@@ -185,10 +185,16 @@ def _empty_client_segment_group(category_id: str, category_name: str) -> dict:
 
 
 def _client_segment_codes_in_category_sql(category: str) -> str:
+    """Resolve leaf segment kode_gmc values for a BFSI / Non-BFSI category."""
     if category == "bfsi":
-        parent_match = """
+        segment_match = """
             (
-                LOWER(parent.kode_gmc) = 'bfsi'
+                LOWER(TRIM(child.keterangan)) LIKE 'bfsi%'
+                OR (
+                    LOWER(child.keterangan) LIKE '%bfsi%'
+                    AND LOWER(child.keterangan) NOT LIKE '%non%'
+                )
+                OR LOWER(parent.kode_gmc) = 'bfsi'
                 OR LOWER(parent.keterangan) = 'bfsi'
                 OR (
                     LOWER(parent.keterangan) LIKE '%bfsi%'
@@ -197,9 +203,12 @@ def _client_segment_codes_in_category_sql(category: str) -> str:
             )
         """
     else:
-        parent_match = """
+        segment_match = """
             (
-                LOWER(parent.kode_gmc) IN ('non_bfsi', 'non-bfsi')
+                LOWER(TRIM(child.keterangan)) LIKE 'non bfsi%'
+                OR LOWER(TRIM(child.keterangan)) LIKE 'non-bfsi%'
+                OR LOWER(TRIM(child.keterangan)) LIKE 'non_bfsi%'
+                OR LOWER(parent.kode_gmc) IN ('non_bfsi', 'non-bfsi')
                 OR LOWER(parent.keterangan) LIKE '%non%bfsi%'
                 OR LOWER(parent.keterangan) LIKE '%non-bfsi%'
                 OR LOWER(parent.keterangan) = 'non bfsi'
@@ -208,15 +217,58 @@ def _client_segment_codes_in_category_sql(category: str) -> str:
     return f"""
         SELECT child.kode_gmc
         FROM tbl_gmc child
-        INNER JOIN tbl_gmc parent
+        LEFT JOIN tbl_gmc parent
             ON parent.kode_gmc = child.keterangan2
             AND parent.group_gmc = 'segment'
             AND parent.aktif = 'Yes'
         WHERE child.group_gmc = 'segment'
           AND child.keterangan3 = 1
           AND child.aktif = 'Yes'
-          AND {parent_match}
+          AND {segment_match}
     """
+
+
+def _is_all_bfsi_segment(value: str) -> bool:
+    """True when filter means the full BFSI category (not a single child like BFSI Bank)."""
+    raw = value.strip()
+    if not raw:
+        return False
+    key = raw.lower().replace("-", "_").replace(" ", "_")
+    if key in (CLIENT_SEGMENT_ALL_BFSI, "all_bfsi", "bfsi"):
+        return True
+    return raw.lower().replace("-", " ") == "all bfsi"
+
+
+def _is_all_non_bfsi_segment(value: str) -> bool:
+    """True when filter means the full Non-BFSI category (not a single child segment)."""
+    raw = value.strip()
+    if not raw:
+        return False
+    key = raw.lower().replace("-", "_").replace(" ", "_")
+    if key in (CLIENT_SEGMENT_ALL_NON_BFSI, "all_non_bfsi", "non_bfsi"):
+        return True
+    return raw.lower().replace("-", " ") == "all non bfsi"
+
+
+def _parse_csv_filter_values(value: str | None) -> list[str]:
+    """Split comma-separated filter input into trimmed non-empty values."""
+    if not value:
+        return []
+    return [part.strip() for part in value.split(",") if part.strip()]
+
+
+def _client_segment_filter_sql(
+    segment: str,
+    params: dict,
+    param_key: str,
+) -> str | None:
+    """Build one SQL predicate for a single client segment filter value."""
+    if _is_all_bfsi_segment(segment):
+        return f"tpm.client_segment IN ({_client_segment_codes_in_category_sql('bfsi')})"
+    if _is_all_non_bfsi_segment(segment):
+        return f"tpm.client_segment IN ({_client_segment_codes_in_category_sql('non_bfsi')})"
+    params[param_key] = segment
+    return f"tpm.client_segment = :{param_key}"
 
 
 def _inject_project_management_join(
@@ -252,13 +304,20 @@ def _apply_project_management_filters(
         product_type_filter,
         force_left_join=force_left_join,
     )
-    if client_segment_filter == CLIENT_SEGMENT_ALL_BFSI:
-        query += f" AND tpm.client_segment IN ({_client_segment_codes_in_category_sql('bfsi')})"
-    elif client_segment_filter == CLIENT_SEGMENT_ALL_NON_BFSI:
-        query += f" AND tpm.client_segment IN ({_client_segment_codes_in_category_sql('non_bfsi')})"
-    elif client_segment_filter:
-        query += " AND tpm.client_segment = :client_segment"
-        params["client_segment"] = client_segment_filter
+    if client_segment_filter:
+        segment_conditions = []
+        for index, segment in enumerate(_parse_csv_filter_values(client_segment_filter)):
+            condition = _client_segment_filter_sql(
+                segment,
+                params,
+                f"client_segment_{index}",
+            )
+            if condition:
+                segment_conditions.append(condition)
+        if len(segment_conditions) == 1:
+            query += f" AND {segment_conditions[0]}"
+        elif len(segment_conditions) > 1:
+            query += " AND (" + " OR ".join(segment_conditions) + ")"
     if product_type_filter:
         query += " AND tpm.product_type = :product_type"
         params["product_type"] = product_type_filter
@@ -277,6 +336,10 @@ def _build_client_segment_filter_options(rows: list) -> dict:
         normalized_id, normalized_name = _normalize_client_segment_category(
             category_id, category_name
         )
+        if not normalized_id:
+            normalized_id, normalized_name = _normalize_client_segment_category(
+                "", option_name
+            )
         option = {
             "option_id": option_id,
             "option_name": option_name,
