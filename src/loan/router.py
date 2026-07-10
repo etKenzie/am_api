@@ -21,7 +21,9 @@ async def get_karyawan(
     id_karyawan: int = None,
     employer: str = None, 
     sourced_to: str = None, 
-    project: str = None, 
+    project: str = None,
+    client_segment: str = None,
+    product_type: str = None,
     db: Session = Depends(get_db)
 ):
     """Get enhanced karyawan data with join to tbl_gmc table and multiple filters"""
@@ -32,7 +34,9 @@ async def get_karyawan(
             id_karyawan_filter=id_karyawan,
             employer_filter=employer,
             sourced_to_filter=sourced_to,
-            project_filter=project
+            project_filter=project,
+            client_segment_filter=client_segment,
+            product_type_filter=product_type,
         )
         
 
@@ -293,7 +297,9 @@ async def get_summary_monthly(
     id_karyawan: int = None,
     employer: str = None, 
     sourced_to: str = None, 
-    project: str = None, 
+    project: str = None,
+    client_segment: str = None,
+    product_type: str = None,
     db: Session = Depends(get_db)
 ):
     """Get loan summary monthly data with eligible count and loan request metrics"""
@@ -306,7 +312,9 @@ async def get_summary_monthly(
             id_karyawan_filter=id_karyawan,
             employer_filter=employer,
             sourced_to_filter=sourced_to,
-            project_filter=project
+            project_filter=project,
+            client_segment_filter=client_segment,
+            product_type_filter=product_type,
         )
         
         
