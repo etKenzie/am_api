@@ -26,7 +26,16 @@ INSTALLMENT_LOAN_CONDITIONS = (
 )
 
 ALL_LOAN_TYPES = ("kasbon", "extradana", "aku_cicil")
-COMPANY_FILTER = "('PT Valdo Sumber Daya Mandiri', 'PT Valdo International', 'PT Toko Pandai')"
+ALLOWED_COMPANIES = (
+    "PT Valdo Sumber Daya Mandiri",
+    "PT Valdo International",
+    "PT Toko Pandai",
+    "PT Valdo Solusi Integra",
+)
+COMPANY_FILTER = (
+    "('PT Valdo Sumber Daya Mandiri', 'PT Valdo International', "
+    "'PT Toko Pandai', 'PT Valdo Solusi Integra')"
+)
 
 _cached_aku_cicil_id_list: Optional[str] = None
 
@@ -488,11 +497,7 @@ def _append_loan_org_filters(
     if id_karyawan_filter:
         query += f" AND {loan_prefix}.id_karyawan = :id_karyawan"
         params["id_karyawan"] = id_karyawan_filter
-    if employer_filter and employer_filter in [
-        "PT Valdo Sumber Daya Mandiri",
-        "PT Valdo International",
-        "PT Toko Pandai",
-    ]:
+    if employer_filter and employer_filter in ALLOWED_COMPANIES:
         query += " AND emp.keterangan = :employer"
         params["employer"] = employer_filter
     if sourced_to_filter:
@@ -531,11 +536,7 @@ def _append_karyawan_org_filters(
     if id_karyawan_filter:
         query += " AND tk.id_karyawan = :id_karyawan"
         params["id_karyawan"] = id_karyawan_filter
-    if employer_filter and employer_filter in [
-        "PT Valdo Sumber Daya Mandiri",
-        "PT Valdo International",
-        "PT Toko Pandai",
-    ]:
+    if employer_filter and employer_filter in ALLOWED_COMPANIES:
         query += " AND emp.keterangan = :employer"
         params["employer"] = employer_filter
     if sourced_to_filter:
@@ -1867,15 +1868,7 @@ def get_available_filter_values(db: Session, employer_filter: str = None, placem
     
     try:
         # Get employers (sub_client) - conditional based on loan type
-        if loan_type == "extradana":
-            # For extradana, include all three companies (based on the example query)
-            company_filter = "('PT Valdo Sumber Daya Mandiri', 'PT Valdo International', 'PT Toko Pandai')"
-        elif loan_type == "aku_cicil":
-            # For aku_cicil, include all three companies
-            company_filter = "('PT Valdo Sumber Daya Mandiri', 'PT Valdo International', 'PT Toko Pandai')"
-        else:
-            # For loan, include all three companies
-            company_filter = "('PT Valdo Sumber Daya Mandiri', 'PT Valdo International', 'PT Toko Pandai')"
+        company_filter = COMPANY_FILTER
             
         employer_query = f"""
         SELECT DISTINCT keterangan 
@@ -2564,11 +2557,11 @@ def get_karyawan_overdue_summary(db: Session,
             params['id_karyawan'] = id_karyawan_filter
             
         # Restrict to only PT Valdo companies
-        company_filter = "('PT Valdo Sumber Daya Mandiri', 'PT Valdo International', 'PT Toko Pandai')"
+        company_filter = COMPANY_FILTER
         overdue_query += f" AND emp.keterangan IN {company_filter}"
         
         # If employer_filter is provided and it's one of the allowed companies, filter further
-        if employer_filter and employer_filter in ['PT Valdo Sumber Daya Mandiri', 'PT Valdo International', 'PT Toko Pandai']:
+        if employer_filter and employer_filter in ALLOWED_COMPANIES:
             overdue_query += " AND emp.keterangan = :employer"
             params['employer'] = employer_filter
             
@@ -2826,10 +2819,10 @@ def get_total_admin_fee_collected(db: Session,
             admin_fee_collected_query += " AND l.id_karyawan = :id_karyawan"
             params['id_karyawan'] = id_karyawan_filter
 
-        company_filter = "('PT Valdo Sumber Daya Mandiri', 'PT Valdo International', 'PT Toko Pandai')"
+        company_filter = COMPANY_FILTER
         admin_fee_collected_query += f" AND emp.keterangan IN {company_filter}"
 
-        if employer_filter and employer_filter in ['PT Valdo Sumber Daya Mandiri', 'PT Valdo International', 'PT Toko Pandai']:
+        if employer_filter and employer_filter in ALLOWED_COMPANIES:
             admin_fee_collected_query += " AND emp.keterangan = :employer"
             params['employer'] = employer_filter
 
@@ -2951,20 +2944,12 @@ def get_total_loan_principal_collected(db: Session,
             params['id_karyawan'] = id_karyawan_filter
             
         # Restrict to only PT Valdo companies (conditional based on loan type)
-        if loan_type == "extradana":
-            # For extradana, include all three companies (based on the example query)
-            company_filter = "('PT Valdo Sumber Daya Mandiri', 'PT Valdo International', 'PT Toko Pandai')"
-        elif loan_type == "aku_cicil":
-            # For aku_cicil, include all three companies
-            company_filter = "('PT Valdo Sumber Daya Mandiri', 'PT Valdo International', 'PT Toko Pandai')"
-        else:
-            # For loan, include all three companies
-            company_filter = "('PT Valdo Sumber Daya Mandiri', 'PT Valdo International', 'PT Toko Pandai')"
+        company_filter = COMPANY_FILTER
             
         principal_collected_query += f" AND emp.keterangan IN {company_filter}"
         
         # If employer_filter is provided and it's one of the allowed companies, filter further
-        if employer_filter and employer_filter in ['PT Valdo Sumber Daya Mandiri', 'PT Valdo International', 'PT Toko Pandai']:
+        if employer_filter and employer_filter in ALLOWED_COMPANIES:
             principal_collected_query += " AND emp.keterangan = :employer"
             params['employer'] = employer_filter
             
@@ -3091,20 +3076,12 @@ def get_expected_repayment(db: Session,
             params['id_karyawan'] = id_karyawan_filter
             
         # Restrict to only PT Valdo companies (conditional based on loan type)
-        if loan_type == "extradana":
-            # For extradana, include all three companies (based on the example query)
-            company_filter = "('PT Valdo Sumber Daya Mandiri', 'PT Valdo International', 'PT Toko Pandai')"
-        elif loan_type == "aku_cicil":
-            # For aku_cicil, include all three companies
-            company_filter = "('PT Valdo Sumber Daya Mandiri', 'PT Valdo International', 'PT Toko Pandai')"
-        else:
-            # For loan, include all three companies
-            company_filter = "('PT Valdo Sumber Daya Mandiri', 'PT Valdo International', 'PT Toko Pandai')"
+        company_filter = COMPANY_FILTER
             
         expected_repayment_query += f" AND emp.keterangan IN {company_filter}"
         
         # If employer_filter is provided and it's one of the allowed companies, filter further
-        if employer_filter and employer_filter in ['PT Valdo Sumber Daya Mandiri', 'PT Valdo International', 'PT Toko Pandai']:
+        if employer_filter and employer_filter in ALLOWED_COMPANIES:
             expected_repayment_query += " AND emp.keterangan = :employer"
             params['employer'] = employer_filter
             
@@ -3174,9 +3151,7 @@ def get_repayment_risk_summary(db: Session,
 
         loan_conditions = resolve_loan_conditions(loan_type, db)
         params = {}
-        company_filter = (
-            "('PT Valdo Sumber Daya Mandiri', 'PT Valdo International', 'PT Toko Pandai')"
-        )
+        company_filter = COMPANY_FILTER
 
         # extradana / aku_cicil: one history query (was ~5 heavy queries).
         if loan_type in ("extradana", "aku_cicil"):
@@ -3226,11 +3201,7 @@ def get_repayment_risk_summary(db: Session,
 
             risk_query += f" AND emp.keterangan IN {company_filter}"
 
-            if employer_filter and employer_filter in [
-                "PT Valdo Sumber Daya Mandiri",
-                "PT Valdo International",
-                "PT Toko Pandai",
-            ]:
+            if employer_filter and employer_filter in ALLOWED_COMPANIES:
                 risk_query += " AND emp.keterangan = :employer"
                 params["employer"] = employer_filter
 
@@ -3303,11 +3274,7 @@ def get_repayment_risk_summary(db: Session,
 
             risk_query += f" AND emp.keterangan IN {company_filter}"
 
-            if employer_filter and employer_filter in [
-                "PT Valdo Sumber Daya Mandiri",
-                "PT Valdo International",
-                "PT Toko Pandai",
-            ]:
+            if employer_filter and employer_filter in ALLOWED_COMPANIES:
                 risk_query += " AND emp.keterangan = :employer"
                 params["employer"] = employer_filter
 
@@ -3493,20 +3460,12 @@ def get_repayment_risk_monthly_summary(db: Session,
             params['id_karyawan'] = id_karyawan_filter
             
         # Restrict to only PT Valdo companies (conditional based on loan type)
-        if loan_type == "extradana":
-            # For extradana, include all three companies (based on the example query)
-            company_filter = "('PT Valdo Sumber Daya Mandiri', 'PT Valdo International', 'PT Toko Pandai')"
-        elif loan_type == "aku_cicil":
-            # For aku_cicil, include all three companies
-            company_filter = "('PT Valdo Sumber Daya Mandiri', 'PT Valdo International', 'PT Toko Pandai')"
-        else:
-            # For loan, include all three companies
-            company_filter = "('PT Valdo Sumber Daya Mandiri', 'PT Valdo International', 'PT Toko Pandai')"
+        company_filter = COMPANY_FILTER
             
         risk_query += f" AND emp.keterangan IN {company_filter}"
         
         # If employer_filter is provided and it's one of the allowed companies, filter further
-        if employer_filter and employer_filter in ['PT Valdo Sumber Daya Mandiri', 'PT Valdo International', 'PT Toko Pandai']:
+        if employer_filter and employer_filter in ALLOWED_COMPANIES:
             risk_query += " AND emp.keterangan = :employer"
             params['employer'] = employer_filter
             
@@ -3648,20 +3607,12 @@ def get_disbursed_amount(db: Session,
             params['id_karyawan'] = id_karyawan_filter
             
         # Restrict to only PT Valdo companies (conditional based on loan type)
-        if loan_type == "extradana":
-            # For extradana, include all three companies (based on the example query)
-            company_filter = "('PT Valdo Sumber Daya Mandiri', 'PT Valdo International', 'PT Toko Pandai')"
-        elif loan_type == "aku_cicil":
-            # For aku_cicil, include all three companies
-            company_filter = "('PT Valdo Sumber Daya Mandiri', 'PT Valdo International', 'PT Toko Pandai')"
-        else:
-            # For loan, include all three companies
-            company_filter = "('PT Valdo Sumber Daya Mandiri', 'PT Valdo International', 'PT Toko Pandai')"
+        company_filter = COMPANY_FILTER
             
         disbursed_query += f" AND emp.keterangan IN {company_filter}"
         
         # If employer_filter is provided and it's one of the allowed companies, filter further
-        if employer_filter and employer_filter in ['PT Valdo Sumber Daya Mandiri', 'PT Valdo International', 'PT Toko Pandai']:
+        if employer_filter and employer_filter in ALLOWED_COMPANIES:
             disbursed_query += " AND emp.keterangan = :employer"
             params['employer'] = employer_filter
             
@@ -3710,8 +3661,6 @@ def get_coverage_utilization_summary(db: Session,
     """Get comprehensive coverage and utilization summary combining multiple metrics"""
     
     try:
-        loan_conditions = resolve_loan_conditions(loan_type, db)
-        
         company_filter = COMPANY_FILTER
         params = {}
 
@@ -3736,6 +3685,7 @@ def get_coverage_utilization_summary(db: Session,
             db=db,
         )
 
+        # Matches business SQL: company filter + optional proses_date range (no loan_type filter).
         loan_metrics_query = f"""
         SELECT
             COUNT(CASE WHEN l.loan_status IN (1, 2, 3, 4) THEN 1 END),
@@ -3756,7 +3706,7 @@ def get_coverage_utilization_summary(db: Session,
             COALESCE(SUM(CASE WHEN l.loan_status IN (1, 2, 4) THEN l.total_loan ELSE 0 END), 0)
         FROM td_loan l
         {_LOAN_GMC_JOINS}
-        WHERE {loan_conditions}
+        WHERE 1=1
         """
         loan_metrics_query = _append_loan_org_filters(
             loan_metrics_query,
@@ -3783,9 +3733,7 @@ def get_coverage_utilization_summary(db: Session,
             WHERE l2.id_karyawan = l.id_karyawan
             AND l2.loan_status = 2
             AND l2.proses_date < l.proses_date
-            AND {loan_conditions}
         )
-        AND {loan_conditions}
         """
         first_borrow_query = _append_loan_org_filters(
             first_borrow_query,
@@ -4055,16 +4003,8 @@ def get_coverage_utilization_monthly_summary(db: Session,
             first_borrow_query += " AND l.id_karyawan = :id_karyawan"
             params['id_karyawan'] = id_karyawan_filter
             
-        # Restrict to only PT Valdo companies (conditional based on loan type)
-        if loan_type == "extradana":
-            # For extradana, include all three companies (based on the example query)
-            company_filter = "('PT Valdo Sumber Daya Mandiri', 'PT Valdo International', 'PT Toko Pandai')"
-        elif loan_type == "aku_cicil":
-            # For aku_cicil, include all three companies
-            company_filter = "('PT Valdo Sumber Daya Mandiri', 'PT Valdo International', 'PT Toko Pandai')"
-        else:
-            # For loan, include all three companies
-            company_filter = "('PT Valdo Sumber Daya Mandiri', 'PT Valdo International', 'PT Toko Pandai')"
+        # Restrict to allowed Valdo companies
+        company_filter = COMPANY_FILTER
             
         eligible_count_query += f" AND emp.keterangan IN {company_filter}"
         processed_requests_query += f" AND emp.keterangan IN {company_filter}"
@@ -4074,7 +4014,7 @@ def get_coverage_utilization_monthly_summary(db: Session,
         first_borrow_query += f" AND emp.keterangan IN {company_filter}"
         
         # If employer_filter is provided and it's one of the allowed companies, filter further
-        if employer_filter and employer_filter in ['PT Valdo Sumber Daya Mandiri', 'PT Valdo International', 'PT Toko Pandai']:
+        if employer_filter and employer_filter in ALLOWED_COMPANIES:
             eligible_count_query += " AND emp.keterangan = :employer"
             processed_requests_query += " AND emp.keterangan = :employer"
             approved_requests_query += " AND emp.keterangan = :employer"
