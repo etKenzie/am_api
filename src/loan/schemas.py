@@ -351,6 +351,7 @@ class MonthlyCoverageUtilizationData(BaseModel):
     total_loan_requests: int
     total_approved_requests: int
     total_rejected_requests: int
+    total_eligible_employees: Optional[int] = None
     penetration_rate: float
     total_disbursed_amount: int
 

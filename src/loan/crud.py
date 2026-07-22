@@ -548,6 +548,213 @@ def _append_karyawan_org_filters(
     return query
 
 
+def _eligible_date_range(
+    *,
+    start_date: str = None,
+    end_date: str = None,
+    as_of_date: str = None,
+) -> tuple[str, str]:
+    """Resolve YYYY-MM-DD range for eligible snapshot queries."""
+    from datetime import date
+
+    if start_date and end_date:
+        return start_date.strip()[:10], end_date.strip()[:10]
+    if as_of_date:
+        as_of = as_of_date.strip()[:10]
+        try:
+            year, month, _ = as_of.split("-")
+            range_start, range_end = month_bounds(int(month), int(year))
+            return range_start, range_end
+        except ValueError:
+            return as_of, as_of
+    today = date.today()
+    return month_bounds(today.month, today.year)
+
+
+def _month_year_date_range(month_year: str) -> tuple[str, str] | None:
+    """Convert 'March 2026' to (first_day, last_day)."""
+    from datetime import datetime
+    try:
+        dt = datetime.strptime(month_year, "%B %Y")
+        return month_bounds(dt.month, dt.year)
+    except ValueError:
+        return None
+
+
+_TOTAL_ELIGIBLE_SNAPSHOT_SQL = """
+SELECT COALESCE(SUM(total_eligible), 0) AS total_eligible
+FROM (
+    SELECT COUNT(*) AS total_eligible
+    FROM data_record_eligible de
+    WHERE de.snapshot_date BETWEEN :start_date AND :end_date
+      AND (:f_company IS NULL OR de.company = :f_company)
+      AND (:f_sourced_to IS NULL OR de.sourced_to = :f_sourced_to)
+      AND (:f_project IS NULL OR de.project = :f_project)
+      AND (:f_branch IS NULL OR de.branch = :f_branch)
+      AND ({segment_predicate})
+      AND (:f_product IS NULL OR de.product_type = :f_product)
+
+    UNION ALL
+
+    SELECT CAST(dr.value AS UNSIGNED) AS total_eligible
+    FROM data_record dr
+    WHERE dr.parameter = 'loan_eligible_company'
+      AND DATE(dr.created_at) BETWEEN :start_date AND :end_date
+      AND (:f_company IS NULL OR dr.company = :f_company)
+      AND :allow_data_record_fallback = 1
+      AND NOT EXISTS (
+          SELECT 1
+          FROM data_record_eligible
+          WHERE snapshot_date BETWEEN :start_date AND :end_date
+            AND (:f_company IS NULL OR company = :f_company)
+      )
+) x
+"""
+
+
+def _resolve_gmc_code(
+    db: Session,
+    *,
+    value: str = None,
+    group_gmc: str,
+) -> str | None:
+    """
+    Map API filter text (keterangan) to tbl_gmc.kode_gmc for snapshot tables.
+    If value already looks like a raw code (all digits), return it as-is.
+    """
+    if not value:
+        return None
+    value = value.strip()
+    if value.isdigit():
+        return value
+
+    cache = db.info.setdefault("loan_gmc_code_cache", {})
+    cache_key = f"{group_gmc}::{value}"
+    if cache_key in cache:
+        return cache[cache_key]
+
+    row = db.execute(
+        text(
+            """
+            SELECT kode_gmc
+            FROM tbl_gmc
+            WHERE group_gmc = :group_gmc
+              AND aktif = 'Yes'
+              AND keterangan3 = 1
+              AND keterangan = :keterangan
+            LIMIT 1
+            """
+        ),
+        {"group_gmc": group_gmc, "keterangan": value},
+    ).fetchone()
+    code = str(row[0]) if row and row[0] is not None else value
+    cache[cache_key] = code
+    return code
+
+
+def _eligible_segment_predicate(
+    client_segment_filter: str,
+    params: dict,
+    db: Session = None,
+) -> str:
+    """Match other loan endpoints: exact code, or all_bfsi / all_non_bfsi aggregates."""
+    if not client_segment_filter:
+        return "1=1"
+
+    client_segment_filter = client_segment_filter.strip()
+    if client_segment_filter == CLIENT_SEGMENT_ALL_BFSI:
+        category = "bfsi"
+    elif client_segment_filter == CLIENT_SEGMENT_ALL_NON_BFSI:
+        category = "non_bfsi"
+    else:
+        params["f_segment"] = client_segment_filter
+        return "de.client_segment = :f_segment"
+
+    codes = _resolve_aggregate_segment_codes(db, category) if db is not None else []
+    if not codes:
+        return "1=0"
+    placeholders = []
+    for index, code in enumerate(codes):
+        key = f"elig_seg_{category}_{index}"
+        params[key] = code
+        placeholders.append(f":{key}")
+    return f"de.client_segment IN ({', '.join(placeholders)})"
+
+
+def get_total_eligible_employees(
+    db: Session,
+    *,
+    start_date: str = None,
+    end_date: str = None,
+    as_of_date: str = None,
+    employer_filter: str = None,
+    sourced_to_filter: str = None,
+    project_filter: str = None,
+    branch_filter: str = None,
+    client_segment_filter: str = None,
+    product_type_filter: str = None,
+) -> int:
+    """
+    Total eligible from snapshots, using the same filter meanings as other loan endpoints:
+
+    - employer      -> de.company      (tbl_gmc sub_client kode_gmc; API sends keterangan)
+    - sourced_to    -> de.sourced_to  (tbl_gmc placement_client kode_gmc)
+    - project       -> de.project     (tbl_gmc client_project kode_gmc)
+    - client_segment-> de.client_segment (incl. all_bfsi / all_non_bfsi)
+    - product_type  -> de.product_type
+    """
+    try:
+        range_start, range_end = _eligible_date_range(
+            start_date=start_date,
+            end_date=end_date,
+            as_of_date=as_of_date,
+        )
+
+        # de.company stores numeric kode_gmc, while API employer filter is keterangan text.
+        company_filter = _resolve_gmc_code(
+            db, value=employer_filter, group_gmc="sub_client"
+        )
+        sourced_to_code = _resolve_gmc_code(
+            db, value=sourced_to_filter, group_gmc="placement_client"
+        )
+        project_code = _resolve_gmc_code(
+            db, value=project_filter, group_gmc="client_project"
+        )
+
+        params = {
+            "start_date": range_start,
+            "end_date": range_end,
+            "f_company": company_filter,
+            "f_sourced_to": sourced_to_code,
+            "f_project": project_code,
+            "f_branch": branch_filter,
+            "f_product": product_type_filter,
+        }
+        segment_predicate = _eligible_segment_predicate(
+            client_segment_filter, params, db
+        )
+
+        # data_record fallback only supports company (+ date); skip when finer filters used.
+        detail_filters_used = any(
+            [
+                sourced_to_code,
+                project_code,
+                branch_filter,
+                client_segment_filter,
+                product_type_filter,
+            ]
+        )
+        params["allow_data_record_fallback"] = 0 if detail_filters_used else 1
+
+        query = _TOTAL_ELIGIBLE_SNAPSHOT_SQL.format(segment_predicate=segment_predicate)
+        record = db.execute(text(query), params).fetchone()
+        return int(record[0] or 0) if record else 0
+    except Exception:
+        import traceback
+        traceback.print_exc()
+        return 0
+
+
 def _append_proses_date_range(query: str, params: dict, start_date: str, end_date: str) -> str:
     return append_date_filters(
         query,
@@ -4048,10 +4255,9 @@ def get_coverage_utilization_summary(db: Session,
         company_filter = COMPANY_FILTER
         params = {}
 
+        # Active employees still from td_karyawan; eligible from snapshot tables.
         employee_count_query = f"""
-        SELECT
-            SUM(CASE WHEN tk.loan_kasbon_eligible = '1' THEN 1 ELSE 0 END),
-            COUNT(*)
+        SELECT COUNT(*)
         FROM td_karyawan tk
         {_KARYAWAN_GMC_JOINS}
         WHERE tk.status = '1'
@@ -4067,6 +4273,17 @@ def get_coverage_utilization_summary(db: Session,
             product_type_filter=product_type_filter,
             company_filter=company_filter,
             db=db,
+        )
+
+        total_eligible_employees = get_total_eligible_employees(
+            db,
+            start_date=start_date,
+            end_date=end_date,
+            employer_filter=employer_filter,
+            sourced_to_filter=sourced_to_filter,
+            project_filter=project_filter,
+            client_segment_filter=client_segment_filter,
+            product_type_filter=product_type_filter,
         )
 
         # Loan requests by received_date; approved/rejected/disbursed by proses_date.
@@ -4177,8 +4394,7 @@ def get_coverage_utilization_summary(db: Session,
             )
 
         employee_row = db.execute(text(employee_count_query), params).fetchone()
-        total_eligible_employees = employee_row[0] or 0
-        total_active_employees = employee_row[1] or 0
+        total_active_employees = employee_row[0] or 0
 
         eligible_rate = (total_eligible_employees / total_active_employees) if total_active_employees > 0 else 0.0
 
@@ -4585,10 +4801,6 @@ def get_coverage_utilization_monthly_summary(db: Session,
         monthly_requests_query += " GROUP BY DATE_FORMAT(l.received_date, '%M %Y') ORDER BY MIN(l.received_date)"
         monthly_proses_query += " GROUP BY DATE_FORMAT(l.proses_date, '%M %Y') ORDER BY MIN(l.proses_date)"
         monthly_first_borrow_query += " GROUP BY DATE_FORMAT(l.proses_date, '%M %Y') ORDER BY MIN(l.proses_date)"
-
-        eligible_count_query = _apply_project_management_filters(
-            eligible_count_query, params, client_segment_filter, product_type_filter, db=db
-        )
         
         monthly_requests_result = db.execute(text(monthly_requests_query), params)
         monthly_proses_result = db.execute(text(monthly_proses_query), params)
@@ -4610,11 +4822,6 @@ def get_coverage_utilization_monthly_summary(db: Session,
             row[0]: row[1] for row in monthly_first_borrow_result.fetchall() if row[0] is not None
         }
         
-        
-        # Get total eligible employees (same for all months)
-        eligible_result = db.execute(text(eligible_count_query), params)
-        total_eligible_employees = eligible_result.fetchone()[0] or 0
-        
         # Combine all monthly data
         monthly_data = {}
         all_months = set(monthly_processed_data.keys()) | set(monthly_approved_data.keys()) | set(monthly_rejected_data.keys()) | set(monthly_disbursed_data.keys()) | set(monthly_first_borrow_data.keys())
@@ -4625,7 +4832,21 @@ def get_coverage_utilization_monthly_summary(db: Session,
             total_rejected_requests = monthly_rejected_data.get(month_year, 0) or 0
             total_disbursed_amount = monthly_disbursed_data.get(month_year, 0) or 0
             total_first_borrow = monthly_first_borrow_data.get(month_year, 0) or 0
-            # Calculate penetration rate
+            month_range = _month_year_date_range(month_year)
+            if month_range:
+                range_start, range_end = month_range
+            else:
+                range_start, range_end = start_date, end_date
+            total_eligible_employees = get_total_eligible_employees(
+                db,
+                start_date=range_start,
+                end_date=range_end,
+                employer_filter=employer_filter,
+                sourced_to_filter=sourced_to_filter,
+                project_filter=project_filter,
+                client_segment_filter=client_segment_filter,
+                product_type_filter=product_type_filter,
+            )
             penetration_rate = 0
             if total_eligible_employees > 0:
                 penetration_rate = total_loan_requests / total_eligible_employees
@@ -4635,6 +4856,7 @@ def get_coverage_utilization_monthly_summary(db: Session,
                 "total_loan_requests": total_loan_requests,
                 "total_approved_requests": total_approved_requests,
                 "total_rejected_requests": total_rejected_requests,
+                "total_eligible_employees": total_eligible_employees,
                 "penetration_rate": penetration_rate,
                 "total_disbursed_amount": total_disbursed_amount
             }
