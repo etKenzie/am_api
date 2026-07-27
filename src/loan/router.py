@@ -19,8 +19,8 @@ router = APIRouter(prefix="/loan", tags=["loan"])
 @router.get("/karyawan", response_model=schemas.KaryawanEnhancedListResponse)
 async def get_karyawan(
     id_karyawan: int = None,
-    employer: str = None, 
-    sourced_to: str = None, 
+    employer: str = None,
+    sourced_to: str = None,
     project: str = None,
     client_segment: str = None,
     product_type: str = None,
@@ -30,7 +30,7 @@ async def get_karyawan(
     try:
 
         karyawan_list = crud.get_enhanced_karyawan(
-            db, 
+            db,
             id_karyawan_filter=id_karyawan,
             employer_filter=employer,
             sourced_to_filter=sourced_to,
@@ -38,9 +38,9 @@ async def get_karyawan(
             client_segment_filter=client_segment,
             product_type_filter=product_type,
         )
-        
 
-        
+
+
         # Return structured response with status and results
         return {
             "status": "success",
@@ -73,14 +73,14 @@ async def get_client_summary(
     """Get comprehensive client summary. Use loan_type=all to combine kasbon, extradana, and aku_cicil."""
     try:
         client_summaries = crud.get_client_summary(
-            db, 
+            db,
             start_date=start_date,
             end_date=end_date,
             loan_type=loan_type,
             client_segment_filter=client_segment,
             product_type_filter=product_type,
         )
-        
+
         return {
             "status": "success",
             "count": len(client_summaries),
@@ -100,8 +100,8 @@ async def get_summary(
     start_date: str = None,
     end_date: str = None,
     id_karyawan: int = None,
-    employer: str = None, 
-    sourced_to: str = None, 
+    employer: str = None,
+    sourced_to: str = None,
     project: str = None,
     client_segment: str = None,
     product_type: str = None,
@@ -110,7 +110,7 @@ async def get_summary(
     """Get loan summary with eligible count and loan request metrics"""
     try:
         coverage_summary = crud.get_user_coverage_summary(
-            db, 
+            db,
             id_karyawan_filter=id_karyawan,
             employer_filter=employer,
             sourced_to_filter=sourced_to,
@@ -120,7 +120,7 @@ async def get_summary(
             start_date=start_date,
             end_date=end_date,
         )
-        
+
         # Return structured response
         return {
             "status": "success",
@@ -163,8 +163,8 @@ async def get_requests(
     start_date: str = None,
     end_date: str = None,
     id_karyawan: int = None,
-    employer: str = None, 
-    sourced_to: str = None, 
+    employer: str = None,
+    sourced_to: str = None,
     project: str = None,
     client_segment: str = None,
     product_type: str = None,
@@ -173,7 +173,7 @@ async def get_requests(
     """Get requests metrics: total_approved_requests, total_rejected_requests, approval_rate, average_approval_time"""
     try:
         requests_data = crud.get_requests_endpoint(
-            db, 
+            db,
             id_karyawan_filter=id_karyawan,
             employer_filter=employer,
             sourced_to_filter=sourced_to,
@@ -183,7 +183,7 @@ async def get_requests(
             start_date=start_date,
             end_date=end_date,
         )
-        
+
         # Return structured response
         return {
             "status": "success",
@@ -210,8 +210,8 @@ async def get_disbursement(
     start_date: str = None,
     end_date: str = None,
     id_karyawan: int = None,
-    employer: str = None, 
-    sourced_to: str = None, 
+    employer: str = None,
+    sourced_to: str = None,
     project: str = None,
     client_segment: str = None,
     product_type: str = None,
@@ -220,7 +220,7 @@ async def get_disbursement(
     """Get disbursement metrics: total_disbursed_amount, average_disbursed_amount"""
     try:
         disbursement_data = crud.get_disbursement_endpoint(
-            db, 
+            db,
             id_karyawan_filter=id_karyawan,
             employer_filter=employer,
             sourced_to_filter=sourced_to,
@@ -230,7 +230,7 @@ async def get_disbursement(
             start_date=start_date,
             end_date=end_date,
         )
-        
+
         # Return structured response
         return {
             "status": "success",
@@ -253,18 +253,18 @@ async def get_disbursement_monthly(
     start_date: str,
     end_date: str,
     id_karyawan: int = None,
-    employer: str = None, 
-    sourced_to: str = None, 
+    employer: str = None,
+    sourced_to: str = None,
     project: str = None,
     client_segment: str = None,
     product_type: str = None,
     db: Session = Depends(get_db)
 ):
     """Get disbursement monthly data: total disbursed amount and average disbursed amount by month"""
-    
+
     try:
         monthly_disbursement = crud.get_disbursement_monthly_endpoint(
-            db, 
+            db,
             start_date=start_date,
             end_date=end_date,
             id_karyawan_filter=id_karyawan,
@@ -274,8 +274,8 @@ async def get_disbursement_monthly(
             client_segment_filter=client_segment,
             product_type_filter=product_type,
         )
-        
-        
+
+
         # Return structured response
         return {
             "status": "success",
@@ -295,18 +295,18 @@ async def get_summary_monthly(
     start_date: str,
     end_date: str,
     id_karyawan: int = None,
-    employer: str = None, 
-    sourced_to: str = None, 
+    employer: str = None,
+    sourced_to: str = None,
     project: str = None,
     client_segment: str = None,
     product_type: str = None,
     db: Session = Depends(get_db)
 ):
     """Get loan summary monthly data with eligible count and loan request metrics"""
-    
+
     try:
         monthly_coverage = crud.get_user_coverage_monthly_summary(
-            db, 
+            db,
             start_date=start_date,
             end_date=end_date,
             id_karyawan_filter=id_karyawan,
@@ -316,8 +316,8 @@ async def get_summary_monthly(
             client_segment_filter=client_segment,
             product_type_filter=product_type,
         )
-        
-        
+
+
         # Return structured response
         return {
             "status": "success",
@@ -334,8 +334,8 @@ async def get_summary_monthly(
 
 @router.get("/loans", response_model=schemas.LoanListResponse)
 async def get_loans(
-    employer: str = None, 
-    sourced_to: str = None, 
+    employer: str = None,
+    sourced_to: str = None,
     project: str = None,
     client_segment: str = None,
     product_type: str = None,
@@ -346,7 +346,7 @@ async def get_loans(
     """Get loans data with enhanced karyawan information and filters"""
     try:
         loans_list = crud.get_loans_with_karyawan(
-            db, 
+            db,
             employer_filter=employer,
             sourced_to_filter=sourced_to,
             project_filter=project,
@@ -355,8 +355,8 @@ async def get_loans(
             loan_status_filter=loan_status,
             id_karyawan_filter=id_karyawan,
         )
-        
-        
+
+
         # Return structured response with status and results
         return {
             "status": "success",
@@ -376,8 +376,8 @@ async def get_loans(
 @router.get("/loan-purpose", response_model=schemas.LoanPurposeSummaryListResponse)
 async def get_loan_purpose_summary(
     loan_type: str = "loan",
-    employer: str = None, 
-    sourced_to: str = None, 
+    employer: str = None,
+    sourced_to: str = None,
     project: str = None,
     client_segment: str = None,
     product_type: str = None,
@@ -388,10 +388,10 @@ async def get_loan_purpose_summary(
     db: Session = Depends(get_db)
 ):
     """Get loan summary grouped by purpose with total count and sum of total_loan"""
-    
+
     try:
         purpose_summary = crud.get_loan_purpose_summary(
-            db, 
+            db,
             loan_type=loan_type,
             employer_filter=employer,
             sourced_to_filter=sourced_to,
@@ -403,8 +403,8 @@ async def get_loan_purpose_summary(
             start_date=start_date,
             end_date=end_date,
         )
-        
-        
+
+
         # Return structured response
         return {
             "status": "success",
@@ -423,21 +423,21 @@ async def get_loan_purpose_summary(
 
 @router.get("/filters")
 async def get_available_filters(
-    employer: str = None, 
+    employer: str = None,
     placement: str = None,
     loan_type: str = "loan",
     db: Session = Depends(get_db)
 ):
     """Get available filter values. Use loan_type=all to combine kasbon, extradana, and aku_cicil."""
-    
+
     try:
         filter_values = crud.get_available_filter_values(
-            db, 
+            db,
             employer_filter=employer,
             placement_filter=placement,
             loan_type=loan_type
         )
-        
+
         return {
             "status": "success",
             "filters": filter_values
@@ -452,8 +452,8 @@ async def get_available_filters(
 
 @router.get("/loan-fees", response_model=schemas.LoanFeesResponse)
 async def get_loan_fees(
-    employer: str = None, 
-    sourced_to: str = None, 
+    employer: str = None,
+    sourced_to: str = None,
     project: str = None,
     client_segment: str = None,
     product_type: str = None,
@@ -464,10 +464,10 @@ async def get_loan_fees(
     db: Session = Depends(get_db)
 ):
     """Get loan fees summary (total expected and collected admin fees)"""
-    
+
     try:
         fees_summary = crud.get_loan_fees_summary(
-            db, 
+            db,
             employer_filter=employer,
             sourced_to_filter=sourced_to,
             project_filter=project,
@@ -478,8 +478,8 @@ async def get_loan_fees(
             start_date=start_date,
             end_date=end_date,
         )
-        
-        
+
+
         # Return structured response
         return {
             "status": "success",
@@ -508,8 +508,8 @@ async def get_loan_fees(
 async def get_loan_fees_monthly(
     start_date: str,
     end_date: str,
-    employer: str = None, 
-    sourced_to: str = None, 
+    employer: str = None,
+    sourced_to: str = None,
     project: str = None,
     client_segment: str = None,
     product_type: str = None,
@@ -518,15 +518,15 @@ async def get_loan_fees_monthly(
     db: Session = Depends(get_db)
 ):
     """Get loan fees summary separated by months within a date range
-    
+
     Required parameters:
     - start_date: Start date in YYYY-MM-DD format (e.g., "2024-01-01")
     - end_date: End date in YYYY-MM-DD format (e.g., "2024-12-31")
     """
-    
+
     try:
         monthly_fees_summary = crud.get_loan_fees_monthly_summary(
-            db, 
+            db,
             employer_filter=employer,
             sourced_to_filter=sourced_to,
             project_filter=project,
@@ -537,8 +537,8 @@ async def get_loan_fees_monthly(
             start_date=start_date,
             end_date=end_date
         )
-        
-        
+
+
         # Return structured response
         return {
             "status": "success",
@@ -555,8 +555,8 @@ async def get_loan_fees_monthly(
 
 @router.get("/loan-risk", response_model=schemas.LoanRiskResponse)
 async def get_loan_risk(
-    employer: str = None, 
-    sourced_to: str = None, 
+    employer: str = None,
+    sourced_to: str = None,
     project: str = None,
     client_segment: str = None,
     product_type: str = None,
@@ -567,10 +567,10 @@ async def get_loan_risk(
     db: Session = Depends(get_db)
 ):
     """Get loan risk summary with various risk metrics"""
-    
+
     try:
         risk_summary = crud.get_loan_risk_summary(
-            db, 
+            db,
             employer_filter=employer,
             sourced_to_filter=sourced_to,
             project_filter=project,
@@ -581,8 +581,8 @@ async def get_loan_risk(
             start_date=start_date,
             end_date=end_date,
         )
-        
-        
+
+
         # Return structured response
         return {
             "status": "success",
@@ -607,8 +607,8 @@ async def get_loan_risk(
 async def get_loan_risk_monthly(
     start_date: str,
     end_date: str,
-    employer: str = None, 
-    sourced_to: str = None, 
+    employer: str = None,
+    sourced_to: str = None,
     project: str = None,
     client_segment: str = None,
     product_type: str = None,
@@ -617,15 +617,15 @@ async def get_loan_risk_monthly(
     db: Session = Depends(get_db)
 ):
     """Get loan risk summary separated by months within a date range
-    
+
     Required parameters:
     - start_date: Start date in YYYY-MM-DD format (e.g., "2024-01-01")
     - end_date: End date in YYYY-MM-DD format (e.g., "2024-12-31")
     """
-    
+
     try:
         monthly_risk_summary = crud.get_loan_risk_monthly_summary(
-            db, 
+            db,
             employer_filter=employer,
             sourced_to_filter=sourced_to,
             project_filter=project,
@@ -636,8 +636,8 @@ async def get_loan_risk_monthly(
             start_date=start_date,
             end_date=end_date
         )
-        
-        
+
+
         # Return structured response
         return {
             "status": "success",
@@ -654,8 +654,8 @@ async def get_loan_risk_monthly(
 
 @router.get("/karyawan-overdue")
 async def get_karyawan_overdue(
-    employer: str = None, 
-    sourced_to: str = None, 
+    employer: str = None,
+    sourced_to: str = None,
     project: str = None,
     client_segment: str = None,
     product_type: str = None,
@@ -667,10 +667,10 @@ async def get_karyawan_overdue(
     db: Session = Depends(get_db)
 ):
     """Get karyawan with overdue loans. Use loan_type=all to combine kasbon, extradana, and aku_cicil."""
-    
+
     try:
         overdue_list = crud.get_karyawan_overdue_summary(
-            db, 
+            db,
             employer_filter=employer,
             sourced_to_filter=sourced_to,
             project_filter=project,
@@ -682,8 +682,8 @@ async def get_karyawan_overdue(
             end_date=end_date,
             loan_type=loan_type
         )
-        
-        
+
+
         # Return structured response
         return {
             "status": "success",
@@ -704,8 +704,8 @@ async def get_karyawan_overdue(
 async def get_repayment_risk(
     start_date: str = None,
     end_date: str = None,
-    employer: str = None, 
-    sourced_to: str = None, 
+    employer: str = None,
+    sourced_to: str = None,
     project: str = None,
     client_segment: str = None,
     product_type: str = None,
@@ -715,10 +715,10 @@ async def get_repayment_risk(
     db: Session = Depends(get_db)
 ):
     """Get repayment risk summary. Use loan_type=all to combine kasbon, extradana, and aku_cicil."""
-    
+
     try:
         repayment_risk_summary = crud.get_repayment_risk_summary(
-            db, 
+            db,
             employer_filter=employer,
             sourced_to_filter=sourced_to,
             project_filter=project,
@@ -730,8 +730,8 @@ async def get_repayment_risk(
             end_date=end_date,
             loan_type=loan_type
         )
-        
-        
+
+
         # Return structured response
         return {
             "status": "success",
@@ -766,8 +766,8 @@ async def get_repayment_risk(
 async def get_repayment_risk_monthly(
     start_date: str,
     end_date: str,
-    employer: str = None, 
-    sourced_to: str = None, 
+    employer: str = None,
+    sourced_to: str = None,
     project: str = None,
     client_segment: str = None,
     product_type: str = None,
@@ -777,10 +777,10 @@ async def get_repayment_risk_monthly(
     db: Session = Depends(get_db)
 ):
     """Get monthly repayment risk. Use loan_type=all to combine kasbon, extradana, and aku_cicil."""
-    
+
     try:
         monthly_repayment_risk_summary = crud.get_repayment_risk_monthly_summary(
-            db, 
+            db,
             employer_filter=employer,
             sourced_to_filter=sourced_to,
             project_filter=project,
@@ -792,8 +792,8 @@ async def get_repayment_risk_monthly(
             end_date=end_date,
             loan_type=loan_type
         )
-        
-        
+
+
         # Return structured response
         return {
             "status": "success",
@@ -812,8 +812,8 @@ async def get_repayment_risk_monthly(
 async def get_coverage_utilization(
     start_date: str = None,
     end_date: str = None,
-    employer: str = None, 
-    sourced_to: str = None, 
+    employer: str = None,
+    sourced_to: str = None,
     project: str = None,
     client_segment: str = None,
     product_type: str = None,
@@ -823,10 +823,10 @@ async def get_coverage_utilization(
     db: Session = Depends(get_db)
 ):
     """Get coverage and utilization summary. Use loan_type=all to combine kasbon, extradana, and aku_cicil."""
-    
+
     try:
         coverage_utilization_summary = crud.get_coverage_utilization_summary(
-            db, 
+            db,
             employer_filter=employer,
             sourced_to_filter=sourced_to,
             project_filter=project,
@@ -838,23 +838,24 @@ async def get_coverage_utilization(
             end_date=end_date,
             loan_type=loan_type
         )
-        
-        
+
+
         # Return structured response
         return {
             "status": "success",
             "total_eligible_employees": coverage_utilization_summary["total_eligible_employees"],
+            "eligible_rate": coverage_utilization_summary["eligible_rate"],
             "total_active_employees": coverage_utilization_summary["total_active_employees"],
+            "total_coverage_project": coverage_utilization_summary["total_coverage_project"],
             "total_loan_requests": coverage_utilization_summary["total_loan_requests"],
             "penetration_rate": coverage_utilization_summary["penetration_rate"],
-            "eligible_rate": coverage_utilization_summary["eligible_rate"],
             "total_approved_requests": coverage_utilization_summary["total_approved_requests"],
-            "total_rejected_requests": coverage_utilization_summary["total_rejected_requests"],
             "approval_rate": coverage_utilization_summary["approval_rate"],
-            "total_new_borrowers": coverage_utilization_summary["total_new_borrowers"],
-            "average_approval_time": coverage_utilization_summary["average_approval_time"],
+            "total_rejected_requests": coverage_utilization_summary["total_rejected_requests"],
             "total_disbursed_amount": coverage_utilization_summary["total_disbursed_amount"],
-            "average_disbursed_amount": coverage_utilization_summary["average_disbursed_amount"]
+            "total_new_borrowers": coverage_utilization_summary["total_new_borrowers"],
+            "average_disbursed_amount": coverage_utilization_summary["average_disbursed_amount"],
+            "average_approval_time": coverage_utilization_summary["average_approval_time"],
         }
     except Exception as e:
         # Return error response with status
@@ -862,6 +863,7 @@ async def get_coverage_utilization(
             "status": "error",
             "message": str(e),
             "total_eligible_employees": 0,
+            "total_coverage_project": 0,
             "total_active_employees": 0,
             "total_loan_requests": 0,
             "penetration_rate": 0,
@@ -880,8 +882,8 @@ async def get_coverage_utilization(
 async def get_coverage_utilization_monthly(
     start_date: str,
     end_date: str,
-    employer: str = None, 
-    sourced_to: str = None, 
+    employer: str = None,
+    sourced_to: str = None,
     project: str = None,
     client_segment: str = None,
     product_type: str = None,
@@ -891,10 +893,10 @@ async def get_coverage_utilization_monthly(
     db: Session = Depends(get_db)
 ):
     """Get monthly coverage utilization. Use loan_type=all to combine kasbon, extradana, and aku_cicil."""
-    
+
     try:
         monthly_coverage_utilization_summary = crud.get_coverage_utilization_monthly_summary(
-            db, 
+            db,
             employer_filter=employer,
             sourced_to_filter=sourced_to,
             project_filter=project,
@@ -906,8 +908,7 @@ async def get_coverage_utilization_monthly(
             end_date=end_date,
             loan_type=loan_type
         )
-        
-        
+
         # Return structured response
         return {
             "status": "success",
