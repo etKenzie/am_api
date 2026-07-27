@@ -1749,6 +1749,11 @@ def get_user_coverage_summary(db: Session,
         if total_processed > 0:
             approval_rate = total_approved / total_processed
 
+        # Calculate rejected rate
+        rejected_rate = 0
+        if total_processed > 0:
+            rejected_rate = total_rejected / total_processed
+
         # Calculate average disbursed amount (per loan, not per borrower)
         average_disbursed_amount = 0
         if total_loans > 0:
@@ -1767,6 +1772,7 @@ def get_user_coverage_summary(db: Session,
             "total_loans": total_loans,
             "average_disbursed_amount": average_disbursed_amount,
             "approval_rate": approval_rate,
+            "rejected_rate": rejected_rate,
             "average_approval_time": avg_approval_time,
             "penetration_rate": penetration_rate
         }
@@ -1785,6 +1791,7 @@ def get_user_coverage_summary(db: Session,
             "total_loans": 0,
             "average_disbursed_amount": 0,
             "approval_rate": 0,
+            "rejected_rate": 0,
             "average_approval_time": 0,
             "penetration_rate": 0
         }
@@ -2075,12 +2082,18 @@ def get_requests_endpoint(db: Session,
         if total_processed > 0:
             approval_rate = total_approved / total_processed
 
+        # Calculate rejected rate
+        rejected_rate = 0
+        if total_processed > 0:
+            rejected_rate = total_rejected / total_processed
+
 
 
         return {
             "total_approved_requests": total_approved,
             "total_rejected_requests": total_rejected,
             "approval_rate": approval_rate,
+            "rejected_rate": rejected_rate,
             "average_approval_time": avg_approval_time
         }
 
@@ -2091,6 +2104,7 @@ def get_requests_endpoint(db: Session,
             "total_approved_requests": 0,
             "total_rejected_requests": 0,
             "approval_rate": 0,
+            "rejected_rate": 0,
             "average_approval_time": 0
         }
 
@@ -4503,9 +4517,11 @@ def get_coverage_utilization_summary(db: Session,
             penetration_rate = total_loan_requests / total_eligible_employees
 
         approval_rate = 0
+        rejected_rate = 0
         total_processed_requests = total_approved_requests + total_rejected_requests
         if total_processed_requests > 0:
             approval_rate = total_approved_requests / total_processed_requests
+            rejected_rate = total_rejected_requests / total_processed_requests
 
         return {
             "total_eligible_employees": total_eligible_employees,
@@ -4517,6 +4533,7 @@ def get_coverage_utilization_summary(db: Session,
             "total_approved_requests": total_approved_requests,
             "total_rejected_requests": total_rejected_requests,
             "approval_rate": approval_rate,
+            "rejected_rate": rejected_rate,
             "total_new_borrowers": total_new_borrowers,
             "average_approval_time": average_approval_time,
             "total_disbursed_amount": total_disbursed_amount,
@@ -4536,6 +4553,7 @@ def get_coverage_utilization_summary(db: Session,
             "total_approved_requests": 0,
             "total_rejected_requests": 0,
             "approval_rate": 0,
+            "rejected_rate": 0,
             "total_new_borrowers": 0,
             "average_approval_time": 0,
             "total_disbursed_amount": 0,
@@ -4948,6 +4966,13 @@ def get_coverage_utilization_monthly_summary(db: Session,
             if total_eligible_employees > 0:
                 penetration_rate = total_loan_requests / total_eligible_employees
 
+            approval_rate = 0
+            rejected_rate = 0
+            total_processed_requests = total_approved_requests + total_rejected_requests
+            if total_processed_requests > 0:
+                approval_rate = total_approved_requests / total_processed_requests
+                rejected_rate = total_rejected_requests / total_processed_requests
+
             monthly_data[month_year] = {
                 "total_first_borrow": total_first_borrow,
                 "total_loan_requests": total_loan_requests,
@@ -4956,6 +4981,8 @@ def get_coverage_utilization_monthly_summary(db: Session,
                 "total_eligible_employees": total_eligible_employees,
                 "total_coverage_project": total_coverage_project,
                 "penetration_rate": penetration_rate,
+                "approval_rate": approval_rate,
+                "rejected_rate": rejected_rate,
                 "total_disbursed_amount": total_disbursed_amount
             }
 
