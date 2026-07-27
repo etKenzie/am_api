@@ -330,18 +330,24 @@ class RepaymentRiskResponse(BaseModel):
     """Response model for repayment risk summary data"""
     status: str
     total_expected_repayment: int
-    total_loan_principal_collected: int
-    total_admin_fee_collected: int
-    total_unrecovered_repayment: int
-    total_unrecovered_loan_principal: int
-    total_unrecovered_admin_fee: int
+    total_collected_repayment: int
     repayment_recovery_rate: float
+    total_unrecovered_repayment: int
+    unrecovered_rate: float
+    total_outstanding_repayment: int
+    outstanding_rate: float
+    total_loan_principal_collected: int
+    total_unrecovered_loan_principal: int
+    principal_collection_rate: float
+    total_admin_fee_collected: int
+    total_unrecovered_admin_fee: int
+    admin_fee_collection_rate: float
     delinquencies_rate: float
     admin_fee_profit: int
     message: Optional[str] = None
 
     class Config:
-        from_attributes = True 
+        from_attributes = True
 
 
 class MonthlyRepaymentRiskData(BaseModel):
@@ -350,6 +356,8 @@ class MonthlyRepaymentRiskData(BaseModel):
     total_expected_repayment: int
     total_loan_principal_collected: int
     total_unrecovered_repayment: int
+    total_outstanding_repayment: int
+    outstanding_rate: float
     admin_fee_profit: int
 
     class Config:
