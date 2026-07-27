@@ -425,6 +425,53 @@ async def get_loan_purpose_summary(
         }
 
 
+@router.get("/applicant-insights", response_model=schemas.LoanApplicantInsightsResponse)
+async def get_loan_applicant_insights(
+    loan_type: str = "loan",
+    employer: str = None,
+    sourced_to: str = None,
+    project: str = None,
+    client_segment: str = None,
+    product_type: str = None,
+    loan_status: int = None,
+    id_karyawan: int = None,
+    start_date: str = None,
+    end_date: str = None,
+    db: Session = Depends(get_db)
+):
+    """Get combined loan applicant insights: top reject reasons, applicants by gender, and applicants by age range"""
+
+    try:
+        insights = crud.get_loan_applicant_insights(
+            db,
+            employer_filter=employer,
+            sourced_to_filter=sourced_to,
+            project_filter=project,
+            client_segment_filter=client_segment,
+            product_type_filter=product_type,
+            loan_status_filter=loan_status,
+            id_karyawan_filter=id_karyawan,
+            start_date=start_date,
+            end_date=end_date,
+            loan_type=loan_type,
+        )
+
+        return {
+            "status": "success",
+            "top_reject_reasons": insights["top_reject_reasons"],
+            "applicants_by_gender": insights["applicants_by_gender"],
+            "applicants_by_age_range": insights["applicants_by_age_range"],
+        }
+    except Exception as e:
+        return {
+            "status": "error",
+            "message": str(e),
+            "top_reject_reasons": [],
+            "applicants_by_gender": [],
+            "applicants_by_age_range": [],
+        }
+
+
 @router.get("/filters")
 async def get_available_filters(
     employer: str = None,
