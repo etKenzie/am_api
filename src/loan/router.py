@@ -134,6 +134,7 @@ async def get_summary(
             "total_loans": coverage_summary["total_loans"],
             "average_disbursed_amount": coverage_summary["average_disbursed_amount"],
             "approval_rate": coverage_summary["approval_rate"],
+            "rejected_rate": coverage_summary["rejected_rate"],
             "average_approval_time": coverage_summary["average_approval_time"],
             "penetration_rate": coverage_summary["penetration_rate"]
         }
@@ -153,6 +154,7 @@ async def get_summary(
             "total_loans": 0,
             "average_disbursed_amount": 0,
             "approval_rate": 0,
+            "rejected_rate": 0,
             "average_approval_time": 0,
             "penetration_rate": 0
         }
@@ -190,6 +192,7 @@ async def get_requests(
             "total_approved_requests": requests_data["total_approved_requests"],
             "total_rejected_requests": requests_data["total_rejected_requests"],
             "approval_rate": requests_data["approval_rate"],
+            "rejected_rate": requests_data["rejected_rate"],
             "average_approval_time": requests_data["average_approval_time"]
         }
     except Exception as e:
@@ -201,6 +204,7 @@ async def get_requests(
             "total_approved_requests": 0,
             "total_rejected_requests": 0,
             "approval_rate": 0,
+            "rejected_rate": 0,
             "average_approval_time": 0
         }
 
@@ -852,6 +856,7 @@ async def get_coverage_utilization(
             "total_approved_requests": coverage_utilization_summary["total_approved_requests"],
             "approval_rate": coverage_utilization_summary["approval_rate"],
             "total_rejected_requests": coverage_utilization_summary["total_rejected_requests"],
+            "rejected_rate": coverage_utilization_summary["rejected_rate"],
             "total_disbursed_amount": coverage_utilization_summary["total_disbursed_amount"],
             "total_new_borrowers": coverage_utilization_summary["total_new_borrowers"],
             "average_disbursed_amount": coverage_utilization_summary["average_disbursed_amount"],
@@ -871,6 +876,7 @@ async def get_coverage_utilization(
             "total_approved_requests": 0,
             "total_rejected_requests": 0,
             "approval_rate": 0,
+            "rejected_rate": 0,
             "total_new_borrowers": 0,
             "average_approval_time": 0,
             "total_disbursed_amount": 0,

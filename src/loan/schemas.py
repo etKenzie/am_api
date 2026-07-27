@@ -38,6 +38,7 @@ class SummaryResponse(BaseModel):
     total_loans: int
     average_disbursed_amount: float
     approval_rate: float
+    rejected_rate: float
     average_approval_time: float
     penetration_rate: float
     message: Optional[str] = None
@@ -51,6 +52,7 @@ class RequestsResponse(BaseModel):
     total_approved_requests: int
     total_rejected_requests: int
     approval_rate: float
+    rejected_rate: float
     average_approval_time: float
     message: Optional[str] = None
 
@@ -335,6 +337,7 @@ class CoverageUtilizationResponse(BaseModel):
     total_approved_requests: int
     total_rejected_requests: int
     approval_rate: float
+    rejected_rate: float
     total_new_borrowers: int
     average_approval_time: float
     total_disbursed_amount: int
@@ -353,6 +356,8 @@ class MonthlyCoverageUtilizationData(BaseModel):
     total_rejected_requests: int
     total_eligible_employees: Optional[int] = None
     penetration_rate: float
+    approval_rate: float
+    rejected_rate: float
     total_disbursed_amount: int
 
     class Config:
