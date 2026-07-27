@@ -286,6 +286,46 @@ class LoanPurposeSummaryListResponse(BaseModel):
         from_attributes = True 
 
 
+class RejectReasonSummary(BaseModel):
+    """Response model for a single reject reason breakdown row"""
+    reject_reason_id: Optional[int] = None
+    reject_reason_name: str
+    total_count: int
+
+    class Config:
+        from_attributes = True
+
+
+class GenderSummary(BaseModel):
+    """Response model for a single gender breakdown row"""
+    gender_code: Optional[str] = None
+    gender_name: str
+    total_count: int
+
+    class Config:
+        from_attributes = True
+
+
+class AgeRangeSummary(BaseModel):
+    """Response model for a single age range breakdown row"""
+    age_range: str
+    total_count: int
+
+    class Config:
+        from_attributes = True
+
+
+class LoanApplicantInsightsResponse(BaseModel):
+    status: str
+    top_reject_reasons: List[RejectReasonSummary] = []
+    applicants_by_gender: List[GenderSummary] = []
+    applicants_by_age_range: List[AgeRangeSummary] = []
+    message: Optional[str] = None
+
+    class Config:
+        from_attributes = True
+
+
 class RepaymentRiskResponse(BaseModel):
     """Response model for repayment risk summary data"""
     status: str

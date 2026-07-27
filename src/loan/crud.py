@@ -3347,6 +3347,171 @@ def get_loan_purpose_summary(db: Session,
         return []
 
 
+# reject_reason column comment on td_loan: 1:End of Contract;2:High Risk;3:Bad Attitude;4:CRO Instruction;5:Fake Request
+REJECT_REASON_LABELS = {
+    1: "End of Contract",
+    2: "High Risk",
+    3: "Bad Attitude",
+    4: "CRO Instruction",
+    5: "Fake Request",
+}
+
+# td_karyawan.gender has no lookup table; values observed in data are '1' (Male) / '2' (Female)
+GENDER_LABELS = {
+    "1": "Male",
+    "2": "Female",
+}
+
+_AGE_RANGE_CASE_SQL = """
+        CASE
+            WHEN tk.tgl_lahir IS NULL THEN 'Unknown'
+            WHEN TIMESTAMPDIFF(YEAR, tk.tgl_lahir, CURDATE()) < 18 THEN 'Unknown'
+            WHEN TIMESTAMPDIFF(YEAR, tk.tgl_lahir, CURDATE()) BETWEEN 18 AND 25 THEN '18-25'
+            WHEN TIMESTAMPDIFF(YEAR, tk.tgl_lahir, CURDATE()) BETWEEN 26 AND 35 THEN '26-35'
+            WHEN TIMESTAMPDIFF(YEAR, tk.tgl_lahir, CURDATE()) BETWEEN 36 AND 45 THEN '36-45'
+            WHEN TIMESTAMPDIFF(YEAR, tk.tgl_lahir, CURDATE()) BETWEEN 46 AND 55 THEN '46-55'
+            WHEN TIMESTAMPDIFF(YEAR, tk.tgl_lahir, CURDATE()) BETWEEN 56 AND 65 THEN '56-65'
+            ELSE 'Unknown'
+        END"""
+
+_AGE_RANGE_SORT_CASE_SQL = """
+        CASE age_range
+            WHEN '18-25' THEN 1
+            WHEN '26-35' THEN 2
+            WHEN '36-45' THEN 3
+            WHEN '46-55' THEN 4
+            WHEN '56-65' THEN 5
+            ELSE 6
+        END"""
+
+
+def get_loan_applicant_insights(db: Session,
+                               employer_filter: str = None, sourced_to_filter: str = None,
+                               project_filter: str = None, client_segment_filter: str = None,
+                               product_type_filter: str = None, loan_status_filter: int = None,
+                               id_karyawan_filter: int = None, start_date: str = None,
+                               end_date: str = None, loan_type: str = "loan") -> dict:
+    """Get combined loan applicant insights: top reject reasons, applicants by gender, applicants by age range"""
+
+    try:
+        loan_conditions = resolve_loan_conditions(loan_type, db)
+        params = {}
+
+        def apply_common_filters(query: str) -> str:
+            if id_karyawan_filter:
+                query += " AND l.id_karyawan = :id_karyawan"
+                params['id_karyawan'] = id_karyawan_filter
+            if employer_filter:
+                query += " AND emp.keterangan = :employer"
+                params['employer'] = employer_filter
+            if sourced_to_filter:
+                query += " AND src.keterangan = :sourced_to"
+                params['sourced_to'] = sourced_to_filter
+            if project_filter:
+                query += " AND prj.keterangan = :project"
+                params['project'] = project_filter
+            return query
+
+        # Top reject reasons is always scoped to rejected loans (loan_status = 3),
+        # regardless of the loan_status_filter param, since it's not a meaningful metric otherwise.
+        reject_query = f"""
+        SELECT
+            l.reject_reason AS reject_reason_id,
+            COUNT(l.id) AS total_count
+        FROM td_loan l
+        {_LOAN_GMC_JOINS}
+        WHERE {loan_conditions}
+        AND l.loan_status = 3
+        """
+        reject_query = apply_common_filters(reject_query)
+        reject_query = _apply_project_management_filters(
+            reject_query, params, client_segment_filter, product_type_filter, db=db
+        )
+        reject_query = append_date_filters(reject_query, params, start_date=start_date, end_date=end_date)
+        reject_query += " GROUP BY l.reject_reason ORDER BY total_count DESC"
+
+        gender_query = f"""
+        SELECT
+            tk.gender AS gender_code,
+            COUNT(l.id) AS total_count
+        FROM td_loan l
+        {_LOAN_GMC_JOINS}
+        WHERE {loan_conditions}
+        """
+        gender_query = apply_common_filters(gender_query)
+        if loan_status_filter is not None:
+            gender_query += " AND l.loan_status = :loan_status"
+            params['loan_status'] = loan_status_filter
+        gender_query = _apply_project_management_filters(
+            gender_query, params, client_segment_filter, product_type_filter, db=db
+        )
+        gender_query = append_date_filters(gender_query, params, start_date=start_date, end_date=end_date)
+        gender_query += " GROUP BY tk.gender ORDER BY total_count DESC"
+
+        age_query = f"""
+        SELECT
+            {_AGE_RANGE_CASE_SQL} AS age_range,
+            COUNT(l.id) AS total_count
+        FROM td_loan l
+        {_LOAN_GMC_JOINS}
+        WHERE {loan_conditions}
+        """
+        age_query = apply_common_filters(age_query)
+        if loan_status_filter is not None:
+            age_query += " AND l.loan_status = :loan_status"
+            params['loan_status'] = loan_status_filter
+        age_query = _apply_project_management_filters(
+            age_query, params, client_segment_filter, product_type_filter, db=db
+        )
+        age_query = append_date_filters(age_query, params, start_date=start_date, end_date=end_date)
+        age_query += f" GROUP BY age_range ORDER BY {_AGE_RANGE_SORT_CASE_SQL}"
+
+        reject_rows = db.execute(text(reject_query), params).fetchall()
+        gender_rows = db.execute(text(gender_query), params).fetchall()
+        age_rows = db.execute(text(age_query), params).fetchall()
+
+        top_reject_reasons = [
+            {
+                "reject_reason_id": row[0],
+                "reject_reason_name": REJECT_REASON_LABELS.get(row[0], "Not Specified"),
+                "total_count": row[1] if row[1] is not None else 0,
+            }
+            for row in reject_rows
+        ]
+
+        applicants_by_gender = [
+            {
+                "gender_code": row[0],
+                "gender_name": GENDER_LABELS.get(row[0], "Unknown"),
+                "total_count": row[1] if row[1] is not None else 0,
+            }
+            for row in gender_rows
+        ]
+
+        applicants_by_age_range = [
+            {
+                "age_range": row[0],
+                "total_count": row[1] if row[1] is not None else 0,
+            }
+            for row in age_rows
+        ]
+
+        return {
+            "top_reject_reasons": top_reject_reasons,
+            "applicants_by_gender": applicants_by_gender,
+            "applicants_by_age_range": applicants_by_age_range,
+        }
+
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return {
+            "top_reject_reasons": [],
+            "applicants_by_gender": [],
+            "applicants_by_age_range": [],
+        }
+
+
 def get_total_admin_fee_collected(db: Session,
                                  employer_filter: str = None, sourced_to_filter: str = None,
                                  project_filter: str = None, client_segment_filter: str = None, product_type_filter: str = None, loan_status_filter: int = None,
