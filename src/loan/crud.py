@@ -867,7 +867,7 @@ _UNRECOVERED_LUMP_PAYMENT_SQL = """
         AND prj.group_gmc = 'client_project'
         AND prj.aktif = 'Yes'
         AND prj.keterangan3 = 1
-    WHERE l.loan_status IN (1, 2, 4)
+    WHERE l.loan_status IN (1, 4)
       AND l.duration = 1
       AND (l.payment_date IS NULL OR l.payment_date = '0000-00-00')
       AND l.repayment_date < CURDATE()
@@ -902,18 +902,31 @@ _UNRECOVERED_INSTALLMENT_PAYMENT_SQL = """
         AND prj.aktif = 'Yes'
         AND prj.keterangan3 = 1
     INNER JOIN td_loan_history th ON th.loan_form_id = l.id
-    WHERE l.loan_status IN (1, 2, 4)
+    WHERE l.loan_status IN (1, 4)
       AND l.duration > 1
       AND (th.payment_date IS NULL OR th.payment_date = '0000-00-00')
       AND th.due_date < CURDATE()
 """
 
+# Outstanding = not yet paid, but due date hasn't arrived yet (still waiting), as opposed
+# to "unrecovered" above which is not yet paid AND already past its due date.
+_OUTSTANDING_LUMP_PAYMENT_SQL = _UNRECOVERED_LUMP_PAYMENT_SQL.replace(
+    "AND l.repayment_date < CURDATE()", "AND l.repayment_date >= CURDATE()"
+)
+_OUTSTANDING_INSTALLMENT_PAYMENT_SQL = _UNRECOVERED_INSTALLMENT_PAYMENT_SQL.replace(
+    "AND th.due_date < CURDATE()", "AND th.due_date >= CURDATE()"
+)
+
 
 def _unrecovered_repayment_scope(loan_type: str, db: Session) -> tuple[bool, bool, str | None]:
     """Return (include_lump_sum, include_installment, extra_loan_predicate)."""
-    if is_all_loan_types(loan_type) or loan_type in ("loan", "kasbon"):
-        # Full business UNION: duration=1 on repayment_date + duration>1 on due_date.
+    if is_all_loan_types(loan_type):
+        # Full business UNION across every product: duration=1 lump + duration>1 installment.
         return True, True, None
+    if loan_type in ("loan", "kasbon"):
+        # Kasbon is lump-sum only (duration=1); exclude the handful of AkuCicil loans
+        # that also happen to have duration=1, matching LOAN_CONDITIONS elsewhere.
+        return True, False, LOAN_CONDITIONS
     if loan_type in ("extradana", "aku_cicil"):
         if loan_type == "extradana":
             extra = "l.loan_id IN (SELECT ls.id FROM loan_setting ls WHERE ls.loan_type LIKE 'Extradana%')"
@@ -925,13 +938,36 @@ def _unrecovered_repayment_scope(loan_type: str, db: Session) -> tuple[bool, boo
 
 def _recalculate_repayment_risk_derivatives(summary: dict) -> dict:
     total_expected = summary.get("total_expected_repayment", 0) or 0
-    collected = (summary.get("total_loan_principal_collected", 0) or 0) + (
-        summary.get("total_admin_fee_collected", 0) or 0
-    )
+    principal_collected = summary.get("total_loan_principal_collected", 0) or 0
+    admin_fee_collected = summary.get("total_admin_fee_collected", 0) or 0
     unrecovered = summary.get("total_unrecovered_repayment", 0) or 0
+    # total_outstanding_repayment (not-yet-due payments still waiting) is fetched
+    # directly by the caller via get_total_outstanding_repayment, not derived here.
+    outstanding = summary.get("total_outstanding_repayment", 0) or 0
+    total_expected_principal = summary.get("total_expected_loan_principal", 0) or 0
+    total_expected_admin_fee = summary.get("total_expected_admin_fee", 0) or 0
+
+    # total_collected_repayment must reconcile exactly with expected = collected +
+    # unrecovered + outstanding, so it's derived as the residual rather than summed
+    # from principal_collected + admin_fee_collected (which only recognizes loans
+    # marked fully closed/lunas and misses partial payments already made on loans
+    # that are still open — unrecovered/outstanding already account for that
+    # remainder in full, so the residual is the true amount collected to date).
+    collected = max(total_expected - unrecovered - outstanding, 0)
+    summary["total_collected_repayment"] = collected
     summary["repayment_recovery_rate"] = (collected / total_expected) if total_expected > 0 else 0
     summary["delinquencies_rate"] = (unrecovered / total_expected) if total_expected > 0 else 0
-    summary["admin_fee_profit"] = (summary.get("total_admin_fee_collected", 0) or 0) - unrecovered
+    summary["unrecovered_rate"] = summary["delinquencies_rate"]
+    summary["outstanding_rate"] = (outstanding / total_expected) if total_expected > 0 else 0
+    # Principal ("pokok") and admin fee ("bunga") collection rates, separate from
+    # total_expected_repayment which is pokok + bunga combined.
+    summary["principal_collection_rate"] = (
+        (principal_collected / total_expected_principal) if total_expected_principal > 0 else 0
+    )
+    summary["admin_fee_collection_rate"] = (
+        (admin_fee_collected / total_expected_admin_fee) if total_expected_admin_fee > 0 else 0
+    )
+    summary["admin_fee_profit"] = admin_fee_collected - unrecovered
     return summary
 
 
@@ -952,6 +988,8 @@ def _build_unrecovered_repayment_parts(
     start_date: str = None,
     end_date: str = None,
     db: Session = None,
+    lump_sql: str = _UNRECOVERED_LUMP_PAYMENT_SQL,
+    installment_sql: str = _UNRECOVERED_INSTALLMENT_PAYMENT_SQL,
 ) -> list[str]:
     company_filter = COMPANY_FILTER
     parts: list[str] = []
@@ -962,7 +1000,7 @@ def _build_unrecovered_repayment_parts(
             if group_by_month
             else ""
         )
-        lump_query = _UNRECOVERED_LUMP_PAYMENT_SQL.replace(
+        lump_query = lump_sql.replace(
             "SELECT GREATEST(",
             f"SELECT {lump_select}GREATEST(",
             1,
@@ -1000,7 +1038,7 @@ def _build_unrecovered_repayment_parts(
             if group_by_month
             else ""
         )
-        installment_query = _UNRECOVERED_INSTALLMENT_PAYMENT_SQL.replace(
+        installment_query = installment_sql.replace(
             "SELECT GREATEST(",
             f"SELECT {installment_select}GREATEST(",
             1,
@@ -1149,6 +1187,125 @@ def get_total_unrecovered_repayment_monthly(
         return {}
 
 
+def get_total_outstanding_repayment(
+    db: Session,
+    *,
+    employer_filter: str = None,
+    sourced_to_filter: str = None,
+    project_filter: str = None,
+    client_segment_filter: str = None,
+    product_type_filter: str = None,
+    loan_status_filter: int = None,
+    id_karyawan_filter: int = None,
+    start_date: str = None,
+    end_date: str = None,
+    loan_type: str = "loan",
+) -> float:
+    """Payment due that is not yet paid and not yet past its due date (still waiting)."""
+    try:
+        include_lump, include_installment, extra_loan_predicate = _unrecovered_repayment_scope(
+            loan_type, db
+        )
+        params: dict = {}
+        parts = _build_unrecovered_repayment_parts(
+            include_lump=include_lump,
+            include_installment=include_installment,
+            extra_loan_predicate=extra_loan_predicate,
+            group_by_month=False,
+            params=params,
+            employer_filter=employer_filter,
+            sourced_to_filter=sourced_to_filter,
+            project_filter=project_filter,
+            client_segment_filter=client_segment_filter,
+            product_type_filter=product_type_filter,
+            loan_status_filter=loan_status_filter,
+            id_karyawan_filter=id_karyawan_filter,
+            start_date=start_date,
+            end_date=end_date,
+            db=db,
+            lump_sql=_OUTSTANDING_LUMP_PAYMENT_SQL,
+            installment_sql=_OUTSTANDING_INSTALLMENT_PAYMENT_SQL,
+        )
+
+        if not parts:
+            return 0
+
+        if len(parts) == 1:
+            query = f"SELECT COALESCE(SUM(payment_due), 0) FROM ({parts[0]}) x"
+        else:
+            query = f"SELECT COALESCE(SUM(payment_due), 0) FROM ({' UNION ALL '.join(parts)}) x"
+
+        record = db.execute(text(query), params).fetchone()
+        return record[0] if record and record[0] is not None else 0
+    except Exception:
+        import traceback
+        traceback.print_exc()
+        return 0
+
+
+def get_total_outstanding_repayment_monthly(
+    db: Session,
+    *,
+    employer_filter: str = None,
+    sourced_to_filter: str = None,
+    project_filter: str = None,
+    client_segment_filter: str = None,
+    product_type_filter: str = None,
+    loan_status_filter: int = None,
+    id_karyawan_filter: int = None,
+    start_date: str = None,
+    end_date: str = None,
+    loan_type: str = "loan",
+) -> dict:
+    """Not-yet-due payment due (still waiting), grouped by month_year."""
+    try:
+        include_lump, include_installment, extra_loan_predicate = _unrecovered_repayment_scope(
+            loan_type, db
+        )
+        params: dict = {}
+        parts = _build_unrecovered_repayment_parts(
+            include_lump=include_lump,
+            include_installment=include_installment,
+            extra_loan_predicate=extra_loan_predicate,
+            group_by_month=True,
+            params=params,
+            employer_filter=employer_filter,
+            sourced_to_filter=sourced_to_filter,
+            project_filter=project_filter,
+            client_segment_filter=client_segment_filter,
+            product_type_filter=product_type_filter,
+            loan_status_filter=loan_status_filter,
+            id_karyawan_filter=id_karyawan_filter,
+            start_date=start_date,
+            end_date=end_date,
+            db=db,
+            lump_sql=_OUTSTANDING_LUMP_PAYMENT_SQL,
+            installment_sql=_OUTSTANDING_INSTALLMENT_PAYMENT_SQL,
+        )
+
+        if not parts:
+            return {}
+
+        union_sql = parts[0] if len(parts) == 1 else f"{' UNION ALL '.join(parts)}"
+        query = f"""
+        SELECT month_year, COALESCE(SUM(payment_due), 0) AS total_outstanding_repayment
+        FROM ({union_sql}) x
+        WHERE month_year IS NOT NULL
+        GROUP BY month_year
+        """
+
+        monthly_data = {}
+        for row in db.execute(text(query), params).fetchall():
+            if row[0] is None:
+                continue
+            monthly_data[row[0]] = row[1] if row[1] is not None else 0
+        return monthly_data
+    except Exception:
+        import traceback
+        traceback.print_exc()
+        return {}
+
+
 def _apply_date_filters_to_named_queries(
     queries: dict[str, str],
     params: dict,
@@ -1198,6 +1355,8 @@ def _merge_repayment_risk_summaries(summaries: List[dict]) -> dict:
         "total_unrecovered_repayment",
         "total_unrecovered_loan_principal",
         "total_unrecovered_admin_fee",
+        "total_expected_loan_principal",
+        "total_expected_admin_fee",
     )
     combined = {key: sum(summary.get(key, 0) or 0 for summary in summaries) for key in sum_keys}
     total_expected = combined["total_expected_repayment"]
@@ -3922,6 +4081,19 @@ def get_repayment_risk_summary(db: Session,
                 end_date=end_date,
                 loan_type="all",
             )
+            combined["total_outstanding_repayment"] = get_total_outstanding_repayment(
+                db,
+                employer_filter=employer_filter,
+                sourced_to_filter=sourced_to_filter,
+                project_filter=project_filter,
+                client_segment_filter=client_segment_filter,
+                product_type_filter=product_type_filter,
+                loan_status_filter=loan_status_filter,
+                id_karyawan_filter=id_karyawan_filter,
+                start_date=start_date,
+                end_date=end_date,
+                loan_type="all",
+            )
             return _recalculate_repayment_risk_derivatives(combined)
 
         loan_conditions = resolve_loan_conditions(loan_type, db)
@@ -3940,11 +4112,13 @@ def get_repayment_risk_summary(db: Session,
             risk_query = """
             SELECT
                 SUM(tlh.monthly) as total_expected_repayment,
-                SUM(ROUND(l.total_loan / l.duration, 0)) as total_loan_principal_collected,
-                SUM(ROUND(l.admin_fee / l.duration, 0)) as total_admin_fee_collected,
+                SUM(CASE WHEN tlh.status = 2 THEN ROUND(l.total_loan / l.duration, 0) ELSE 0 END) as total_loan_principal_collected,
+                SUM(CASE WHEN tlh.status = 2 THEN ROUND(l.admin_fee / l.duration, 0) ELSE 0 END) as total_admin_fee_collected,
                 SUM(CASE WHEN tlh.status = 4 THEN tlh.monthly ELSE 0 END) as total_unrecovered_repayment,
                 SUM(CASE WHEN tlh.status = 4 THEN ROUND(l.total_loan / l.duration, 0) ELSE 0 END) as total_unrecovered_loan_principal,
-                SUM(CASE WHEN tlh.status = 4 THEN ROUND(l.admin_fee / l.duration, 0) ELSE 0 END) as total_unrecovered_admin_fee
+                SUM(CASE WHEN tlh.status = 4 THEN ROUND(l.admin_fee / l.duration, 0) ELSE 0 END) as total_unrecovered_admin_fee,
+                SUM(ROUND(l.total_loan / l.duration, 0)) as total_expected_loan_principal,
+                SUM(ROUND(l.admin_fee / l.duration, 0)) as total_expected_admin_fee
             FROM td_loan_history tlh
             INNER JOIN td_loan l ON tlh.loan_form_id = l.id
             LEFT JOIN td_karyawan tk
@@ -4011,6 +4185,8 @@ def get_repayment_risk_summary(db: Session,
             total_admin_fee_collected = record[2] if record and record[2] is not None else 0
             total_unrecovered_loan_principal = record[4] if record and record[4] is not None else 0
             total_unrecovered_admin_fee = record[5] if record and record[5] is not None else 0
+            total_expected_loan_principal = record[6] if record and record[6] is not None else 0
+            total_expected_admin_fee = record[7] if record and record[7] is not None else 0
         else:
             # kasbon / loan: single td_loan aggregate
             risk_query = """
@@ -4019,7 +4195,9 @@ def get_repayment_risk_summary(db: Session,
                 SUM(CASE WHEN l.loan_status = 2 THEN l.total_loan ELSE 0 END) as total_loan_principal_collected,
                 SUM(CASE WHEN l.loan_status = 2 THEN l.admin_fee ELSE 0 END) as total_admin_fee_collected,
                 SUM(CASE WHEN l.loan_status IN (4) THEN l.total_loan ELSE 0 END) as total_unrecovered_loan_principal,
-                SUM(CASE WHEN l.loan_status IN (4) THEN l.admin_fee ELSE 0 END) as total_unrecovered_admin_fee
+                SUM(CASE WHEN l.loan_status IN (4) THEN l.admin_fee ELSE 0 END) as total_unrecovered_admin_fee,
+                SUM(l.total_loan) as total_expected_loan_principal,
+                SUM(l.admin_fee) as total_expected_admin_fee
             FROM td_loan l
             LEFT JOIN td_karyawan tk
                 ON l.id_karyawan = tk.id_karyawan
@@ -4039,7 +4217,8 @@ def get_repayment_risk_summary(db: Session,
                 AND prj.aktif = 'Yes'
                 AND prj.keterangan3 = 1
             WHERE l.loan_status IN (1, 2, 4)
-            """
+            AND {loan_conditions}
+            """.format(loan_conditions=loan_conditions)
 
             if id_karyawan_filter:
                 risk_query += " AND l.id_karyawan = :id_karyawan"
@@ -4081,8 +4260,24 @@ def get_repayment_risk_summary(db: Session,
             total_admin_fee_collected = record[2] if record and record[2] is not None else 0
             total_unrecovered_loan_principal = record[3] if record and record[3] is not None else 0
             total_unrecovered_admin_fee = record[4] if record and record[4] is not None else 0
+            total_expected_loan_principal = record[5] if record and record[5] is not None else 0
+            total_expected_admin_fee = record[6] if record and record[6] is not None else 0
 
         total_unrecovered_repayment = get_total_unrecovered_repayment(
+            db,
+            employer_filter=employer_filter,
+            sourced_to_filter=sourced_to_filter,
+            project_filter=project_filter,
+            client_segment_filter=client_segment_filter,
+            product_type_filter=product_type_filter,
+            loan_status_filter=loan_status_filter,
+            id_karyawan_filter=id_karyawan_filter,
+            start_date=start_date,
+            end_date=end_date,
+            loan_type=loan_type,
+        )
+
+        total_outstanding_repayment = get_total_outstanding_repayment(
             db,
             employer_filter=employer_filter,
             sourced_to_filter=sourced_to_filter,
@@ -4115,6 +4310,9 @@ def get_repayment_risk_summary(db: Session,
             "total_unrecovered_repayment": total_unrecovered_repayment,
             "total_unrecovered_loan_principal": total_unrecovered_loan_principal,
             "total_unrecovered_admin_fee": total_unrecovered_admin_fee,
+            "total_outstanding_repayment": total_outstanding_repayment,
+            "total_expected_loan_principal": total_expected_loan_principal,
+            "total_expected_admin_fee": total_expected_admin_fee,
             "repayment_recovery_rate": repayment_recovery_rate,
             "delinquencies_rate": delinquencies_rate,
             "admin_fee_profit": admin_fee_profit,
@@ -4130,8 +4328,14 @@ def get_repayment_risk_summary(db: Session,
             "total_unrecovered_repayment": 0,
             "total_unrecovered_loan_principal": 0,
             "total_unrecovered_admin_fee": 0,
+            "total_outstanding_repayment": 0,
+            "total_expected_loan_principal": 0,
+            "total_expected_admin_fee": 0,
             "repayment_recovery_rate": 0,
             "delinquencies_rate": 0,
+            "outstanding_rate": 0,
+            "principal_collection_rate": 0,
+            "admin_fee_collection_rate": 0,
             "admin_fee_profit": 0
         }
 
@@ -4175,7 +4379,20 @@ def get_repayment_risk_monthly_summary(db: Session,
                 end_date=end_date,
                 loan_type="all",
             )
-            all_months = set(merged.keys()) | set(unrecovered_monthly.keys())
+            outstanding_monthly = get_total_outstanding_repayment_monthly(
+                db,
+                employer_filter=employer_filter,
+                sourced_to_filter=sourced_to_filter,
+                project_filter=project_filter,
+                client_segment_filter=client_segment_filter,
+                product_type_filter=product_type_filter,
+                loan_status_filter=loan_status_filter,
+                id_karyawan_filter=id_karyawan_filter,
+                start_date=start_date,
+                end_date=end_date,
+                loan_type="all",
+            )
+            all_months = set(merged.keys()) | set(unrecovered_monthly.keys()) | set(outstanding_monthly.keys())
             for month_year in all_months:
                 if month_year not in merged:
                     merged[month_year] = {
@@ -4193,8 +4410,13 @@ def get_repayment_risk_monthly_summary(db: Session,
                     metrics.get("total_admin_fee_collected", 0) or 0
                 )
                 unrecovered = metrics.get("total_unrecovered_repayment", 0) or 0
+                outstanding = outstanding_monthly.get(month_year, 0) or 0
+                metrics["total_outstanding_repayment"] = outstanding
                 metrics["repayment_recovery_rate"] = (
                     (collected / total_expected) if total_expected > 0 else 0
+                )
+                metrics["outstanding_rate"] = (
+                    (outstanding / total_expected) if total_expected > 0 else 0
                 )
                 metrics["admin_fee_profit"] = (
                     metrics.get("total_admin_fee_collected", 0) or 0
@@ -4218,8 +4440,8 @@ def get_repayment_risk_monthly_summary(db: Session,
             SELECT
                 DATE_FORMAT(tlh.due_date, '%M %Y') as month_year,
                 SUM(tlh.monthly) as total_expected_repayment,
-                SUM(ROUND(l.total_loan / l.duration, 0)) as total_loan_principal_collected,
-                SUM(ROUND(l.admin_fee / l.duration, 0)) as total_admin_fee_collected
+                SUM(CASE WHEN tlh.status = 2 THEN ROUND(l.total_loan / l.duration, 0) ELSE 0 END) as total_loan_principal_collected,
+                SUM(CASE WHEN tlh.status = 2 THEN ROUND(l.admin_fee / l.duration, 0) ELSE 0 END) as total_admin_fee_collected
             FROM td_loan_history tlh
             INNER JOIN td_loan l ON tlh.loan_form_id = l.id
             LEFT JOIN td_karyawan tk
@@ -4271,7 +4493,8 @@ def get_repayment_risk_monthly_summary(db: Session,
                 AND prj.keterangan3 = 1
             WHERE l.proses_date IS NOT NULL
             AND l.loan_status IN (1, 2, 4)
-            """
+            AND {loan_conditions}
+            """.format(loan_conditions=loan_conditions)
 
         # Build parameters dict for filters
         params = {}
@@ -4354,6 +4577,20 @@ def get_repayment_risk_monthly_summary(db: Session,
             loan_type=loan_type,
         )
 
+        monthly_outstanding = get_total_outstanding_repayment_monthly(
+            db,
+            employer_filter=employer_filter,
+            sourced_to_filter=sourced_to_filter,
+            project_filter=project_filter,
+            client_segment_filter=client_segment_filter,
+            product_type_filter=product_type_filter,
+            loan_status_filter=loan_status_filter,
+            id_karyawan_filter=id_karyawan_filter,
+            start_date=start_date,
+            end_date=end_date,
+            loan_type=loan_type,
+        )
+
         # Convert to dictionary with month_year as key
         monthly_data = {}
         for record in records:
@@ -4365,10 +4602,15 @@ def get_repayment_risk_monthly_summary(db: Session,
             total_loan_principal_collected = record[2] if record[2] is not None else 0
             total_admin_fee_collected = record[3] if record[3] is not None else 0
             total_unrecovered_repayment = monthly_unrecovered.get(month_year, 0) or 0
+            outstanding = monthly_outstanding.get(month_year, 0) or 0
+
+            collected = total_loan_principal_collected + total_admin_fee_collected
 
             repayment_recovery_rate = 0
+            outstanding_rate = 0
             if total_expected_repayment > 0:
-                repayment_recovery_rate = (total_loan_principal_collected + total_admin_fee_collected) / total_expected_repayment
+                repayment_recovery_rate = collected / total_expected_repayment
+                outstanding_rate = outstanding / total_expected_repayment
 
             admin_fee_profit = total_admin_fee_collected - total_unrecovered_repayment
 
@@ -4377,6 +4619,8 @@ def get_repayment_risk_monthly_summary(db: Session,
                 "total_expected_repayment": total_expected_repayment,
                 "total_loan_principal_collected": total_loan_principal_collected,
                 "total_unrecovered_repayment": total_unrecovered_repayment,
+                "total_outstanding_repayment": outstanding,
+                "outstanding_rate": outstanding_rate,
                 "admin_fee_profit": admin_fee_profit
             }
 
@@ -4388,7 +4632,22 @@ def get_repayment_risk_monthly_summary(db: Session,
                 "total_expected_repayment": 0,
                 "total_loan_principal_collected": 0,
                 "total_unrecovered_repayment": total_unrecovered_repayment,
+                "total_outstanding_repayment": 0,
+                "outstanding_rate": 0,
                 "admin_fee_profit": -total_unrecovered_repayment,
+            }
+
+        for month_year, outstanding in monthly_outstanding.items():
+            if month_year in monthly_data:
+                continue
+            monthly_data[month_year] = {
+                "repayment_recovery_rate": 0,
+                "total_expected_repayment": 0,
+                "total_loan_principal_collected": 0,
+                "total_unrecovered_repayment": 0,
+                "total_outstanding_repayment": outstanding,
+                "outstanding_rate": 0,
+                "admin_fee_profit": 0,
             }
 
         return monthly_data
