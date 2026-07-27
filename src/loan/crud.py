@@ -755,6 +755,80 @@ def get_total_eligible_employees(
         return 0
 
 
+_TOTAL_ELIGIBLE_WITH_PROJECT_SNAPSHOT_SQL = """
+SELECT COUNT(DISTINCT de.project) AS total_coverage_project
+FROM data_record_eligible de
+WHERE de.snapshot_date BETWEEN :start_date AND :end_date
+  AND de.project IS NOT NULL AND de.project <> ''
+  AND (:f_company IS NULL OR de.company = :f_company)
+  AND (:f_sourced_to IS NULL OR de.sourced_to = :f_sourced_to)
+  AND (:f_project IS NULL OR de.project = :f_project)
+  AND (:f_branch IS NULL OR de.branch = :f_branch)
+  AND ({segment_predicate})
+  AND (:f_product IS NULL OR de.product_type = :f_product)
+"""
+
+
+def get_total_coverage_project(
+    db: Session,
+    *,
+    start_date: str = None,
+    end_date: str = None,
+    as_of_date: str = None,
+    employer_filter: str = None,
+    sourced_to_filter: str = None,
+    project_filter: str = None,
+    branch_filter: str = None,
+    client_segment_filter: str = None,
+    product_type_filter: str = None,
+) -> int:
+    """
+    Count of distinct coverage projects (de.project) among eligible employees
+    in the data_record_eligible snapshot. Same filter semantics as
+    get_total_eligible_employees; no data_record fallback since that source
+    has no project column.
+    """
+    try:
+        range_start, range_end = _eligible_date_range(
+            start_date=start_date,
+            end_date=end_date,
+            as_of_date=as_of_date,
+        )
+
+        company_filter = _resolve_gmc_code(
+            db, value=employer_filter, group_gmc="sub_client"
+        )
+        sourced_to_code = _resolve_gmc_code(
+            db, value=sourced_to_filter, group_gmc="placement_client"
+        )
+        project_code = _resolve_gmc_code(
+            db, value=project_filter, group_gmc="client_project"
+        )
+
+        params = {
+            "start_date": range_start,
+            "end_date": range_end,
+            "f_company": company_filter,
+            "f_sourced_to": sourced_to_code,
+            "f_project": project_code,
+            "f_branch": branch_filter,
+            "f_product": product_type_filter,
+        }
+        segment_predicate = _eligible_segment_predicate(
+            client_segment_filter, params, db
+        )
+
+        query = _TOTAL_ELIGIBLE_WITH_PROJECT_SNAPSHOT_SQL.format(
+            segment_predicate=segment_predicate
+        )
+        record = db.execute(text(query), params).fetchone()
+        return int(record[0] or 0) if record else 0
+    except Exception:
+        import traceback
+        traceback.print_exc()
+        return 0
+
+
 def _append_proses_date_range(query: str, params: dict, start_date: str, end_date: str) -> str:
     return append_date_filters(
         query,
@@ -1200,11 +1274,11 @@ def _merge_karyawan_overdue_lists(lists: List[list]) -> list:
 
 
 def get_enhanced_karyawan(db: Session, limit: int = 1000000,
-                          employer_filter: str = None, sourced_to_filter: str = None, 
+                          employer_filter: str = None, sourced_to_filter: str = None,
                           project_filter: str = None, client_segment_filter: str = None,
                           product_type_filter: str = None, id_karyawan_filter: int = None) -> List[dict]:
     """Get enhanced karyawan data with join to tbl_gmc table"""
-    
+
     try:
         # Build the base query with table joins (same database)
         base_query = """
@@ -1234,23 +1308,23 @@ def get_enhanced_karyawan(db: Session, limit: int = 1000000,
             AND prj.keterangan3 = 1
         WHERE 1=1
         """
-        
+
         # Build parameters dict for filters
         params = {}
-        
+
         # Add filters
         if id_karyawan_filter:
             base_query += " AND tk.id_karyawan = :id_karyawan"
             params['id_karyawan'] = id_karyawan_filter
-            
+
         if employer_filter:
             base_query += " AND emp.keterangan = :employer"
             params['employer'] = employer_filter
-            
+
         if sourced_to_filter:
             base_query += " AND src.keterangan = :sourced_to"
             params['sourced_to'] = sourced_to_filter
-            
+
         if project_filter:
             base_query += " AND prj.keterangan = :project"
             params['project'] = project_filter
@@ -1258,18 +1332,18 @@ def get_enhanced_karyawan(db: Session, limit: int = 1000000,
         base_query = _apply_project_management_filters(
             base_query, params, client_segment_filter, product_type_filter, db=db
         )
-        
+
         # Add limit
         base_query += f" LIMIT {limit}"
-        
 
-        
+
+
         # Execute the main query
         result = db.execute(text(base_query), params)
         records = result.fetchall()
-        
 
-        
+
+
         # Convert to list of dictionaries
         karyawan_list = []
         for record in records:
@@ -1282,20 +1356,20 @@ def get_enhanced_karyawan(db: Session, limit: int = 1000000,
                 "sourced_to_name": record[5],
                 "project_name": record[6]
             })
-        
+
         return karyawan_list
-        
+
     except Exception as e:
         import traceback
         traceback.print_exc()
         return []
 
 
-def get_user_coverage_summary(db: Session, 
-                             employer_filter: str = None, sourced_to_filter: str = None, 
+def get_user_coverage_summary(db: Session,
+                             employer_filter: str = None, sourced_to_filter: str = None,
                              project_filter: str = None, client_segment_filter: str = None, product_type_filter: str = None, id_karyawan_filter: int = None, start_date: str = None, end_date: str = None) -> dict:
     """Get user coverage summary with eligible count and loan request metrics"""
-    
+
     try:
         # Set default loan conditions for kasbon/loan type
         loan_conditions = LOAN_CONDITIONS
@@ -1318,10 +1392,10 @@ def get_user_coverage_summary(db: Session,
             AND prj.group_gmc = 'client_project'
             AND prj.aktif = 'Yes'
             AND prj.keterangan3 = 1
-        WHERE tk.status = '1' 
+        WHERE tk.status = '1'
         AND tk.loan_kasbon_eligible = '1'
         """
-        
+
         # Build the processed loan requests query
         processed_requests_query = """
         SELECT COUNT(*)
@@ -1346,7 +1420,7 @@ def get_user_coverage_summary(db: Session,
         WHERE l.loan_status IN (1, 2, 3, 4)
         AND {loan_conditions}
         """.format(loan_conditions=loan_conditions)
-        
+
         # Build the pending loan requests query
         pending_requests_query = """
         SELECT COUNT(*)
@@ -1371,7 +1445,7 @@ def get_user_coverage_summary(db: Session,
         WHERE l.loan_status = 0
         AND {loan_conditions}
         """.format(loan_conditions=loan_conditions)
-        
+
         # Build the first-time borrowers query
         first_borrow_query = """
         SELECT COUNT(DISTINCT l.id_karyawan)
@@ -1395,16 +1469,16 @@ def get_user_coverage_summary(db: Session,
             AND prj.keterangan3 = 1
         WHERE l.loan_status IN (0, 1, 2, 3)
         AND NOT EXISTS (
-            SELECT 1 
-            FROM td_loan l2 
-            WHERE l2.id_karyawan = l.id_karyawan 
-            AND l2.loan_status = 2 
+            SELECT 1
+            FROM td_loan l2
+            WHERE l2.id_karyawan = l.id_karyawan
+            AND l2.loan_status = 2
             AND l2.proses_date < l.proses_date
             AND {loan_conditions}
         )
         AND {loan_conditions}
         """.format(loan_conditions=loan_conditions)
-        
+
         # Build the approved requests query
         approved_requests_query = """
         SELECT COUNT(*)
@@ -1429,7 +1503,7 @@ def get_user_coverage_summary(db: Session,
         WHERE l.loan_status IN (1, 2, 4)
         AND {loan_conditions}
         """.format(loan_conditions=loan_conditions)
-        
+
         # Build the rejected requests query
         rejected_requests_query = """
         SELECT COUNT(*)
@@ -1454,7 +1528,7 @@ def get_user_coverage_summary(db: Session,
         WHERE l.loan_status = 3
         AND {loan_conditions}
         """.format(loan_conditions=loan_conditions)
-        
+
         # Build the average approval time query
         avg_approval_time_query = """
         SELECT AVG(DATEDIFF(l.proses_date, l.received_date))
@@ -1481,7 +1555,7 @@ def get_user_coverage_summary(db: Session,
         AND l.received_date IS NOT NULL
         AND {loan_conditions}
         """.format(loan_conditions=loan_conditions)
-        
+
         # Build the total disbursed amount query
         total_disbursed_amount_query = """
         SELECT SUM(l.total_loan)
@@ -1506,7 +1580,7 @@ def get_user_coverage_summary(db: Session,
         WHERE l.loan_status IN (1, 2, 4)
         AND {loan_conditions}
         """.format(loan_conditions=loan_conditions)
-        
+
         # Build the total loans query (for average calculation - count all loans, not unique borrowers)
         total_loans_query = """
         SELECT COUNT(*)
@@ -1531,10 +1605,10 @@ def get_user_coverage_summary(db: Session,
         WHERE l.loan_status IN (1, 2, 4)
         AND {loan_conditions}
         """.format(loan_conditions=loan_conditions)
-        
+
         # Build parameters dict for filters
         params = {}
-        
+
         # Add filters to all queries
         if id_karyawan_filter:
             eligible_count_query += " AND tk.id_karyawan = :id_karyawan"
@@ -1635,53 +1709,53 @@ def get_user_coverage_summary(db: Session,
             eligible_count_query, params, client_segment_filter, product_type_filter, db=db
         )
 
-        
+
         # Execute all queries
         eligible_result = db.execute(text(eligible_count_query), params)
         total_eligible = eligible_result.fetchone()[0]
-        
+
         processed_result = db.execute(text(processed_requests_query), params)
         total_processed = processed_result.fetchone()[0]
-        
+
         pending_result = db.execute(text(pending_requests_query), params)
         total_pending = pending_result.fetchone()[0]
-        
+
         first_borrow_result = db.execute(text(first_borrow_query), params)
         total_first_borrow = first_borrow_result.fetchone()[0]
-        
+
         approved_result = db.execute(text(approved_requests_query), params)
         total_approved = approved_result.fetchone()[0]
-        
+
         rejected_result = db.execute(text(rejected_requests_query), params)
         total_rejected = rejected_result.fetchone()[0]
-        
+
         avg_approval_time_result = db.execute(text(avg_approval_time_query), params)
         avg_approval_time = avg_approval_time_result.fetchone()[0] or 0
-        
+
         # Execute the new queries
         total_disbursed_amount_result = db.execute(text(total_disbursed_amount_query), params)
         total_disbursed_amount = total_disbursed_amount_result.fetchone()[0] or 0
-        
+
         total_loans_result = db.execute(text(total_loans_query), params)
         total_loans = total_loans_result.fetchone()[0] or 0
-        
+
         # Calculate penetration rate
         penetration_rate = 0
         if total_eligible > 0:
             penetration_rate = total_processed / total_eligible
-            
+
         # Calculate approval rate
         approval_rate = 0
         if total_processed > 0:
             approval_rate = total_approved / total_processed
-            
+
         # Calculate average disbursed amount (per loan, not per borrower)
         average_disbursed_amount = 0
         if total_loans > 0:
             average_disbursed_amount = total_disbursed_amount / total_loans
-        
 
-        
+
+
         return {
             "total_eligible_employees": total_eligible,
             "total_processed_loan_requests": total_processed,
@@ -1696,7 +1770,7 @@ def get_user_coverage_summary(db: Session,
             "average_approval_time": avg_approval_time,
             "penetration_rate": penetration_rate
         }
-        
+
     except Exception as e:
         import traceback
         traceback.print_exc()
@@ -1807,11 +1881,11 @@ def get_user_coverage_monthly_summary(
         return {}
 
 
-def get_requests_endpoint(db: Session, 
-                         employer_filter: str = None, sourced_to_filter: str = None, 
+def get_requests_endpoint(db: Session,
+                         employer_filter: str = None, sourced_to_filter: str = None,
                          project_filter: str = None, client_segment_filter: str = None, product_type_filter: str = None, id_karyawan_filter: int = None, start_date: str = None, end_date: str = None) -> dict:
     """Get requests metrics: total_approved_requests, total_rejected_requests, approval_rate, average_approval_time"""
-    
+
     try:
         loan_conditions = LOAN_CONDITIONS
         # Build the approved requests query
@@ -1838,7 +1912,7 @@ def get_requests_endpoint(db: Session,
         WHERE l.loan_status IN (1, 2, 4)
         AND {loan_conditions}
         """.format(loan_conditions=loan_conditions)
-        
+
         # Build the rejected requests query
         rejected_requests_query = """
         SELECT COUNT(*)
@@ -1863,7 +1937,7 @@ def get_requests_endpoint(db: Session,
         WHERE l.loan_status = 3
         AND {loan_conditions}
         """.format(loan_conditions=loan_conditions)
-        
+
         # Build the total processed requests query (for approval rate calculation)
         total_processed_query = """
         SELECT COUNT(*)
@@ -1888,15 +1962,15 @@ def get_requests_endpoint(db: Session,
         WHERE l.loan_status IN (1, 2, 3, 4)
         AND {loan_conditions}
         """.format(loan_conditions=loan_conditions)
-        
+
         # Build the average approval time query
         avg_approval_time_query = """
         SELECT AVG(
-            CASE 
-                WHEN l.proses_date IS NOT NULL 
-                AND l.received_date IS NOT NULL 
-                AND l.proses_date > l.received_date 
-                AND l.proses_date >= '1900-01-01' 
+            CASE
+                WHEN l.proses_date IS NOT NULL
+                AND l.received_date IS NOT NULL
+                AND l.proses_date > l.received_date
+                AND l.proses_date >= '1900-01-01'
                 AND l.received_date >= '1900-01-01'
                 THEN DATEDIFF(l.proses_date, l.received_date)
                 ELSE NULL
@@ -1923,10 +1997,10 @@ def get_requests_endpoint(db: Session,
         WHERE l.loan_status = 1
         AND {loan_conditions}
         """.format(loan_conditions=loan_conditions)
-        
+
         # Build parameters dict for filters
         params = {}
-        
+
         # Add filters to all queries
         if id_karyawan_filter:
             approved_requests_query += " AND l.id_karyawan = :id_karyawan"
@@ -1985,31 +2059,31 @@ def get_requests_endpoint(db: Session,
         # Execute all queries
         approved_result = db.execute(text(approved_requests_query), params)
         total_approved = approved_result.fetchone()[0]
-        
+
         rejected_result = db.execute(text(rejected_requests_query), params)
         total_rejected = rejected_result.fetchone()[0]
-        
+
         total_processed_result = db.execute(text(total_processed_query), params)
         total_processed = total_processed_result.fetchone()[0]
-        
+
         avg_approval_time_result = db.execute(text(avg_approval_time_query), params)
         avg_approval_time_record = avg_approval_time_result.fetchone()
         avg_approval_time = avg_approval_time_record[0] if avg_approval_time_record and avg_approval_time_record[0] is not None else 0
-        
+
         # Calculate approval rate
         approval_rate = 0
         if total_processed > 0:
             approval_rate = total_approved / total_processed
-        
 
-        
+
+
         return {
             "total_approved_requests": total_approved,
             "total_rejected_requests": total_rejected,
             "approval_rate": approval_rate,
             "average_approval_time": avg_approval_time
         }
-        
+
     except Exception as e:
         import traceback
         traceback.print_exc()
@@ -2021,11 +2095,11 @@ def get_requests_endpoint(db: Session,
         }
 
 
-def get_disbursement_endpoint(db: Session, 
-                             employer_filter: str = None, sourced_to_filter: str = None, 
+def get_disbursement_endpoint(db: Session,
+                             employer_filter: str = None, sourced_to_filter: str = None,
                              project_filter: str = None, client_segment_filter: str = None, product_type_filter: str = None, id_karyawan_filter: int = None, start_date: str = None, end_date: str = None) -> dict:
     """Get disbursement metrics: total_disbursed_amount, average_disbursed_amount"""
-    
+
     try:
         loan_conditions = LOAN_CONDITIONS
         # Build the total disbursed amount query
@@ -2052,7 +2126,7 @@ def get_disbursement_endpoint(db: Session,
         WHERE l.loan_status IN (1, 2, 4)
         AND {loan_conditions}
         """.format(loan_conditions=loan_conditions)
-        
+
         # Build the total loan count query (for average calculation - count all loans, not unique borrowers)
         total_loans_query = """
         SELECT COUNT(*)
@@ -2077,10 +2151,10 @@ def get_disbursement_endpoint(db: Session,
         WHERE l.loan_status IN (1, 2, 4)
         AND {loan_conditions}
         """.format(loan_conditions=loan_conditions)
-        
+
         # Build parameters dict for filters
         params = {}
-        
+
         # Add filters to all queries
         if id_karyawan_filter:
             total_disbursed_amount_query += " AND l.id_karyawan = :id_karyawan"
@@ -2121,22 +2195,22 @@ def get_disbursement_endpoint(db: Session,
         # Execute all queries
         total_disbursed_amount_result = db.execute(text(total_disbursed_amount_query), params)
         total_disbursed_amount = total_disbursed_amount_result.fetchone()[0] or 0
-        
+
         total_loans_result = db.execute(text(total_loans_query), params)
         total_loans = total_loans_result.fetchone()[0] or 0
-        
+
         # Calculate average disbursed amount (per loan, not per borrower)
         average_disbursed_amount = 0
         if total_loans > 0:
             average_disbursed_amount = total_disbursed_amount / total_loans
-        
 
-        
+
+
         return {
             "total_disbursed_amount": total_disbursed_amount,
             "average_disbursed_amount": average_disbursed_amount
         }
-        
+
     except Exception as e:
         import traceback
         traceback.print_exc()
@@ -2147,15 +2221,15 @@ def get_disbursement_endpoint(db: Session,
 
 
 def get_disbursement_monthly_endpoint(db: Session, start_date: str = None, end_date: str = None,
-                                    employer_filter: str = None, sourced_to_filter: str = None, 
+                                    employer_filter: str = None, sourced_to_filter: str = None,
                                     project_filter: str = None, client_segment_filter: str = None,
                                     product_type_filter: str = None, id_karyawan_filter: int = None) -> dict:
     """Get disbursement monthly data: total disbursed amount and average disbursed amount by month"""
-    
+
     try:
         loan_conditions = LOAN_CONDITIONS
         monthly_query = """
-        SELECT 
+        SELECT
             DATE_FORMAT(l.proses_date, '%M %Y') as month_year,
             SUM(CASE WHEN l.loan_status IN (1, 2, 4) THEN l.total_loan ELSE 0 END) as total_disbursed_amount,
             COUNT(CASE WHEN l.loan_status IN (1, 2, 4) THEN 1 END) as total_loans
@@ -2181,13 +2255,13 @@ def get_disbursement_monthly_endpoint(db: Session, start_date: str = None, end_d
         AND l.proses_date BETWEEN :start_date AND :end_date
         AND {loan_conditions}
         """.format(loan_conditions=loan_conditions)
-        
+
         # Build parameters dict for monthly query
         monthly_params = {
             'start_date': start_date,
             'end_date': end_date
         }
-        
+
         # Add filters to monthly query
         if id_karyawan_filter:
             monthly_query += " AND l.id_karyawan = :id_karyawan"
@@ -2205,56 +2279,56 @@ def get_disbursement_monthly_endpoint(db: Session, start_date: str = None, end_d
         monthly_query = _apply_project_management_filters(
             monthly_query, monthly_params, client_segment_filter, product_type_filter, db=db
         )
-        
+
         monthly_query += """
         GROUP BY DATE_FORMAT(l.proses_date, '%M %Y')
         ORDER BY l.proses_date
         """
-        
 
-        
+
+
         # Execute monthly query
         result = db.execute(text(monthly_query), monthly_params)
         rows = result.fetchall()
-        
+
         # Process results
         monthly_data = {}
         for row in rows:
             month_year = row[0]
             if month_year is None:
                 continue
-                
+
             total_disbursed_amount = row[1] or 0
             total_loans = row[2] or 0
-            
+
             # Calculate average disbursed amount
             average_disbursed_amount = 0
             if total_loans > 0:
                 average_disbursed_amount = total_disbursed_amount / total_loans
-            
+
             monthly_data[month_year] = {
                 "total_disbursed_amount": total_disbursed_amount,
                 "total_loans": total_loans,
                 "average_disbursed_amount": average_disbursed_amount
             }
-        
 
-        
+
+
         return monthly_data
-        
+
     except Exception as e:
         import traceback
         traceback.print_exc()
         return {}
 
 
-def get_loans_with_karyawan(db: Session, limit: int = 1000000, 
-                           employer_filter: str = None, sourced_to_filter: str = None, 
+def get_loans_with_karyawan(db: Session, limit: int = 1000000,
+                           employer_filter: str = None, sourced_to_filter: str = None,
                            project_filter: str = None, client_segment_filter: str = None,
                            product_type_filter: str = None, loan_status_filter: int = None,
                            id_karyawan_filter: int = None, loan_type: str = "loan") -> List[dict]:
     """Get loans data with enhanced karyawan information"""
-    
+
     try:
         loan_conditions = resolve_loan_conditions(loan_type, db)
 
@@ -2307,21 +2381,21 @@ def get_loans_with_karyawan(db: Session, limit: int = 1000000,
         {_project_management_label_joins_sql()}
         WHERE {loan_conditions}
         """
-        
+
         params = {}
-        
+
         if id_karyawan_filter:
             base_query += " AND l.id_karyawan = :id_karyawan"
             params['id_karyawan'] = id_karyawan_filter
-            
+
         if employer_filter:
             base_query += " AND emp.keterangan = :employer"
             params['employer'] = employer_filter
-            
+
         if sourced_to_filter:
             base_query += " AND src.keterangan = :sourced_to"
             params['sourced_to'] = sourced_to_filter
-            
+
         if project_filter:
             base_query += " AND prj.keterangan = :project"
             params['project'] = project_filter
@@ -2329,18 +2403,18 @@ def get_loans_with_karyawan(db: Session, limit: int = 1000000,
         base_query = _apply_project_management_filters(
             base_query, params, client_segment_filter, product_type_filter, db=db
         )
-            
+
         if loan_status_filter is not None:
             base_query += " AND l.loan_status = :loan_status"
             params['loan_status'] = loan_status_filter
         else:
             base_query += " AND l.loan_status IN (1, 2, 4)"
-        
+
         base_query += f" LIMIT {limit}"
-        
+
         result = db.execute(text(base_query), params)
         records = result.fetchall()
-        
+
         loans_list = []
         for record in records:
             loans_list.append({
@@ -2371,9 +2445,9 @@ def get_loans_with_karyawan(db: Session, limit: int = 1000000,
                 "product_type_id": record[24],
                 "product_type_name": record[25],
             })
-        
+
         return loans_list
-        
+
     except Exception as e:
         import traceback
         traceback.print_exc()
@@ -2382,24 +2456,24 @@ def get_loans_with_karyawan(db: Session, limit: int = 1000000,
 
 def get_available_filter_values(db: Session, employer_filter: str = None, placement_filter: str = None, loan_type: str = "loan") -> dict:
     """Get available filter values from tbl_gmc table for different categories with cascading filters"""
-    
+
     try:
         # Get employers (sub_client) - conditional based on loan type
         company_filter = COMPANY_FILTER
-            
+
         employer_query = f"""
-        SELECT DISTINCT keterangan 
-        FROM tbl_gmc 
-        WHERE group_gmc = 'sub_client' 
-        AND aktif = 'Yes' 
+        SELECT DISTINCT keterangan
+        FROM tbl_gmc
+        WHERE group_gmc = 'sub_client'
+        AND aktif = 'Yes'
         AND keterangan3 = 1
         AND keterangan IN {company_filter}
         ORDER BY keterangan
         """
-        
+
         # Get placement clients - filtered by employer if provided, but only show those related to the two allowed companies
         placement_query = f"""
-        SELECT DISTINCT src.keterangan 
+        SELECT DISTINCT src.keterangan
         FROM tbl_gmc src
         INNER JOIN td_karyawan tk ON src.kode_gmc = tk.placement
         INNER JOIN tbl_gmc emp ON tk.valdo_inc = emp.kode_gmc
@@ -2411,15 +2485,15 @@ def get_available_filter_values(db: Session, employer_filter: str = None, placem
         AND src.aktif = 'Yes'
         AND src.keterangan3 = 1
         """
-        
+
         if employer_filter:
             placement_query += " AND emp.keterangan = :employer"
-        
+
         placement_query += " ORDER BY src.keterangan"
-        
+
         # Get projects - filtered by employer and/or placement if provided, but only show those related to the allowed companies
         project_query = f"""
-        SELECT DISTINCT prj.keterangan 
+        SELECT DISTINCT prj.keterangan
         FROM tbl_gmc prj
         INNER JOIN td_karyawan tk ON prj.kode_gmc = tk.project
         INNER JOIN tbl_gmc emp ON tk.valdo_inc = emp.kode_gmc
@@ -2431,26 +2505,26 @@ def get_available_filter_values(db: Session, employer_filter: str = None, placem
         AND prj.aktif = 'Yes'
         AND prj.keterangan3 = 1
         """
-        
+
         if employer_filter:
             project_query += " AND emp.keterangan = :employer"
-            
+
         if placement_filter:
             project_query += " AND EXISTS (SELECT 1 FROM tbl_gmc src INNER JOIN td_karyawan tk2 ON src.kode_gmc = tk2.placement WHERE tk2.id_karyawan = tk.id_karyawan AND src.keterangan = :placement AND src.group_gmc = 'placement_client' AND src.aktif = 'Yes' AND src.keterangan3 = 1)"
-        
+
         project_query += " ORDER BY prj.keterangan"
-        
+
         # Build parameters for filtered queries
         placement_params = {}
         project_params = {}
-        
+
         if employer_filter:
             placement_params['employer'] = employer_filter
             project_params['employer'] = employer_filter
-        
+
         if placement_filter:
             project_params['placement'] = placement_filter
-        
+
         # Execute queries
         employers = [row[0] for row in db.execute(text(employer_query)).fetchall()]
         placements = [row[0] for row in db.execute(text(placement_query), placement_params).fetchall()]
@@ -2465,7 +2539,7 @@ def get_available_filter_values(db: Session, employer_filter: str = None, placem
             "client_segment_groups": pm_options["client_segment_groups"],
             "product_types": pm_options["product_types"],
         }
-        
+
     except Exception as e:
         import traceback
         traceback.print_exc()
@@ -2480,12 +2554,12 @@ def get_available_filter_values(db: Session, employer_filter: str = None, placem
         }
 
 
-def get_loan_fees_summary(db: Session, 
-                          employer_filter: str = None, sourced_to_filter: str = None, 
+def get_loan_fees_summary(db: Session,
+                          employer_filter: str = None, sourced_to_filter: str = None,
                           project_filter: str = None, client_segment_filter: str = None, product_type_filter: str = None, loan_status_filter: int = None,
                           id_karyawan_filter: int = None, start_date: str = None, end_date: str = None) -> dict:
     """Get loan fees summary (total expected and collected admin fees)"""
-    
+
     try:
         loan_conditions = LOAN_CONDITIONS
         # Build the query to calculate admin fees
@@ -2517,33 +2591,33 @@ def get_loan_fees_summary(db: Session,
         WHERE 1=1
         AND {loan_conditions}
         """.format(loan_conditions=loan_conditions)
-        
+
         # Build parameters dict for filters
         params = {}
-        
+
         # Add filters
         if id_karyawan_filter:
             fees_query += " AND l.id_karyawan = :id_karyawan"
             params['id_karyawan'] = id_karyawan_filter
-            
+
         if employer_filter:
             fees_query += " AND emp.keterangan = :employer"
             params['employer'] = employer_filter
-            
+
         if sourced_to_filter:
             fees_query += " AND src.keterangan = :sourced_to"
             params['sourced_to'] = sourced_to_filter
-            
+
         if project_filter:
             fees_query += " AND prj.keterangan = :project"
             params['project'] = project_filter
-            
+
         fees_query = _apply_project_management_filters(fees_query, params, client_segment_filter, product_type_filter, db=db)
 
         if loan_status_filter is not None:
             fees_query += " AND l.loan_status = :loan_status"
             params['loan_status'] = loan_status_filter
-            
+
         # Add date filters based on proses_date
         if start_date and end_date:
             fees_query = append_date_filters(
@@ -2556,18 +2630,18 @@ def get_loan_fees_summary(db: Session,
         # Execute the query
         result = db.execute(text(fees_query), params)
         record = result.fetchone()
-        
+
         # Extract the values (handle None values)
         total_expected = record[0] if record[0] is not None else 0
         expected_count = record[1] if record[1] is not None else 0
         total_collected = record[2] if record[2] is not None else 0
         collected_count = record[3] if record[3] is not None else 0
         total_failed_payment = record[4] if record[4] is not None else 0
-        
+
         # Calculate admin_fee_profit: total_collected_admin_fee - total_failed_payment
         admin_fee_profit = total_collected - total_failed_payment
-        
-        
+
+
         return {
             "total_expected_admin_fee": total_expected,
             "expected_loans_count": expected_count,
@@ -2576,7 +2650,7 @@ def get_loan_fees_summary(db: Session,
             "total_failed_payment": total_failed_payment,
             "admin_fee_profit": admin_fee_profit
         }
-        
+
     except Exception as e:
         import traceback
         traceback.print_exc()
@@ -2590,13 +2664,13 @@ def get_loan_fees_summary(db: Session,
         }
 
 
-def get_loan_fees_monthly_summary(db: Session, 
-                                  employer_filter: str = None, sourced_to_filter: str = None, 
+def get_loan_fees_monthly_summary(db: Session,
+                                  employer_filter: str = None, sourced_to_filter: str = None,
                                   project_filter: str = None, client_segment_filter: str = None, product_type_filter: str = None, loan_status_filter: int = None,
                                   id_karyawan_filter: int = None, start_date: str = None,
                                   end_date: str = None) -> dict:
     """Get loan fees summary separated by months within a date range"""
-    
+
     try:
         loan_conditions = LOAN_CONDITIONS
         # Build the query to calculate admin fees by month
@@ -2629,52 +2703,52 @@ def get_loan_fees_monthly_summary(db: Session,
         WHERE l.proses_date IS NOT NULL
         AND {loan_conditions}
         """.format(loan_conditions=loan_conditions)
-        
+
         # Build parameters dict for filters
         params = {}
-        
+
         # Add filters
         if id_karyawan_filter:
             fees_query += " AND l.id_karyawan = :id_karyawan"
             params['id_karyawan'] = id_karyawan_filter
-            
+
         if employer_filter:
             fees_query += " AND emp.keterangan = :employer"
             params['employer'] = employer_filter
-            
+
         if sourced_to_filter:
             fees_query += " AND src.keterangan = :sourced_to"
             params['sourced_to'] = sourced_to_filter
-            
+
         if project_filter:
             fees_query += " AND prj.keterangan = :project"
             params['project'] = project_filter
-            
+
         fees_query = _apply_project_management_filters(fees_query, params, client_segment_filter, product_type_filter, db=db)
 
         if loan_status_filter is not None:
             fees_query += " AND l.loan_status = :loan_status"
             params['loan_status'] = loan_status_filter
-            
+
         # Add date range filters based on proses_date
         if start_date:
             fees_query += " AND l.proses_date >= :start_date"
             params['start_date'] = start_date
-            
+
         if end_date:
             fees_query += " AND l.proses_date <= :end_date"
             params['end_date'] = end_date
-        
+
         # Group by month and year, order by date
         fees_query += """
         GROUP BY DATE_FORMAT(l.proses_date, '%M %Y')
         ORDER BY MIN(l.proses_date)
         """
-        
+
         # Execute the query
         result = db.execute(text(fees_query), params)
         records = result.fetchall()
-        
+
         # Convert to dictionary with month_year as key
         monthly_data = {}
         for record in records:
@@ -2682,16 +2756,16 @@ def get_loan_fees_monthly_summary(db: Session,
             # Skip records with NULL month_year
             if month_year is None:
                 continue
-                
+
             total_expected = record[1] if record[1] is not None else 0
             expected_count = record[2] if record[2] is not None else 0
             total_collected = record[3] if record[3] is not None else 0
             collected_count = record[4] if record[4] is not None else 0
             total_failed_payment = record[5] if record[5] is not None else 0
-            
+
             # Calculate admin_fee_profit: total_collected_admin_fee - total_failed_payment
             admin_fee_profit = total_collected - total_failed_payment
-            
+
             monthly_data[month_year] = {
                 "total_expected_admin_fee": total_expected,
                 "expected_loans_count": expected_count,
@@ -2700,22 +2774,22 @@ def get_loan_fees_monthly_summary(db: Session,
                 "total_failed_payment": total_failed_payment,
                 "admin_fee_profit": admin_fee_profit
             }
-        
-    
+
+
         return monthly_data
-        
+
     except Exception as e:
         import traceback
         traceback.print_exc()
         return {}
 
 
-def get_loan_risk_summary(db: Session, 
-                          employer_filter: str = None, sourced_to_filter: str = None, 
+def get_loan_risk_summary(db: Session,
+                          employer_filter: str = None, sourced_to_filter: str = None,
                           project_filter: str = None, client_segment_filter: str = None, product_type_filter: str = None, loan_status_filter: int = None,
                           id_karyawan_filter: int = None, start_date: str = None, end_date: str = None) -> dict:
     """Get loan risk summary with various risk metrics"""
-    
+
     try:
         loan_conditions = LOAN_CONDITIONS
         # Build the query to calculate risk metrics
@@ -2747,33 +2821,33 @@ def get_loan_risk_summary(db: Session,
         WHERE 1=1
         AND {loan_conditions}
         """.format(loan_conditions=loan_conditions)
-        
+
         # Build parameters dict for filters
         params = {}
-        
+
         # Add filters
         if id_karyawan_filter:
             risk_query += " AND l.id_karyawan = :id_karyawan"
             params['id_karyawan'] = id_karyawan_filter
-            
+
         if employer_filter:
             risk_query += " AND emp.keterangan = :employer"
             params['employer'] = employer_filter
-            
+
         if sourced_to_filter:
             risk_query += " AND src.keterangan = :sourced_to"
             params['sourced_to'] = sourced_to_filter
-            
+
         if project_filter:
             risk_query += " AND prj.keterangan = :project"
             params['project'] = project_filter
-            
+
         risk_query = _apply_project_management_filters(risk_query, params, client_segment_filter, product_type_filter, db=db)
 
         if loan_status_filter is not None:
             risk_query += " AND l.loan_status = :loan_status"
             params['loan_status'] = loan_status_filter
-            
+
         # Add month and year filters based on proses_date
         if start_date and end_date:
             risk_query = append_date_filters(
@@ -2786,27 +2860,27 @@ def get_loan_risk_summary(db: Session,
         # Execute the query
         result = db.execute(text(risk_query), params)
         record = result.fetchone()
-        
+
         # Extract the values (handle None values)
         total_unrecovered_loan = record[0] if record[0] is not None else 0
         unrecovered_loan_count = record[1] if record[1] is not None else 0
         total_expected_repayment = record[2] if record[2] is not None else 0
         total_paid = record[3] if record[3] is not None else 0
         total_disbursed = record[4] if record[4] is not None else 0
-        
+
         # Calculate loan principal recovery rate
         loan_principal_recovery_rate = 0
         if total_disbursed > 0:
             loan_principal_recovery_rate = total_paid / total_disbursed
-        
-    
+
+
         return {
             "total_unrecovered_loan": total_unrecovered_loan,
             "unrecovered_loan_count": unrecovered_loan_count,
             "total_expected_repayment": total_expected_repayment,
             "loan_principal_recovery_rate": loan_principal_recovery_rate
         }
-        
+
     except Exception as e:
         import traceback
         traceback.print_exc()
@@ -2818,13 +2892,13 @@ def get_loan_risk_summary(db: Session,
         }
 
 
-def get_loan_risk_monthly_summary(db: Session, 
-                                  employer_filter: str = None, sourced_to_filter: str = None, 
+def get_loan_risk_monthly_summary(db: Session,
+                                  employer_filter: str = None, sourced_to_filter: str = None,
                                   project_filter: str = None, client_segment_filter: str = None, product_type_filter: str = None, loan_status_filter: int = None,
                                   id_karyawan_filter: int = None, start_date: str = None,
                                   end_date: str = None) -> dict:
     """Get loan risk summary separated by months within a date range"""
-    
+
     try:
         loan_conditions = LOAN_CONDITIONS
         # Build the query to calculate risk metrics by month
@@ -2857,54 +2931,54 @@ def get_loan_risk_monthly_summary(db: Session,
         WHERE l.proses_date IS NOT NULL
         AND {loan_conditions}
         """.format(loan_conditions=loan_conditions)
-        
+
         # Build parameters dict for filters
         params = {}
-        
+
         # Add filters
         if id_karyawan_filter:
             risk_query += " AND l.id_karyawan = :id_karyawan"
             params['id_karyawan'] = id_karyawan_filter
-            
+
         if employer_filter:
             risk_query += " AND emp.keterangan = :employer"
             params['employer'] = employer_filter
-            
+
         if sourced_to_filter:
             risk_query += " AND src.keterangan = :sourced_to"
             params['sourced_to'] = sourced_to_filter
-            
+
         if project_filter:
             risk_query += " AND prj.keterangan = :project"
             params['project'] = project_filter
-            
+
         risk_query = _apply_project_management_filters(risk_query, params, client_segment_filter, product_type_filter, db=db)
 
         if loan_status_filter is not None:
             risk_query += " AND l.loan_status = :loan_status"
             params['loan_status'] = loan_status_filter
-            
+
         # Add date range filters based on proses_date
         if start_date:
             risk_query += " AND l.proses_date >= :start_date"
             params['start_date'] = start_date
-            
+
         if end_date:
             risk_query += " AND l.proses_date <= :end_date"
             params['end_date'] = end_date
-        
+
         # Group by month and year, order by date
         risk_query += """
         GROUP BY DATE_FORMAT(l.proses_date, '%M %Y')
         ORDER BY MIN(l.proses_date)
         """
-        
 
-        
+
+
         # Execute the query
         result = db.execute(text(risk_query), params)
         records = result.fetchall()
-        
+
         # Convert to dictionary with month_year as key
         monthly_data = {}
         for record in records:
@@ -2912,41 +2986,41 @@ def get_loan_risk_monthly_summary(db: Session,
             # Skip records with NULL month_year
             if month_year is None:
                 continue
-                
+
             total_unrecovered_kasbon = record[1] if record[1] is not None else 0
             unrecovered_kasbon_count = record[2] if record[2] is not None else 0
             total_expected_repayment = record[3] if record[3] is not None else 0
             total_paid = record[4] if record[4] is not None else 0
             total_disbursed = record[5] if record[5] is not None else 0
-            
+
             # Calculate kasbon principal recovery rate
             kasbon_principal_recovery_rate = 0
             if total_disbursed > 0:
                 loan_principal_recovery_rate = total_paid / total_disbursed
-            
+
             monthly_data[month_year] = {
                 "total_unrecovered_kasbon": total_unrecovered_kasbon,
                 "unrecovered_kasbon_count": unrecovered_kasbon_count,
                 "total_expected_repayment": total_expected_repayment,
                 "loan_principal_recovery_rate": loan_principal_recovery_rate
             }
-        
 
-        
+
+
         return monthly_data
-        
+
     except Exception as e:
         import traceback
         traceback.print_exc()
         return {}
 
 
-def get_karyawan_overdue_summary(db: Session, 
-                                 employer_filter: str = None, sourced_to_filter: str = None, 
+def get_karyawan_overdue_summary(db: Session,
+                                 employer_filter: str = None, sourced_to_filter: str = None,
                                  project_filter: str = None, client_segment_filter: str = None, product_type_filter: str = None, loan_status_filter: int = None,
                                  id_karyawan_filter: int = None, start_date: str = None, end_date: str = None, loan_type: str = "loan") -> List[dict]:
     """Get karyawan data for those with overdue loans (status 4)"""
-    
+
     try:
         if is_all_loan_types(loan_type):
             return _merge_karyawan_overdue_lists([
@@ -2979,7 +3053,7 @@ def get_karyawan_overdue_summary(db: Session,
             ])
 
         loan_conditions = resolve_loan_conditions(loan_type, db)
-        
+
         # For kasbon and default, use td_loan table directly (like the old "loan" type)
         # For extradana, aku_cicil, and combined installment types, use td_loan_history table
         if loan_type not in ("extradana", "aku_cicil", "installment"):
@@ -3022,7 +3096,7 @@ def get_karyawan_overdue_summary(db: Session,
             # For extradana and aku_cicil, use td_loan_history table
             # Adapt loan_conditions for td_loan_history context by replacing l. with tl.
             loan_conditions_tl = loan_conditions.replace('l.', 'tl.')
-            
+
             overdue_query = """
             SELECT DISTINCT
                 tk.id_karyawan,
@@ -3058,13 +3132,13 @@ def get_karyawan_overdue_summary(db: Session,
             AND tl.id_karyawan IS NOT NULL
             AND {loan_conditions_tl}
             """.format(loan_conditions_tl=loan_conditions_tl)
-        
+
         # Build parameters dict for filters
         params = {}
-        
+
         # Determine if using td_loan (kasbon/default) or td_loan_history (extradana/aku_cicil/installment)
         use_td_loan = loan_type not in ("extradana", "aku_cicil", "installment")
-        
+
         # Add filters
         if id_karyawan_filter:
             if use_td_loan:
@@ -3072,24 +3146,24 @@ def get_karyawan_overdue_summary(db: Session,
             else:
                 overdue_query += " AND tl.id_karyawan = :id_karyawan"
             params['id_karyawan'] = id_karyawan_filter
-            
+
         # Restrict to only PT Valdo companies
         company_filter = COMPANY_FILTER
         overdue_query += f" AND emp.keterangan IN {company_filter}"
-        
+
         # If employer_filter is provided and it's one of the allowed companies, filter further
         if employer_filter and employer_filter in ALLOWED_COMPANIES:
             overdue_query += " AND emp.keterangan = :employer"
             params['employer'] = employer_filter
-            
+
         if sourced_to_filter:
             overdue_query += " AND src.keterangan = :sourced_to"
             params['sourced_to'] = sourced_to_filter
-            
+
         if project_filter:
             overdue_query += " AND prj.keterangan = :project"
             params['project'] = project_filter
-            
+
         overdue_query = _apply_project_management_filters(overdue_query, params, client_segment_filter, product_type_filter, db=db)
 
         if loan_status_filter is not None:
@@ -3375,12 +3449,12 @@ def get_total_admin_fee_collected(db: Session,
         return 0
 
 
-def get_total_loan_principal_collected(db: Session, 
-                                        employer_filter: str = None, sourced_to_filter: str = None, 
+def get_total_loan_principal_collected(db: Session,
+                                        employer_filter: str = None, sourced_to_filter: str = None,
                                         project_filter: str = None, client_segment_filter: str = None, product_type_filter: str = None, loan_status_filter: int = None,
                                         id_karyawan_filter: int = None, start_date: str = None, end_date: str = None, loan_type: str = "loan") -> float:
     """Get total loan principal collected amount based on loan type"""
-    
+
     try:
         # Determine loan conditions based on loan type
         if loan_type == "loan":
@@ -3391,10 +3465,10 @@ def get_total_loan_principal_collected(db: Session,
             loan_conditions = AKU_CICIL_CONDITION
         else:
             loan_conditions = LOAN_CONDITIONS  # default to loan
-        
+
         # Build parameters dict for filters
         params = {}
-        
+
         if loan_type == "loan":
             # For loan, use the existing logic from td_loan table
             principal_collected_query = """
@@ -3419,7 +3493,7 @@ def get_total_loan_principal_collected(db: Session,
                 AND prj.keterangan3 = 1
             WHERE {loan_conditions}
             """.format(loan_conditions=loan_conditions)
-            
+
         else:  # extradana or aku_cicil
             # For extradana and aku_cicil, use td_loan_history table with monthly principal calculation
             # Note: td_loan is aliased as 'l' in this query, so loan_conditions with 'l.' prefix work correctly
@@ -3429,7 +3503,7 @@ def get_total_loan_principal_collected(db: Session,
             else:
                 # For aku_cicil, loan_conditions already use 'l.' prefix which matches the alias
                 loan_conditions_tl = loan_conditions
-            
+
             principal_collected_query = """
             SELECT SUM(ROUND(l.total_loan / l.duration, 0)) as total_loan_principal_collected
             FROM td_loan_history tlh
@@ -3454,36 +3528,36 @@ def get_total_loan_principal_collected(db: Session,
             AND l.loan_status IN (1, 2, 4)
             AND {loan_conditions_tl}
             """.format(loan_conditions_tl=loan_conditions_tl)
-        
+
         # Add filters
         if id_karyawan_filter:
             principal_collected_query += " AND l.id_karyawan = :id_karyawan"
             params['id_karyawan'] = id_karyawan_filter
-            
+
         # Restrict to only PT Valdo companies (conditional based on loan type)
         company_filter = COMPANY_FILTER
-            
+
         principal_collected_query += f" AND emp.keterangan IN {company_filter}"
-        
+
         # If employer_filter is provided and it's one of the allowed companies, filter further
         if employer_filter and employer_filter in ALLOWED_COMPANIES:
             principal_collected_query += " AND emp.keterangan = :employer"
             params['employer'] = employer_filter
-            
+
         if sourced_to_filter:
             principal_collected_query += " AND src.keterangan = :sourced_to"
             params['sourced_to'] = sourced_to_filter
-            
+
         if project_filter:
             principal_collected_query += " AND prj.keterangan = :project"
             params['project'] = project_filter
-            
+
         principal_collected_query = _apply_project_management_filters(principal_collected_query, params, client_segment_filter, product_type_filter, db=db)
 
         if loan_status_filter is not None:
             principal_collected_query += " AND l.loan_status = :loan_status"
             params['loan_status'] = loan_status_filter
-            
+
         # Add date filters based on due_date for extradana, proses_date for loan
         if start_date and end_date:
             if loan_type in ("extradana", "aku_cicil"):
@@ -3495,34 +3569,34 @@ def get_total_loan_principal_collected(db: Session,
 
         result = db.execute(text(principal_collected_query), params)
         record = result.fetchone()
-        
+
         # Extract the value (handle None values)
         total_loan_principal_collected = record[0] if record[0] is not None else 0
-        
+
         return total_loan_principal_collected
-        
+
     except Exception as e:
         import traceback
         traceback.print_exc()
         return 0
 
 
-def get_expected_repayment(db: Session, 
-                          employer_filter: str = None, sourced_to_filter: str = None, 
+def get_expected_repayment(db: Session,
+                          employer_filter: str = None, sourced_to_filter: str = None,
                           project_filter: str = None, client_segment_filter: str = None, product_type_filter: str = None, loan_status_filter: int = None,
                           id_karyawan_filter: int = None, start_date: str = None, end_date: str = None, loan_type: str = "loan") -> float:
     """Get expected repayment amount based on loan type"""
-    
+
     try:
         params = {}
-        
+
         if loan_type in ("extradana", "aku_cicil"):
             # For extradana and aku_cicil, use td_loan_history table with due_date and monthly sum
             if loan_type == "extradana":
                 loan_conditions_tl = "l.loan_id IN (SELECT ls.id FROM loan_setting ls WHERE ls.loan_type LIKE 'Extradana%')"
             else:
                 loan_conditions_tl = AKU_CICIL_CONDITION
-            
+
             expected_repayment_query = """
             SELECT SUM(tlh.monthly) as total_expected_repayment
             FROM td_loan_history tlh
@@ -3570,34 +3644,34 @@ def get_expected_repayment(db: Session,
                 AND prj.keterangan3 = 1
             WHERE l.loan_status IN (1, 2, 4)
             """
-        
+
         # Add filters
         if id_karyawan_filter:
             expected_repayment_query += " AND l.id_karyawan = :id_karyawan"
             params['id_karyawan'] = id_karyawan_filter
-            
+
         company_filter = COMPANY_FILTER
-            
+
         expected_repayment_query += f" AND emp.keterangan IN {company_filter}"
-        
+
         if employer_filter and employer_filter in ALLOWED_COMPANIES:
             expected_repayment_query += " AND emp.keterangan = :employer"
             params['employer'] = employer_filter
-            
+
         if sourced_to_filter:
             expected_repayment_query += " AND src.keterangan = :sourced_to"
             params['sourced_to'] = sourced_to_filter
-            
+
         if project_filter:
             expected_repayment_query += " AND prj.keterangan = :project"
             params['project'] = project_filter
-            
+
         expected_repayment_query = _apply_project_management_filters(expected_repayment_query, params, client_segment_filter, product_type_filter, db=db)
 
         if loan_status_filter is not None:
             expected_repayment_query += " AND l.loan_status = :loan_status"
             params['loan_status'] = loan_status_filter
-            
+
         if start_date and end_date:
             if loan_type in ("extradana", "aku_cicil"):
                 expected_repayment_query = append_date_filters(
@@ -3615,28 +3689,28 @@ def get_expected_repayment(db: Session,
                     end_date=end_date,
                     date_column="l.proses_date",
                 )
-        
+
         # Execute the query
         result = db.execute(text(expected_repayment_query), params)
         record = result.fetchone()
-        
+
         # Extract the value (handle None values)
         total_expected_repayment = record[0] if record[0] is not None else 0
-        
+
         return total_expected_repayment
-        
+
     except Exception as e:
         import traceback
         traceback.print_exc()
         return 0
 
 
-def get_repayment_risk_summary(db: Session, 
-                               employer_filter: str = None, sourced_to_filter: str = None, 
+def get_repayment_risk_summary(db: Session,
+                               employer_filter: str = None, sourced_to_filter: str = None,
                                project_filter: str = None, client_segment_filter: str = None, product_type_filter: str = None, loan_status_filter: int = None,
                                id_karyawan_filter: int = None, start_date: str = None, end_date: str = None, loan_type: str = "loan") -> dict:
     """Get repayment risk summary with various repayment and risk metrics"""
-    
+
     try:
         if is_all_loan_types(loan_type):
             summaries = [
@@ -3866,7 +3940,7 @@ def get_repayment_risk_summary(db: Session,
             "delinquencies_rate": delinquencies_rate,
             "admin_fee_profit": admin_fee_profit,
         })
-        
+
     except Exception as e:
         import traceback
         traceback.print_exc()
@@ -3883,13 +3957,13 @@ def get_repayment_risk_summary(db: Session,
         }
 
 
-def get_repayment_risk_monthly_summary(db: Session, 
-                                       employer_filter: str = None, sourced_to_filter: str = None, 
+def get_repayment_risk_monthly_summary(db: Session,
+                                       employer_filter: str = None, sourced_to_filter: str = None,
                                        project_filter: str = None, client_segment_filter: str = None, product_type_filter: str = None, loan_status_filter: int = None,
                                        id_karyawan_filter: int = None, start_date: str = None,
                                        end_date: str = None, loan_type: str = "loan") -> dict:
     """Get repayment risk summary separated by months within a date range"""
-    
+
     try:
         if is_all_loan_types(loan_type):
             monthly_dicts = [
@@ -3949,7 +4023,7 @@ def get_repayment_risk_monthly_summary(db: Session,
             return merged
 
         loan_conditions = resolve_loan_conditions(loan_type, db)
-        
+
         # For extradana and aku_cicil, query from td_loan_history using due_date
         # For loan (kasbon), query from td_loan using proses_date
         if loan_type == "extradana" or loan_type == "aku_cicil":
@@ -4019,39 +4093,39 @@ def get_repayment_risk_monthly_summary(db: Session,
             WHERE l.proses_date IS NOT NULL
             AND l.loan_status IN (1, 2, 4)
             """
-        
+
         # Build parameters dict for filters
         params = {}
-        
+
         # Add filters
         if id_karyawan_filter:
             risk_query += " AND l.id_karyawan = :id_karyawan"
             params['id_karyawan'] = id_karyawan_filter
-            
+
         # Restrict to only PT Valdo companies (conditional based on loan type)
         company_filter = COMPANY_FILTER
-            
+
         risk_query += f" AND emp.keterangan IN {company_filter}"
-        
+
         # If employer_filter is provided and it's one of the allowed companies, filter further
         if employer_filter and employer_filter in ALLOWED_COMPANIES:
             risk_query += " AND emp.keterangan = :employer"
             params['employer'] = employer_filter
-            
+
         if sourced_to_filter:
             risk_query += " AND src.keterangan = :sourced_to"
             params['sourced_to'] = sourced_to_filter
-            
+
         if project_filter:
             risk_query += " AND prj.keterangan = :project"
             params['project'] = project_filter
-            
+
         risk_query = _apply_project_management_filters(risk_query, params, client_segment_filter, product_type_filter, db=db)
 
         if loan_status_filter is not None:
             risk_query += " AND l.loan_status = :loan_status"
             params['loan_status'] = loan_status_filter
-            
+
         if start_date and end_date:
             if loan_type == "extradana" or loan_type == "aku_cicil":
                 risk_query = append_date_filters(
@@ -4069,7 +4143,7 @@ def get_repayment_risk_monthly_summary(db: Session,
                     end_date=end_date,
                     date_column="l.proses_date",
                 )
-        
+
         # Group by month and year, order by date
         if loan_type == "extradana" or loan_type == "aku_cicil":
             risk_query += """
@@ -4081,8 +4155,8 @@ def get_repayment_risk_monthly_summary(db: Session,
             GROUP BY DATE_FORMAT(l.proses_date, '%M %Y')
             ORDER BY MIN(l.proses_date)
             """
-        
-        
+
+
         # Execute the query
         result = db.execute(text(risk_query), params)
         records = result.fetchall()
@@ -4100,7 +4174,7 @@ def get_repayment_risk_monthly_summary(db: Session,
             end_date=end_date,
             loan_type=loan_type,
         )
-        
+
         # Convert to dictionary with month_year as key
         monthly_data = {}
         for record in records:
@@ -4112,13 +4186,13 @@ def get_repayment_risk_monthly_summary(db: Session,
             total_loan_principal_collected = record[2] if record[2] is not None else 0
             total_admin_fee_collected = record[3] if record[3] is not None else 0
             total_unrecovered_repayment = monthly_unrecovered.get(month_year, 0) or 0
-            
+
             repayment_recovery_rate = 0
             if total_expected_repayment > 0:
                 repayment_recovery_rate = (total_loan_principal_collected + total_admin_fee_collected) / total_expected_repayment
-            
+
             admin_fee_profit = total_admin_fee_collected - total_unrecovered_repayment
-            
+
             monthly_data[month_year] = {
                 "repayment_recovery_rate": repayment_recovery_rate,
                 "total_expected_repayment": total_expected_repayment,
@@ -4137,22 +4211,22 @@ def get_repayment_risk_monthly_summary(db: Session,
                 "total_unrecovered_repayment": total_unrecovered_repayment,
                 "admin_fee_profit": -total_unrecovered_repayment,
             }
-        
+
         return monthly_data
-        
+
     except Exception as e:
         import traceback
         traceback.print_exc()
         return {}
 
 
-def get_disbursed_amount(db: Session, 
-                        employer_filter: str = None, sourced_to_filter: str = None, 
+def get_disbursed_amount(db: Session,
+                        employer_filter: str = None, sourced_to_filter: str = None,
                         project_filter: str = None, client_segment_filter: str = None, product_type_filter: str = None, loan_status_filter: int = None,
-                        id_karyawan_filter: int = None, start_date: str = None, 
+                        id_karyawan_filter: int = None, start_date: str = None,
                         end_date: str = None, loan_type: str = "kasbon") -> dict:
     """Centralized function to get disbursed amount with consistent logic"""
-    
+
     try:
         # Determine loan conditions based on loan type
         if loan_type == "loan":
@@ -4163,7 +4237,7 @@ def get_disbursed_amount(db: Session,
             loan_conditions = AKU_CICIL_CONDITION
         else:
             loan_conditions = LOAN_CONDITIONS  # default to loan
-        
+
         # Build the disbursed amount query
         disbursed_query = """
         SELECT SUM(l.total_loan)
@@ -4188,55 +4262,55 @@ def get_disbursed_amount(db: Session,
         WHERE l.loan_status IN (1, 2, 4)
         AND {loan_conditions}
         """.format(loan_conditions=loan_conditions)
-        
+
         # Build parameters dict for filters
         params = {}
-        
+
         # Apply all filters consistently
         if id_karyawan_filter:
             disbursed_query += " AND l.id_karyawan = :id_karyawan"
             params['id_karyawan'] = id_karyawan_filter
-            
+
         # Restrict to only PT Valdo companies (conditional based on loan type)
         company_filter = COMPANY_FILTER
-            
+
         disbursed_query += f" AND emp.keterangan IN {company_filter}"
-        
+
         # If employer_filter is provided and it's one of the allowed companies, filter further
         if employer_filter and employer_filter in ALLOWED_COMPANIES:
             disbursed_query += " AND emp.keterangan = :employer"
             params['employer'] = employer_filter
-            
+
         if sourced_to_filter:
             disbursed_query += " AND src.keterangan = :sourced_to"
             params['sourced_to'] = sourced_to_filter
-            
+
         if project_filter:
             disbursed_query += " AND prj.keterangan = :project"
             params['project'] = project_filter
-            
+
         disbursed_query = _apply_project_management_filters(disbursed_query, params, client_segment_filter, product_type_filter, db=db)
 
         if loan_status_filter is not None:
             disbursed_query += " AND l.loan_status = :loan_status"
             params['loan_status'] = loan_status_filter
-            
+
         # Apply date range filters using proper month boundaries
         if start_date and end_date:
             disbursed_query += " AND l.proses_date >= :start_date AND l.proses_date < :end_date"
             params['start_date'] = start_date
             params['end_date'] = end_date
-        
-    
+
+
         # Execute query
         result = db.execute(text(disbursed_query), params)
         total_disbursed_amount = result.fetchone()[0] or 0
-        
+
 
         return {
             "total_disbursed_amount": total_disbursed_amount
         }
-        
+
     except Exception as e:
         import traceback
         traceback.print_exc()
@@ -4245,12 +4319,12 @@ def get_disbursed_amount(db: Session,
         }
 
 
-def get_coverage_utilization_summary(db: Session, 
-                                    employer_filter: str = None, sourced_to_filter: str = None, 
+def get_coverage_utilization_summary(db: Session,
+                                    employer_filter: str = None, sourced_to_filter: str = None,
                                     project_filter: str = None, client_segment_filter: str = None, product_type_filter: str = None, loan_status_filter: int = None,
                                     id_karyawan_filter: int = None, start_date: str = None, end_date: str = None, loan_type: str = "loan") -> dict:
     """Get comprehensive coverage and utilization summary combining multiple metrics"""
-    
+
     try:
         company_filter = COMPANY_FILTER
         params = {}
@@ -4276,6 +4350,17 @@ def get_coverage_utilization_summary(db: Session,
         )
 
         total_eligible_employees = get_total_eligible_employees(
+            db,
+            start_date=start_date,
+            end_date=end_date,
+            employer_filter=employer_filter,
+            sourced_to_filter=sourced_to_filter,
+            project_filter=project_filter,
+            client_segment_filter=client_segment_filter,
+            product_type_filter=product_type_filter,
+        )
+
+        total_coverage_project = get_total_coverage_project(
             db,
             start_date=start_date,
             end_date=end_date,
@@ -4424,6 +4509,7 @@ def get_coverage_utilization_summary(db: Session,
 
         return {
             "total_eligible_employees": total_eligible_employees,
+            "total_coverage_project": total_coverage_project,
             "total_active_employees": total_active_employees,
             "total_loan_requests": total_loan_requests,
             "penetration_rate": penetration_rate,
@@ -4436,12 +4522,13 @@ def get_coverage_utilization_summary(db: Session,
             "total_disbursed_amount": total_disbursed_amount,
             "average_disbursed_amount": average_disbursed_amount
         }
-        
+
     except Exception as e:
         import traceback
         traceback.print_exc()
         return {
             "total_eligible_employees": 0,
+            "total_coverage_project": 0,
             "total_active_employees": 0,
             "total_loan_requests": 0,
             "penetration_rate": 0,
@@ -4456,16 +4543,16 @@ def get_coverage_utilization_summary(db: Session,
         }
 
 
-def get_coverage_utilization_monthly_summary(db: Session, 
-                                            employer_filter: str = None, sourced_to_filter: str = None, 
+def get_coverage_utilization_monthly_summary(db: Session,
+                                            employer_filter: str = None, sourced_to_filter: str = None,
                                             project_filter: str = None, client_segment_filter: str = None, product_type_filter: str = None, loan_status_filter: int = None,
                                             id_karyawan_filter: int = None, start_date: str = None,
                                             end_date: str = None, loan_type: str = "loan") -> dict:
     """Get coverage utilization summary separated by months within a date range"""
-    
+
     try:
         loan_conditions = resolve_loan_conditions(loan_type, db)
-        
+
         # Build the eligible count query (exactly as in get_user_coverage_summary)
         eligible_count_query = """
         SELECT COUNT(*)
@@ -4485,10 +4572,10 @@ def get_coverage_utilization_monthly_summary(db: Session,
             AND prj.group_gmc = 'client_project'
             AND prj.aktif = 'Yes'
             AND prj.keterangan3 = 1
-        WHERE tk.status = '1' 
+        WHERE tk.status = '1'
         AND tk.loan_kasbon_eligible = '1'
         """
-        
+
         # Build the processed loan requests query (exactly as in get_user_coverage_summary)
         processed_requests_query = """
         SELECT COUNT(*)
@@ -4513,7 +4600,7 @@ def get_coverage_utilization_monthly_summary(db: Session,
         WHERE l.loan_status IN (1, 2, 3, 4)
         AND {loan_conditions}
         """.format(loan_conditions=loan_conditions)
-        
+
         # Build the approved requests query (exactly as in get_user_coverage_summary)
         approved_requests_query = """
         SELECT COUNT(*)
@@ -4538,7 +4625,7 @@ def get_coverage_utilization_monthly_summary(db: Session,
         WHERE l.loan_status IN (1, 2, 4)
         AND {loan_conditions}
         """.format(loan_conditions=loan_conditions)
-        
+
         # Build the rejected requests query (exactly as in get_user_coverage_summary)
         rejected_requests_query = """
         SELECT COUNT(*)
@@ -4563,7 +4650,7 @@ def get_coverage_utilization_monthly_summary(db: Session,
         WHERE l.loan_status = 3
         AND {loan_conditions}
         """.format(loan_conditions=loan_conditions)
-        
+
         # Build the total disbursed amount query (exactly as in get_user_coverage_summary)
         total_disbursed_amount_query = """
         SELECT SUM(l.total_loan)
@@ -4588,7 +4675,7 @@ def get_coverage_utilization_monthly_summary(db: Session,
         WHERE l.loan_status IN (1, 2, 4)
         AND {loan_conditions}
         """.format(loan_conditions=loan_conditions)
-        
+
         # Build the first-time borrowers query (exactly as in get_user_coverage_summary)
         first_borrow_query = """
         SELECT COUNT(DISTINCT l.id_karyawan)
@@ -4612,19 +4699,19 @@ def get_coverage_utilization_monthly_summary(db: Session,
             AND prj.keterangan3 = 1
         WHERE l.loan_status IN (0, 1, 2, 3)
         AND NOT EXISTS (
-            SELECT 1 
-            FROM td_loan l2 
-            WHERE l2.id_karyawan = l.id_karyawan 
-            AND l2.loan_status = 2 
+            SELECT 1
+            FROM td_loan l2
+            WHERE l2.id_karyawan = l.id_karyawan
+            AND l2.loan_status = 2
             AND l2.proses_date < l.proses_date
             AND {loan_conditions}
         )
         AND {loan_conditions}
         """.format(loan_conditions=loan_conditions)
-        
+
         # Build parameters dict for filters
         params = {}
-        
+
         # Add filters to all queries (exactly as in get_user_coverage_summary)
         if id_karyawan_filter:
             eligible_count_query += " AND tk.id_karyawan = :id_karyawan"
@@ -4634,17 +4721,17 @@ def get_coverage_utilization_monthly_summary(db: Session,
             total_disbursed_amount_query += " AND l.id_karyawan = :id_karyawan"
             first_borrow_query += " AND l.id_karyawan = :id_karyawan"
             params['id_karyawan'] = id_karyawan_filter
-            
+
         # Restrict to allowed Valdo companies
         company_filter = COMPANY_FILTER
-            
+
         eligible_count_query += f" AND emp.keterangan IN {company_filter}"
         processed_requests_query += f" AND emp.keterangan IN {company_filter}"
         approved_requests_query += f" AND emp.keterangan IN {company_filter}"
         rejected_requests_query += f" AND emp.keterangan IN {company_filter}"
         total_disbursed_amount_query += f" AND emp.keterangan IN {company_filter}"
         first_borrow_query += f" AND emp.keterangan IN {company_filter}"
-        
+
         # If employer_filter is provided and it's one of the allowed companies, filter further
         if employer_filter and employer_filter in ALLOWED_COMPANIES:
             eligible_count_query += " AND emp.keterangan = :employer"
@@ -4654,7 +4741,7 @@ def get_coverage_utilization_monthly_summary(db: Session,
             total_disbursed_amount_query += " AND emp.keterangan = :employer"
             first_borrow_query += " AND emp.keterangan = :employer"
             params['employer'] = employer_filter
-            
+
         if sourced_to_filter:
             eligible_count_query += " AND src.keterangan = :sourced_to"
             processed_requests_query += " AND src.keterangan = :sourced_to"
@@ -4663,7 +4750,7 @@ def get_coverage_utilization_monthly_summary(db: Session,
             total_disbursed_amount_query += " AND src.keterangan = :sourced_to"
             first_borrow_query += " AND src.keterangan = :sourced_to"
             params['sourced_to'] = sourced_to_filter
-            
+
         if project_filter:
             eligible_count_query += " AND prj.keterangan = :project"
             processed_requests_query += " AND prj.keterangan = :project"
@@ -4672,7 +4759,7 @@ def get_coverage_utilization_monthly_summary(db: Session,
             total_disbursed_amount_query += " AND prj.keterangan = :project"
             first_borrow_query += " AND prj.keterangan = :project"
             params['project'] = project_filter
-            
+
         if loan_status_filter is not None:
             processed_requests_query += " AND l.loan_status = :loan_status"
             approved_requests_query += " AND l.loan_status = :loan_status"
@@ -4680,7 +4767,7 @@ def get_coverage_utilization_monthly_summary(db: Session,
             total_disbursed_amount_query += " AND l.loan_status = :loan_status"
             first_borrow_query += " AND l.loan_status = :loan_status"
             params['loan_status'] = loan_status_filter
-            
+
         # Add date range filters based on proses_date
         if start_date:
             processed_requests_query += " AND l.proses_date >= :start_date"
@@ -4689,7 +4776,7 @@ def get_coverage_utilization_monthly_summary(db: Session,
             total_disbursed_amount_query += " AND l.proses_date >= :start_date"
             first_borrow_query += " AND l.proses_date >= :start_date"
             params['start_date'] = start_date
-            
+
         if end_date:
             processed_requests_query += " AND l.proses_date <= :end_date"
             approved_requests_query += " AND l.proses_date <= :end_date"
@@ -4697,7 +4784,7 @@ def get_coverage_utilization_monthly_summary(db: Session,
             total_disbursed_amount_query += " AND l.proses_date <= :end_date"
             first_borrow_query += " AND l.proses_date <= :end_date"
             params['end_date'] = end_date
-        
+
         # Monthly loan metrics: requests by received_date; approved/rejected/disbursed by proses_date.
         monthly_requests_query = f"""
         SELECT
@@ -4801,11 +4888,11 @@ def get_coverage_utilization_monthly_summary(db: Session,
         monthly_requests_query += " GROUP BY DATE_FORMAT(l.received_date, '%M %Y') ORDER BY MIN(l.received_date)"
         monthly_proses_query += " GROUP BY DATE_FORMAT(l.proses_date, '%M %Y') ORDER BY MIN(l.proses_date)"
         monthly_first_borrow_query += " GROUP BY DATE_FORMAT(l.proses_date, '%M %Y') ORDER BY MIN(l.proses_date)"
-        
+
         monthly_requests_result = db.execute(text(monthly_requests_query), params)
         monthly_proses_result = db.execute(text(monthly_proses_query), params)
         monthly_first_borrow_result = db.execute(text(monthly_first_borrow_query), params)
-        
+
         monthly_processed_data = {
             row[0]: row[1] for row in monthly_requests_result.fetchall() if row[0] is not None
         }
@@ -4821,11 +4908,11 @@ def get_coverage_utilization_monthly_summary(db: Session,
         monthly_first_borrow_data = {
             row[0]: row[1] for row in monthly_first_borrow_result.fetchall() if row[0] is not None
         }
-        
+
         # Combine all monthly data
         monthly_data = {}
         all_months = set(monthly_processed_data.keys()) | set(monthly_approved_data.keys()) | set(monthly_rejected_data.keys()) | set(monthly_disbursed_data.keys()) | set(monthly_first_borrow_data.keys())
-        
+
         for month_year in all_months:
             total_loan_requests = monthly_processed_data.get(month_year, 0) or 0
             total_approved_requests = monthly_approved_data.get(month_year, 0) or 0
@@ -4847,27 +4934,39 @@ def get_coverage_utilization_monthly_summary(db: Session,
                 client_segment_filter=client_segment_filter,
                 product_type_filter=product_type_filter,
             )
+            total_coverage_project = get_total_coverage_project(
+                db,
+                start_date=range_start,
+                end_date=range_end,
+                employer_filter=employer_filter,
+                sourced_to_filter=sourced_to_filter,
+                project_filter=project_filter,
+                client_segment_filter=client_segment_filter,
+                product_type_filter=product_type_filter,
+            )
             penetration_rate = 0
             if total_eligible_employees > 0:
                 penetration_rate = total_loan_requests / total_eligible_employees
-            
+
             monthly_data[month_year] = {
                 "total_first_borrow": total_first_borrow,
                 "total_loan_requests": total_loan_requests,
                 "total_approved_requests": total_approved_requests,
                 "total_rejected_requests": total_rejected_requests,
                 "total_eligible_employees": total_eligible_employees,
+                "total_coverage_project": total_coverage_project,
                 "penetration_rate": penetration_rate,
                 "total_disbursed_amount": total_disbursed_amount
             }
-        
+
         return monthly_data
-        
+
     except Exception as e:
         import traceback
         traceback.print_exc()
         return {
             "total_eligible_employees": 0,
+            "total_coverage_project": 0,
             "total_loan_requests": 0,
             "penetration_rate": 0,
             "total_approved_requests": 0,
@@ -4881,18 +4980,18 @@ def get_coverage_utilization_monthly_summary(db: Session,
 def get_client_summary(db: Session, start_date: str = None, end_date: str = None, loan_type: str = "kasbon",
                        client_segment_filter: str = None, product_type_filter: str = None) -> list:
     """Get comprehensive client summary with disbursement and other metrics"""
-    
+
     try:
         loan_conditions = resolve_loan_conditions(loan_type, db)
         company_filter = COMPANY_FILTER
-        
+
         # Build parameters dict for filters (needed for both queries)
         params = {}
-        
+
         # Get employee counts using the exact same approach as coverage utilization
         # For each sourced_to and project combination, we'll run the same query as coverage utilization
         employee_counts = {}
-        
+
         # Get unique sourced_to and project combinations from the loan data first
         combinations_query = f"""
         SELECT DISTINCT
@@ -4920,7 +5019,7 @@ def get_client_summary(db: Session, start_date: str = None, end_date: str = None
         AND src.keterangan IS NOT NULL
         AND emp.keterangan IN {company_filter}
         """
-        
+
         if start_date and end_date:
             combinations_query = append_date_filters(
                 combinations_query,
@@ -4932,7 +5031,7 @@ def get_client_summary(db: Session, start_date: str = None, end_date: str = None
         combinations_query = _apply_project_management_filters(
             combinations_query, params, client_segment_filter, product_type_filter, db=db
         )
-        
+
         try:
             combinations_result = db.execute(text(combinations_query), params)
             combinations = combinations_result.fetchall()
@@ -4950,10 +5049,10 @@ def get_client_summary(db: Session, start_date: str = None, end_date: str = None
         except Exception:
             # Fallback: return empty employee counts
             employee_counts = {}
-        
+
         # Build the main loan summary query (without correlated subqueries)
         client_summary_query = """
-        SELECT 
+        SELECT
             src.keterangan as sourced_to,
             prj.keterangan as project,
             SUM(CASE WHEN l.loan_status IN (1, 2, 4) THEN l.total_loan ELSE 0 END) as total_disbursement,
@@ -4962,10 +5061,10 @@ def get_client_summary(db: Session, start_date: str = None, end_date: str = None
             COUNT(CASE WHEN l.loan_status IN (1, 4) THEN 1 END) as delinquent_requests,
             SUM(CASE WHEN l.loan_status = 2 THEN l.admin_fee ELSE 0 END) as total_admin_fee_collected,
             SUM(CASE WHEN l.loan_status IN (1, 4) THEN l.total_payment ELSE 0 END) as total_unrecovered_payment,
-            CASE 
-                WHEN SUM(CASE WHEN l.loan_status IN (1, 2, 4) THEN l.total_payment ELSE 0 END) > 0 
+            CASE
+                WHEN SUM(CASE WHEN l.loan_status IN (1, 2, 4) THEN l.total_payment ELSE 0 END) > 0
                 THEN SUM(CASE WHEN l.loan_status IN (1, 4) THEN l.total_payment ELSE 0 END) / SUM(CASE WHEN l.loan_status IN (1, 2, 4) THEN l.total_payment ELSE 0 END)
-                ELSE 0 
+                ELSE 0
             END as delinquency_rate,
             COUNT(DISTINCT CASE WHEN l.loan_status IN (1, 2, 3, 4) THEN l.id_karyawan END) as unique_requesting_employees
         FROM td_loan l
@@ -4994,7 +5093,7 @@ def get_client_summary(db: Session, start_date: str = None, end_date: str = None
         client_summary_query = _apply_project_management_filters(
             client_summary_query, params, client_segment_filter, product_type_filter, db=db
         )
-        
+
         if start_date and end_date:
             client_summary_query = append_date_filters(
                 client_summary_query,
@@ -5002,27 +5101,27 @@ def get_client_summary(db: Session, start_date: str = None, end_date: str = None
                 start_date=start_date,
                 end_date=end_date,
             )
-        
+
         # Group by sourced_to and project
         client_summary_query += """
         GROUP BY src.keterangan, prj.keterangan
         ORDER BY src.keterangan, prj.keterangan
         """
-        
+
         # Execute main query
         result = db.execute(text(client_summary_query), params)
         records = result.fetchall()
-        
+
         # Format results
         client_disbursements = []
         for record in records:
             sourced_to = record[0] if record[0] else "Unknown"
             project = record[1] if record[1] else "Unknown"
             key = f"{sourced_to}_{project}"
-            
+
             # Get employee counts from the pre-calculated dictionary
             employee_data = employee_counts.get(key, {"eligible": 0, "active": 0})
-            
+
             client_disbursements.append({
                 "sourced_to": sourced_to,
                 "project": project,
@@ -5039,12 +5138,10 @@ def get_client_summary(db: Session, start_date: str = None, end_date: str = None
                 "admin_fee_profit": (float(record[6]) if record[6] else 0) - (float(record[7]) if record[7] else 0),
                 "delinquency_rate": float(record[8]) if record[8] else 0,
             })
-         
+
         return client_disbursements
-        
+
     except Exception as e:
         import traceback
         traceback.print_exc()
         return []
-
-
