@@ -871,6 +871,109 @@ async def get_repayment_risk_monthly(
         }
 
 
+@router.get("/bad-debt-recovery")
+async def get_bad_debt_recovery(
+    start_date: str = None,
+    end_date: str = None,
+    employer: str = None,
+    sourced_to: str = None,
+    project: str = None,
+    client_segment: str = None,
+    product_type: str = None,
+    loan_status: int = None,
+    id_karyawan: int = None,
+    loan_type: str = "loan",
+    db: Session = Depends(get_db)
+):
+    """Get bad debt recovery summary: loans/installments that were only paid after the grace
+    cutoff (the 15th of the month following their due date). These records are excluded from
+    repayment-risk to avoid double counting. Use loan_type=all to combine kasbon, extradana, and aku_cicil."""
+
+    try:
+        bad_debt_recovery_summary = crud.get_bad_debt_recovery_summary(
+            db,
+            employer_filter=employer,
+            sourced_to_filter=sourced_to,
+            project_filter=project,
+            client_segment_filter=client_segment,
+            product_type_filter=product_type,
+            loan_status_filter=loan_status,
+            id_karyawan_filter=id_karyawan,
+            start_date=start_date,
+            end_date=end_date,
+            loan_type=loan_type
+        )
+
+        # Return structured response
+        return {
+            "status": "success",
+            "total_recovery": bad_debt_recovery_summary["total_recovery"],
+            "total_principal_recovered": bad_debt_recovery_summary["total_principal_recovered"],
+            "total_admin_fee_recovered": bad_debt_recovery_summary["total_admin_fee_recovered"],
+            "principal_rate": bad_debt_recovery_summary["principal_rate"],
+            "admin_fee_rate": bad_debt_recovery_summary["admin_fee_rate"],
+            "loan_request_count": bad_debt_recovery_summary["loan_request_count"]
+        }
+    except Exception as e:
+        # Return error response with status
+        return {
+            "status": "error",
+            "message": str(e),
+            "total_recovery": 0,
+            "total_principal_recovered": 0,
+            "total_admin_fee_recovered": 0,
+            "principal_rate": 0,
+            "admin_fee_rate": 0,
+            "loan_request_count": 0
+        }
+
+
+@router.get("/bad-debt-recovery-monthly")
+async def get_bad_debt_recovery_monthly(
+    start_date: str,
+    end_date: str,
+    employer: str = None,
+    sourced_to: str = None,
+    project: str = None,
+    client_segment: str = None,
+    product_type: str = None,
+    loan_status: int = None,
+    id_karyawan: int = None,
+    loan_type: str = "loan",
+    db: Session = Depends(get_db)
+):
+    """Get monthly bad debt recovery, bucketed by the month the late payment posted.
+    Use loan_type=all to combine kasbon, extradana, and aku_cicil."""
+
+    try:
+        monthly_bad_debt_recovery_summary = crud.get_bad_debt_recovery_monthly_summary(
+            db,
+            employer_filter=employer,
+            sourced_to_filter=sourced_to,
+            project_filter=project,
+            client_segment_filter=client_segment,
+            product_type_filter=product_type,
+            loan_status_filter=loan_status,
+            id_karyawan_filter=id_karyawan,
+            start_date=start_date,
+            end_date=end_date,
+            loan_type=loan_type
+        )
+
+        # Return structured response
+        return {
+            "status": "success",
+            "monthly_data": monthly_bad_debt_recovery_summary
+        }
+    except Exception as e:
+        # Return error response with status
+        return {
+            "status": "error",
+            "message": str(e),
+            "monthly_data": {}
+        }
+
+
 @router.get("/coverage-utilization")
 async def get_coverage_utilization(
     start_date: str = None,
