@@ -598,7 +598,7 @@ def _month_year_date_range(month_year: str) -> tuple[str, str] | None:
 _TOTAL_ELIGIBLE_SNAPSHOT_SQL = """
 SELECT COALESCE(SUM(total_eligible), 0) AS total_eligible
 FROM (
-    SELECT COUNT(*) AS total_eligible
+    SELECT COUNT(DISTINCT de.id_karyawan) AS total_eligible
     FROM data_record_eligible de
     WHERE de.snapshot_date BETWEEN :start_date AND :end_date
       AND (:f_company IS NULL OR de.company = :f_company)
@@ -612,9 +612,16 @@ FROM (
 
     SELECT CAST(dr.value AS UNSIGNED) AS total_eligible
     FROM data_record dr
+    INNER JOIN (
+        SELECT company, MAX(created_at) AS max_created_at
+        FROM data_record
+        WHERE parameter = 'loan_eligible_company'
+          AND DATE(created_at) BETWEEN :start_date AND :end_date
+          AND (:f_company IS NULL OR company = :f_company)
+        GROUP BY company
+    ) latest_snapshot ON latest_snapshot.company = dr.company
+        AND latest_snapshot.max_created_at = dr.created_at
     WHERE dr.parameter = 'loan_eligible_company'
-      AND DATE(dr.created_at) BETWEEN :start_date AND :end_date
-      AND (:f_company IS NULL OR dr.company = :f_company)
       AND :allow_data_record_fallback = 1
       AND NOT EXISTS (
           SELECT 1
