@@ -970,8 +970,9 @@ def _recalculate_repayment_risk_derivatives(summary: dict) -> dict:
     collected = max(total_expected - unrecovered - outstanding, 0)
     summary["total_collected_repayment"] = collected
     summary["repayment_recovery_rate"] = (collected / total_expected) if total_expected > 0 else 0
-    summary["delinquencies_rate"] = (unrecovered / total_expected) if total_expected > 0 else 0
-    summary["unrecovered_rate"] = summary["delinquencies_rate"]
+    summary["delinquency_by_expected_repayment"] = (unrecovered / total_expected) if total_expected > 0 else 0
+    summary["delinquency_by_admin_fee"] = (unrecovered / admin_fee_collected) if admin_fee_collected > 0 else 0
+    summary["unrecovered_rate"] = summary["delinquency_by_expected_repayment"]
     summary["outstanding_rate"] = (outstanding / total_expected) if total_expected > 0 else 0
     # Principal ("pokok") and admin fee ("bunga") collection rates, separate from
     # total_expected_repayment which is pokok + bunga combined.
@@ -1376,7 +1377,7 @@ def _merge_repayment_risk_summaries(summaries: List[dict]) -> dict:
     total_expected = combined["total_expected_repayment"]
     collected = combined["total_loan_principal_collected"] + combined["total_admin_fee_collected"]
     combined["repayment_recovery_rate"] = (collected / total_expected) if total_expected > 0 else 0
-    combined["delinquencies_rate"] = (
+    combined["delinquency_by_expected_repayment"] = (
         (combined["total_unrecovered_repayment"] / total_expected) if total_expected > 0 else 0
     )
     combined["admin_fee_profit"] = (
@@ -4313,9 +4314,9 @@ def get_repayment_risk_summary(db: Session,
                 total_loan_principal_collected + total_admin_fee_collected
             ) / total_expected_repayment
 
-        delinquencies_rate = 0
+        delinquency_by_expected_repayment = 0
         if total_expected_repayment > 0:
-            delinquencies_rate = total_unrecovered_repayment / total_expected_repayment
+            delinquency_by_expected_repayment = total_unrecovered_repayment / total_expected_repayment
 
         admin_fee_profit = total_admin_fee_collected - total_unrecovered_repayment
 
@@ -4330,7 +4331,7 @@ def get_repayment_risk_summary(db: Session,
             "total_expected_loan_principal": total_expected_loan_principal,
             "total_expected_admin_fee": total_expected_admin_fee,
             "repayment_recovery_rate": repayment_recovery_rate,
-            "delinquencies_rate": delinquencies_rate,
+            "delinquency_by_expected_repayment": delinquency_by_expected_repayment,
             "admin_fee_profit": admin_fee_profit,
         })
 
@@ -4348,7 +4349,8 @@ def get_repayment_risk_summary(db: Session,
             "total_expected_loan_principal": 0,
             "total_expected_admin_fee": 0,
             "repayment_recovery_rate": 0,
-            "delinquencies_rate": 0,
+            "delinquency_by_expected_repayment": 0,
+            "delinquency_by_admin_fee": 0,
             "outstanding_rate": 0,
             "principal_collection_rate": 0,
             "admin_fee_collection_rate": 0,
@@ -5808,7 +5810,7 @@ def get_client_summary(db: Session, start_date: str = None, end_date: str = None
                 WHEN SUM(CASE WHEN l.loan_status IN (1, 2, 4) THEN l.total_payment ELSE 0 END) > 0
                 THEN SUM(CASE WHEN l.loan_status IN (1, 4) THEN l.total_payment ELSE 0 END) / SUM(CASE WHEN l.loan_status IN (1, 2, 4) THEN l.total_payment ELSE 0 END)
                 ELSE 0
-            END as delinquency_by_expected_repayment,
+            END as delinquency_rate,
             COUNT(DISTINCT CASE WHEN l.loan_status IN (1, 2, 3, 4) THEN l.id_karyawan END) as unique_requesting_employees
         FROM td_loan l
         LEFT JOIN td_karyawan tk
@@ -5879,11 +5881,7 @@ def get_client_summary(db: Session, start_date: str = None, end_date: str = None
                 "total_admin_fee_collected": float(record[6]) if record[6] else 0,
                 "total_unrecovered_payment": float(record[7]) if record[7] else 0,
                 "admin_fee_profit": (float(record[6]) if record[6] else 0) - (float(record[7]) if record[7] else 0),
-                "delinquency_by_expected_repayment": float(record[8]) if record[8] else 0,
-                "delinquency_by_admin_fee": (
-                    (float(record[7]) if record[7] else 0) / (float(record[6]) if record[6] else 0)
-                    if record[6] else 0
-                ),
+                "delinquency_rate": float(record[8]) if record[8] else 0,
             })
 
         return client_disbursements

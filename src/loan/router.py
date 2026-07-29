@@ -799,7 +799,8 @@ async def get_repayment_risk(
             "total_admin_fee_collected": repayment_risk_summary["total_admin_fee_collected"],
             "total_unrecovered_admin_fee": repayment_risk_summary["total_unrecovered_admin_fee"],
             "admin_fee_collection_rate": repayment_risk_summary["admin_fee_collection_rate"],
-            "delinquencies_rate": repayment_risk_summary["delinquencies_rate"],
+            "delinquency_by_expected_repayment": repayment_risk_summary["delinquency_by_expected_repayment"],
+            "delinquency_by_admin_fee": repayment_risk_summary["delinquency_by_admin_fee"],
             "admin_fee_profit": repayment_risk_summary["admin_fee_profit"]
         }
     except Exception as e:
@@ -820,7 +821,8 @@ async def get_repayment_risk(
             "total_admin_fee_collected": 0,
             "total_unrecovered_admin_fee": 0,
             "admin_fee_collection_rate": 0,
-            "delinquencies_rate": 0,
+            "delinquency_by_expected_repayment": 0,
+            "delinquency_by_admin_fee": 0,
             "admin_fee_profit": 0
         }
 
