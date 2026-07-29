@@ -5799,13 +5799,30 @@ def _apply_installment_delinquency_override(
     loan_conditions_tl = loan_conditions.replace('l.', 'tl.')
     params: dict = {}
 
+    # Net out partial payments already recorded against this specific installment (via
+    # td_loan_payment / td_loan_payment_allocation) — an installment can be status = 4
+    # (overdue) while part of its `monthly` amount has already been paid. Mirrors the
+    # netting in get_karyawan_overdue_summary / _UNRECOVERED_INSTALLMENT_PAYMENT_SQL.
+    _installment_paid_subquery = """(
+        SELECT COALESCE(SUM(amt), 0) FROM (
+            SELECT p.amount amt FROM td_loan_payment p
+            WHERE p.loan_id = tl.id AND p.status = 1 AND p.loan_history_id = tlh.id
+              AND NOT EXISTS (SELECT 1 FROM td_loan_payment_allocation a WHERE a.payment_id = p.id)
+            UNION ALL
+            SELECT a.amount FROM td_loan_payment_allocation a
+            INNER JOIN td_loan_payment p ON p.id = a.payment_id
+            WHERE p.loan_id = tl.id AND p.status = 1 AND a.loan_history_id = tlh.id
+        ) t
+    )"""
+    _installment_remaining_payment = f"GREATEST(tlh.monthly - {_installment_paid_subquery}, 0)"
+
     query = f"""
     SELECT
         src.keterangan as sourced_to,
         prj.keterangan as project,
         COUNT(DISTINCT CASE WHEN tlh.status = 4 THEN tlh.loan_form_id END) as delinquent_requests,
-        SUM(CASE WHEN tlh.status IN (1, 4) THEN tlh.monthly ELSE 0 END) as total_unrecovered_payment,
-        SUM(CASE WHEN tlh.status IN (1, 2, 4) THEN tlh.monthly ELSE 0 END) as denom
+        SUM(CASE WHEN tlh.status IN (1, 4) THEN {_installment_remaining_payment} ELSE 0 END) as total_unrecovered_payment,
+        SUM(CASE WHEN tlh.status IN (1, 2, 4) THEN {_installment_remaining_payment} ELSE 0 END) as denom
     FROM td_loan_history tlh
     INNER JOIN td_loan tl ON tlh.loan_form_id = tl.id
     LEFT JOIN td_karyawan tk
