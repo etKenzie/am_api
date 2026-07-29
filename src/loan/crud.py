@@ -5778,6 +5778,118 @@ def get_coverage_utilization_monthly_summary(db: Session,
         }
 
 
+def _apply_installment_delinquency_override(
+    db: Session,
+    client_disbursements: list,
+    counts_by_sourced_to: dict,
+    *,
+    loan_conditions: str,
+    company_filter: str,
+    client_segment_filter: str = None,
+    product_type_filter: str = None,
+    start_date: str = None,
+    end_date: str = None,
+) -> None:
+    """Recompute delinquent_requests/total_unrecovered_payment/delinquency_rate for
+    extradana/aku_cicil/installment loan_type using td_loan_history (per-installment
+    due_date/status) instead of td_loan (proses_date/loan_status), and add any client
+    (sourced_to/project) that only shows up via an overdue installment in this period.
+    See get_client_summary for why this is scoped separately from disbursement metrics."""
+
+    loan_conditions_tl = loan_conditions.replace('l.', 'tl.')
+    params: dict = {}
+
+    query = f"""
+    SELECT
+        src.keterangan as sourced_to,
+        prj.keterangan as project,
+        COUNT(DISTINCT CASE WHEN tlh.status = 4 THEN tlh.loan_form_id END) as delinquent_requests,
+        SUM(CASE WHEN tlh.status IN (1, 4) THEN tlh.monthly ELSE 0 END) as total_unrecovered_payment,
+        SUM(CASE WHEN tlh.status IN (1, 2, 4) THEN tlh.monthly ELSE 0 END) as denom
+    FROM td_loan_history tlh
+    INNER JOIN td_loan tl ON tlh.loan_form_id = tl.id
+    LEFT JOIN td_karyawan tk
+        ON tl.id_karyawan = tk.id_karyawan
+    LEFT JOIN tbl_gmc emp
+        ON tk.valdo_inc = emp.kode_gmc
+        AND emp.group_gmc = 'sub_client'
+        AND emp.aktif = 'Yes'
+        AND emp.keterangan3 = 1
+    LEFT JOIN tbl_gmc src
+        ON tk.placement = src.kode_gmc
+        AND src.group_gmc = 'placement_client'
+        AND src.aktif = 'Yes'
+        AND src.keterangan3 = 1
+    LEFT JOIN tbl_gmc prj
+        ON tk.project = prj.kode_gmc
+        AND prj.group_gmc = 'client_project'
+        AND prj.aktif = 'Yes'
+        AND prj.keterangan3 = 1
+    WHERE tlh.due_date IS NOT NULL
+    AND {loan_conditions_tl}
+    AND src.keterangan IS NOT NULL
+    AND emp.keterangan IN {company_filter}
+    """
+
+    query = _apply_project_management_filters(
+        query, params, client_segment_filter, product_type_filter, db=db
+    )
+
+    if start_date and end_date:
+        query = append_date_filters(
+            query,
+            params,
+            start_date=start_date,
+            end_date=end_date,
+            date_column="tlh.due_date",
+        )
+
+    query += " GROUP BY src.keterangan, prj.keterangan"
+
+    rows = db.execute(text(query), params).fetchall()
+
+    index_by_key = {
+        f"{row['sourced_to']}_{row['project']}": row for row in client_disbursements
+    }
+
+    for sourced_to, project, delinquent_requests, unrecovered, denom in rows:
+        sourced_to = sourced_to if sourced_to else "Unknown"
+        project = project if project else "Unknown"
+        key = f"{sourced_to}_{project}"
+
+        delinquent_requests = int(delinquent_requests) if delinquent_requests else 0
+        unrecovered = float(unrecovered) if unrecovered else 0.0
+        denom = float(denom) if denom else 0.0
+        delinquency_rate = (unrecovered / denom) if denom > 0 else 0.0
+
+        existing = index_by_key.get(key)
+        if existing is not None:
+            existing["delinquent_requests"] = delinquent_requests
+            existing["total_unrecovered_payment"] = unrecovered
+            existing["delinquency_rate"] = delinquency_rate
+            existing["admin_fee_profit"] = existing["total_admin_fee_collected"] - unrecovered
+        else:
+            employee_data = counts_by_sourced_to.get(sourced_to, {"eligible": 0, "active": 0})
+            new_row = {
+                "sourced_to": sourced_to,
+                "project": project,
+                "total_disbursement": 0,
+                "total_requests": 0,
+                "approved_requests": 0,
+                "delinquent_requests": delinquent_requests,
+                "eligible_employees": employee_data["eligible"],
+                "active_employees": employee_data["active"],
+                "eligible_rate": (employee_data["eligible"] / employee_data["active"]) if employee_data["active"] > 0 else 0,
+                "penetration_rate": 0,
+                "total_admin_fee_collected": 0,
+                "total_unrecovered_payment": unrecovered,
+                "admin_fee_profit": -unrecovered,
+                "delinquency_rate": delinquency_rate,
+            }
+            client_disbursements.append(new_row)
+            index_by_key[key] = new_row
+
+
 def get_client_summary(db: Session, start_date: str = None, end_date: str = None, loan_type: str = "kasbon",
                        client_segment_filter: str = None, product_type_filter: str = None) -> list:
     """Get comprehensive client summary with disbursement and other metrics"""
@@ -5786,12 +5898,27 @@ def get_client_summary(db: Session, start_date: str = None, end_date: str = None
         loan_conditions = resolve_loan_conditions(loan_type, db)
         company_filter = COMPANY_FILTER
 
+        # Installment products (extradana/aku_cicil/installment) are billed month-by-month via
+        # td_loan_history rather than the single td_loan row. A loan can be disbursed (proses_date)
+        # in one month while one of its later installments (due_date) becomes overdue in a
+        # completely different month. The disbursement metrics below intentionally stay scoped to
+        # td_loan/proses_date (when was the loan requested), but delinquency must instead be scoped
+        # to which installment is actually due/overdue within [start_date, end_date] — otherwise a
+        # loan disbursed in-period but overdue on a later month is wrongly counted here, while a
+        # client whose installment is overdue *this* period (disbursed earlier) is wrongly dropped.
+        # This mirrors get_karyawan_overdue_summary's td_loan_history/due_date handling.
+        needs_installment_delinquency = loan_type in ("extradana", "aku_cicil", "installment")
+
         # Build parameters dict for filters (needed for both queries)
         params = {}
 
         # Get employee counts using the exact same approach as coverage utilization
         # For each sourced_to and project combination, we'll run the same query as coverage utilization
         employee_counts = {}
+
+        # Keyed only by sourced_to (not project) — reused for any client added by the
+        # installment delinquency override below, which may not appear in combinations_query.
+        counts_by_sourced_to = {}
 
         # Get unique sourced_to and project combinations from the loan data first
         combinations_query = f"""
@@ -5939,6 +6066,19 @@ def get_client_summary(db: Session, start_date: str = None, end_date: str = None
                 "admin_fee_profit": (float(record[6]) if record[6] else 0) - (float(record[7]) if record[7] else 0),
                 "delinquency_rate": float(record[8]) if record[8] else 0,
             })
+
+        if needs_installment_delinquency:
+            _apply_installment_delinquency_override(
+                db,
+                client_disbursements,
+                counts_by_sourced_to,
+                loan_conditions=loan_conditions,
+                company_filter=company_filter,
+                client_segment_filter=client_segment_filter,
+                product_type_filter=product_type_filter,
+                start_date=start_date,
+                end_date=end_date,
+            )
 
         return client_disbursements
 
