@@ -371,7 +371,45 @@ class RepaymentRiskMonthlyResponse(BaseModel):
     message: Optional[str] = None
 
     class Config:
-        from_attributes = True 
+        from_attributes = True
+
+
+class BadDebtRecoveryResponse(BaseModel):
+    """Response model for bad debt recovery summary data"""
+    status: str
+    total_recovery: int
+    total_principal_recovered: int
+    total_admin_fee_recovered: int
+    principal_rate: float
+    admin_fee_rate: float
+    loan_request_count: int
+    message: Optional[str] = None
+
+    class Config:
+        from_attributes = True
+
+
+class MonthlyBadDebtRecoveryData(BaseModel):
+    """Monthly data for bad debt recovery summary"""
+    total_recovery: int
+    total_principal_recovered: int
+    total_admin_fee_recovered: int
+    principal_rate: float
+    admin_fee_rate: float
+    loan_request_count: int
+
+    class Config:
+        from_attributes = True
+
+
+class BadDebtRecoveryMonthlyResponse(BaseModel):
+    """Response model for monthly bad debt recovery summary data"""
+    status: str
+    monthly_data: dict[str, MonthlyBadDebtRecoveryData]
+    message: Optional[str] = None
+
+    class Config:
+        from_attributes = True
 
 
 class CoverageUtilizationResponse(BaseModel):

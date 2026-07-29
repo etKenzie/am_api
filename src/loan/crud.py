@@ -25,6 +25,20 @@ INSTALLMENT_LOAN_CONDITIONS = (
     f"(({EXTRADANA_LOAN_CONDITIONS}) OR ({AKU_CICIL_CONDITION}))"
 )
 
+# Bad debt recovery: a record is only "bad debt" once it was actually paid (not merely
+# overdue) and that payment landed after the grace cutoff — the 15th of the month
+# following the due date's month (DATE_ADD(LAST_DAY(due_date), INTERVAL 15 DAY)).
+# Still-unpaid loans never match this, regardless of how overdue — they remain in
+# repayment-risk's unrecovered/outstanding buckets instead.
+_BAD_DEBT_LUMP_PREDICATE = (
+    "l.payment_date IS NOT NULL AND l.payment_date != '0000-00-00' "
+    "AND l.payment_date > DATE_ADD(LAST_DAY(l.repayment_date), INTERVAL 15 DAY)"
+)
+_BAD_DEBT_INSTALLMENT_PREDICATE = (
+    "tlh.payment_date IS NOT NULL AND tlh.payment_date != '0000-00-00' "
+    "AND tlh.payment_date > DATE_ADD(LAST_DAY(tlh.due_date), INTERVAL 15 DAY)"
+)
+
 ALL_LOAN_TYPES = ("kasbon", "extradana", "aku_cicil")
 ALLOWED_COMPANIES = (
     "PT Valdo Sumber Daya Mandiri",
@@ -4142,7 +4156,8 @@ def get_repayment_risk_summary(db: Session,
             AND l.id_karyawan IS NOT NULL
             AND l.loan_status IN (1, 2, 4)
             AND {loan_conditions_tl}
-            """.format(loan_conditions_tl=loan_conditions_tl)
+            AND NOT ({bad_debt_predicate})
+            """.format(loan_conditions_tl=loan_conditions_tl, bad_debt_predicate=_BAD_DEBT_INSTALLMENT_PREDICATE)
 
             if id_karyawan_filter:
                 risk_query += " AND l.id_karyawan = :id_karyawan"
@@ -4218,7 +4233,8 @@ def get_repayment_risk_summary(db: Session,
                 AND prj.keterangan3 = 1
             WHERE l.loan_status IN (1, 2, 4)
             AND {loan_conditions}
-            """.format(loan_conditions=loan_conditions)
+            AND NOT ({bad_debt_predicate})
+            """.format(loan_conditions=loan_conditions, bad_debt_predicate=_BAD_DEBT_LUMP_PREDICATE)
 
             if id_karyawan_filter:
                 risk_query += " AND l.id_karyawan = :id_karyawan"
@@ -4464,7 +4480,8 @@ def get_repayment_risk_monthly_summary(db: Session,
             WHERE tlh.due_date IS NOT NULL
             AND l.loan_status IN (1, 2, 4)
             AND {loan_conditions_tl}
-            """.format(loan_conditions_tl=loan_conditions_tl)
+            AND NOT ({bad_debt_predicate})
+            """.format(loan_conditions_tl=loan_conditions_tl, bad_debt_predicate=_BAD_DEBT_INSTALLMENT_PREDICATE)
         else:
             # Build the query to calculate repayment risk metrics by month using td_loan
             risk_query = """
@@ -4494,7 +4511,8 @@ def get_repayment_risk_monthly_summary(db: Session,
             WHERE l.proses_date IS NOT NULL
             AND l.loan_status IN (1, 2, 4)
             AND {loan_conditions}
-            """.format(loan_conditions=loan_conditions)
+            AND NOT ({bad_debt_predicate})
+            """.format(loan_conditions=loan_conditions, bad_debt_predicate=_BAD_DEBT_LUMP_PREDICATE)
 
         # Build parameters dict for filters
         params = {}
@@ -4649,6 +4667,280 @@ def get_repayment_risk_monthly_summary(db: Session,
                 "outstanding_rate": 0,
                 "admin_fee_profit": 0,
             }
+
+        return monthly_data
+
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return {}
+
+
+def _finalize_bad_debt_recovery(total_principal_recovered, total_admin_fee_recovered, loan_request_count) -> dict:
+    total_recovery = total_principal_recovered + total_admin_fee_recovered
+    return {
+        "total_recovery": total_recovery,
+        "total_principal_recovered": total_principal_recovered,
+        "total_admin_fee_recovered": total_admin_fee_recovered,
+        "principal_rate": (total_principal_recovered / total_recovery) if total_recovery > 0 else 0,
+        "admin_fee_rate": (total_admin_fee_recovered / total_recovery) if total_recovery > 0 else 0,
+        "loan_request_count": loan_request_count,
+    }
+
+
+def get_bad_debt_recovery_summary(db: Session,
+                                  employer_filter: str = None, sourced_to_filter: str = None,
+                                  project_filter: str = None, client_segment_filter: str = None, product_type_filter: str = None, loan_status_filter: int = None,
+                                  id_karyawan_filter: int = None, start_date: str = None, end_date: str = None, loan_type: str = "loan") -> dict:
+    """Get bad debt recovery summary: loans/installments paid after the day-15-of-next-month grace
+    cutoff. These are excluded from repayment-risk's collected totals."""
+
+    try:
+        if is_all_loan_types(loan_type):
+            summaries = [
+                get_bad_debt_recovery_summary(
+                    db,
+                    employer_filter=employer_filter,
+                    sourced_to_filter=sourced_to_filter,
+                    project_filter=project_filter,
+                    client_segment_filter=client_segment_filter,
+                    product_type_filter=product_type_filter,
+                    loan_status_filter=loan_status_filter,
+                    id_karyawan_filter=id_karyawan_filter,
+                    start_date=start_date,
+                    end_date=end_date,
+                    loan_type=product_type,
+                )
+                for product_type in ALL_LOAN_TYPES
+            ]
+            return _finalize_bad_debt_recovery(
+                sum(s["total_principal_recovered"] for s in summaries),
+                sum(s["total_admin_fee_recovered"] for s in summaries),
+                sum(s["loan_request_count"] for s in summaries),
+            )
+
+        loan_conditions = resolve_loan_conditions(loan_type, db)
+        params = {}
+
+        if loan_type in ("extradana", "aku_cicil"):
+            if loan_type == "extradana":
+                loan_conditions_tl = (
+                    "l.loan_id IN (SELECT ls.id FROM loan_setting ls WHERE ls.loan_type LIKE 'Extradana%')"
+                )
+            else:
+                loan_conditions_tl = loan_conditions
+
+            query = """
+            SELECT
+                SUM(ROUND(l.total_loan / l.duration, 0)) as total_principal_recovered,
+                SUM(ROUND(l.admin_fee / l.duration, 0)) as total_admin_fee_recovered,
+                COUNT(DISTINCT l.id) as loan_request_count
+            FROM td_loan_history tlh
+            INNER JOIN td_loan l ON tlh.loan_form_id = l.id
+            {karyawan_joins}
+            WHERE tlh.due_date IS NOT NULL
+            AND l.id_karyawan IS NOT NULL
+            AND {loan_conditions_tl}
+            AND tlh.status = 2
+            AND {bad_debt_predicate}
+            """.format(
+                karyawan_joins=_LOAN_GMC_JOINS,
+                loan_conditions_tl=loan_conditions_tl,
+                bad_debt_predicate=_BAD_DEBT_INSTALLMENT_PREDICATE,
+            )
+            date_column = "tlh.payment_date"
+        else:
+            query = """
+            SELECT
+                SUM(l.total_loan) as total_principal_recovered,
+                SUM(l.admin_fee) as total_admin_fee_recovered,
+                COUNT(DISTINCT l.id) as loan_request_count
+            FROM td_loan l
+            {karyawan_joins}
+            WHERE {loan_conditions}
+            AND l.loan_status = 2
+            AND {bad_debt_predicate}
+            """.format(
+                karyawan_joins=_LOAN_GMC_JOINS,
+                loan_conditions=loan_conditions,
+                bad_debt_predicate=_BAD_DEBT_LUMP_PREDICATE,
+            )
+            date_column = "l.payment_date"
+
+        query = _append_loan_org_filters(
+            query,
+            params,
+            id_karyawan_filter=id_karyawan_filter,
+            employer_filter=employer_filter,
+            sourced_to_filter=sourced_to_filter,
+            project_filter=project_filter,
+            client_segment_filter=client_segment_filter,
+            product_type_filter=product_type_filter,
+            loan_status_filter=loan_status_filter,
+            db=db,
+        )
+
+        if start_date and end_date:
+            query = append_date_filters(
+                query,
+                params,
+                start_date=start_date,
+                end_date=end_date,
+                date_column=date_column,
+            )
+
+        record = db.execute(text(query), params).fetchone()
+        total_principal_recovered = record[0] if record and record[0] is not None else 0
+        total_admin_fee_recovered = record[1] if record and record[1] is not None else 0
+        loan_request_count = record[2] if record and record[2] is not None else 0
+
+        return _finalize_bad_debt_recovery(total_principal_recovered, total_admin_fee_recovered, loan_request_count)
+
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return {
+            "total_recovery": 0,
+            "total_principal_recovered": 0,
+            "total_admin_fee_recovered": 0,
+            "principal_rate": 0,
+            "admin_fee_rate": 0,
+            "loan_request_count": 0,
+        }
+
+
+def get_bad_debt_recovery_monthly_summary(db: Session,
+                                          employer_filter: str = None, sourced_to_filter: str = None,
+                                          project_filter: str = None, client_segment_filter: str = None, product_type_filter: str = None, loan_status_filter: int = None,
+                                          id_karyawan_filter: int = None, start_date: str = None,
+                                          end_date: str = None, loan_type: str = "loan") -> dict:
+    """Get bad debt recovery separated by month, bucketed by the month the late payment posted."""
+
+    try:
+        if is_all_loan_types(loan_type):
+            monthly_dicts = [
+                get_bad_debt_recovery_monthly_summary(
+                    db,
+                    employer_filter=employer_filter,
+                    sourced_to_filter=sourced_to_filter,
+                    project_filter=project_filter,
+                    client_segment_filter=client_segment_filter,
+                    product_type_filter=product_type_filter,
+                    loan_status_filter=loan_status_filter,
+                    id_karyawan_filter=id_karyawan_filter,
+                    start_date=start_date,
+                    end_date=end_date,
+                    loan_type=product_type,
+                )
+                for product_type in ALL_LOAN_TYPES
+            ]
+            merged: dict = {}
+            for monthly in monthly_dicts:
+                for month_year, metrics in monthly.items():
+                    bucket = merged.setdefault(month_year, {
+                        "total_principal_recovered": 0,
+                        "total_admin_fee_recovered": 0,
+                        "loan_request_count": 0,
+                    })
+                    bucket["total_principal_recovered"] += metrics["total_principal_recovered"]
+                    bucket["total_admin_fee_recovered"] += metrics["total_admin_fee_recovered"]
+                    bucket["loan_request_count"] += metrics["loan_request_count"]
+            return {
+                month_year: _finalize_bad_debt_recovery(
+                    metrics["total_principal_recovered"],
+                    metrics["total_admin_fee_recovered"],
+                    metrics["loan_request_count"],
+                )
+                for month_year, metrics in merged.items()
+            }
+
+        loan_conditions = resolve_loan_conditions(loan_type, db)
+        params = {}
+
+        if loan_type in ("extradana", "aku_cicil"):
+            if loan_type == "extradana":
+                loan_conditions_tl = (
+                    "l.loan_id IN (SELECT ls.id FROM loan_setting ls WHERE ls.loan_type LIKE 'Extradana%')"
+                )
+            else:
+                loan_conditions_tl = loan_conditions
+
+            query = """
+            SELECT
+                DATE_FORMAT(tlh.payment_date, '%M %Y') as month_year,
+                SUM(ROUND(l.total_loan / l.duration, 0)) as total_principal_recovered,
+                SUM(ROUND(l.admin_fee / l.duration, 0)) as total_admin_fee_recovered,
+                COUNT(DISTINCT l.id) as loan_request_count
+            FROM td_loan_history tlh
+            INNER JOIN td_loan l ON tlh.loan_form_id = l.id
+            {karyawan_joins}
+            WHERE tlh.due_date IS NOT NULL
+            AND l.id_karyawan IS NOT NULL
+            AND {loan_conditions_tl}
+            AND tlh.status = 2
+            AND {bad_debt_predicate}
+            """.format(
+                karyawan_joins=_LOAN_GMC_JOINS,
+                loan_conditions_tl=loan_conditions_tl,
+                bad_debt_predicate=_BAD_DEBT_INSTALLMENT_PREDICATE,
+            )
+            date_column = "tlh.payment_date"
+        else:
+            query = """
+            SELECT
+                DATE_FORMAT(l.payment_date, '%M %Y') as month_year,
+                SUM(l.total_loan) as total_principal_recovered,
+                SUM(l.admin_fee) as total_admin_fee_recovered,
+                COUNT(DISTINCT l.id) as loan_request_count
+            FROM td_loan l
+            {karyawan_joins}
+            WHERE {loan_conditions}
+            AND l.loan_status = 2
+            AND {bad_debt_predicate}
+            """.format(
+                karyawan_joins=_LOAN_GMC_JOINS,
+                loan_conditions=loan_conditions,
+                bad_debt_predicate=_BAD_DEBT_LUMP_PREDICATE,
+            )
+            date_column = "l.payment_date"
+
+        query = _append_loan_org_filters(
+            query,
+            params,
+            id_karyawan_filter=id_karyawan_filter,
+            employer_filter=employer_filter,
+            sourced_to_filter=sourced_to_filter,
+            project_filter=project_filter,
+            client_segment_filter=client_segment_filter,
+            product_type_filter=product_type_filter,
+            loan_status_filter=loan_status_filter,
+            db=db,
+        )
+
+        if start_date and end_date:
+            query = append_date_filters(
+                query,
+                params,
+                start_date=start_date,
+                end_date=end_date,
+                date_column=date_column,
+            )
+
+        query += f" GROUP BY DATE_FORMAT({date_column}, '%M %Y') ORDER BY MIN({date_column})"
+
+        records = db.execute(text(query), params).fetchall()
+
+        monthly_data = {}
+        for record in records:
+            month_year = record[0]
+            if month_year is None:
+                continue
+            total_principal_recovered = record[1] if record[1] is not None else 0
+            total_admin_fee_recovered = record[2] if record[2] is not None else 0
+            loan_request_count = record[3] if record[3] is not None else 0
+            monthly_data[month_year] = _finalize_bad_debt_recovery(
+                total_principal_recovered, total_admin_fee_recovered, loan_request_count
+            )
 
         return monthly_data
 
