@@ -5288,7 +5288,7 @@ def get_coverage_utilization_summary(db: Session,
 
         penetration_rate = 0
         if total_eligible_employees > 0:
-            penetration_rate = total_loan_requests / total_eligible_employees
+            penetration_rate = total_approved_requests / total_eligible_employees
 
         approval_rate = 0
         rejected_rate = 0
