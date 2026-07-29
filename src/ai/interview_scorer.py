@@ -1,6 +1,6 @@
 import asyncio
 import json
-from typing import List, Optional, Tuple
+from typing import Dict, List, Optional, Tuple
 
 from agents import Agent
 from pydantic import BaseModel, Field
@@ -11,10 +11,10 @@ from .resume_scorer import MODEL, safe_runner_run
 
 SCORE_RUBRIC = """
 RUBRIK SKOR (0.0 - 10.0):
-9.0 - 10.0 (Excellent): Metrik terukur, kerangka jelas (STAR), selaras dengan parameter pekerjaan.
-7.0 - 8.9 (Good): Menjawab langsung dengan pengalaman personal, kurang data granular.
-5.0 - 6.9 (Marginal): Jawaban generik/teoritis ("saya akan..." bukan "saya pernah...").
-Di bawah 5.0 (Poor): Menghindar, tidak menjawab, atau kontradiksi teknis.
+9.0 - 10.0 (Excellent): Bukti kuat, spesifik, konsisten dengan aspek yang dinilai.
+7.0 - 8.9 (Good): Menunjukkan aspek dengan contoh personal yang cukup jelas.
+5.0 - 6.9 (Marginal): Jawaban generik/teoritis, bukti lemah atau tidak konsisten.
+Di bawah 5.0 (Poor): Tidak menunjukkan aspek, menghindar, atau kontradiksi.
 """
 
 TRANSCRIPT_GUIDANCE = """
@@ -25,12 +25,79 @@ TRANSKRIP SPEECH-TO-TEXT:
 - Bedakan komunikasi verbal buruk vs kualitas transkripsi buruk.
 """
 
-WEIGHT_RELEVANCE = 0.25
-WEIGHT_DEPTH = 0.25
-WEIGHT_COMMUNICATION = 0.20
-WEIGHT_JOB_FIT = 0.30
+# Aspek penilaian (dari form "ASPEK YANG DINILAI") + bobot.
+# Bobot diarahkan ke hiring profesional berbasis transkrip:
+# teknis + analisa paling berat; sikap/penampilan paling ringan
+# (penampilan visual tidak dapat dinilai dari audio/teks).
+ASPEK_DEFINITIONS: Dict[str, Dict[str, object]] = {
+    "sikap_penampilan": {
+        "label": "Sikap & Penampilan",
+        "weight": 0.08,
+        "description": (
+            "Penampilan keseluruhan, keluwesan, sopan santun, dll. "
+            "Dari transkrip: nilai kesopanan, profesionalisme, keluwesan "
+            "berbahasa, dan sikap terhadap pewawancara. "
+            "JANGAN menghukum karena penampilan visual yang tidak terlihat."
+        ),
+    },
+    "komunikasi": {
+        "label": "Komunikasi",
+        "weight": 0.16,
+        "description": (
+            "Cara kandidat mengungkapkan pikiran dan perasaannya secara lisan: "
+            "kejelasan, struktur, kelancaran menyampaikan ide."
+        ),
+    },
+    "analisa_logika": {
+        "label": "Analisa & Logika",
+        "weight": 0.18,
+        "description": (
+            "Kemampuan menganalisa dan menyimpulkan masalah dengan melihat "
+            "faktor sebab-akibat sehingga kesimpulan masuk akal."
+        ),
+    },
+    "kemampuan_teknis": {
+        "label": "Kemampuan Teknis Dibidangnya",
+        "weight": 0.20,
+        "description": (
+            "Pengetahuan dan keterampilan yang dimiliki kandidat sesuai "
+            "dengan posisi yang dilamar."
+        ),
+    },
+    "motivasi_kerja": {
+        "label": "Motivasi Kerja",
+        "weight": 0.14,
+        "description": (
+            "Besarnya dorongan dari dalam diri untuk mencapai suatu tujuan tertentu: "
+            "semangat, alasan melamar, komitmen, ketekunan."
+        ),
+    },
+    "wawasan_berpikir": {
+        "label": "Wawasan Berpikir",
+        "weight": 0.12,
+        "description": (
+            "Luasnya pengetahuan dan cara pandang kandidat dalam menghadapi masalah: "
+            "perspektif, konteks industri, pemikiran terbuka."
+        ),
+    },
+    "potensi_berkembang": {
+        "label": "Potensi untuk Berkembang",
+        "weight": 0.12,
+        "description": (
+            "Kemampuan dan keinginan pribadi untuk mengembangkan diri dengan "
+            "mempelajari hal baru yang belum pernah diperoleh."
+        ),
+    },
+}
+
+ASPEK_KEYS = list(ASPEK_DEFINITIONS.keys())
+WEIGHTS = {k: float(v["weight"]) for k, v in ASPEK_DEFINITIONS.items()}
+assert abs(sum(WEIGHTS.values()) - 1.0) < 1e-9
+
 RED_FLAG_PENALTY_EACH = 0.5
 MAX_RED_FLAG_PENALTY = 1.5
+# Calibration agents may nudge preliminary averages within this band.
+MAX_CATEGORY_ADJUSTMENT = 1.5
 
 
 # --- Input / output schemas ---
@@ -54,15 +121,16 @@ class QuestionEvaluation(BaseModel):
     missing_elements: str = Field(
         description="Informasi penting yang seharusnya ada tetapi tidak disebutkan kandidat"
     )
-    relevance_score: float = Field(
-        description="Skor relevansi (0.0-10.0). Lihat rubrik."
+    sikap_penampilan_score: float = Field(description="Skor Sikap & Penampilan (0.0-10.0)")
+    komunikasi_score: float = Field(description="Skor Komunikasi (0.0-10.0)")
+    analisa_logika_score: float = Field(description="Skor Analisa & Logika (0.0-10.0)")
+    kemampuan_teknis_score: float = Field(
+        description="Skor Kemampuan Teknis Dibidangnya (0.0-10.0)"
     )
-    depth_score: float = Field(description="Skor kedalaman (0.0-10.0). Lihat rubrik.")
-    communication_score: float = Field(
-        description="Skor komunikasi/kejelasan maksud (0.0-10.0). Lihat rubrik."
-    )
-    job_fit_score: float = Field(
-        description="Skor kecocokan jawaban dengan posisi (0.0-10.0). Lihat rubrik."
+    motivasi_kerja_score: float = Field(description="Skor Motivasi Kerja (0.0-10.0)")
+    wawasan_berpikir_score: float = Field(description="Skor Wawasan Berpikir (0.0-10.0)")
+    potensi_berkembang_score: float = Field(
+        description="Skor Potensi untuk Berkembang (0.0-10.0)"
     )
     feedback: str = Field(description="Umpan balik spesifik (Bahasa Indonesia)")
     red_flags: List[str] = Field(default_factory=list)
@@ -96,6 +164,19 @@ class ConsistencyCheckResult(BaseModel):
     summary: str = Field(description="Ringkasan temuan konsistensi (Bahasa Indonesia)")
 
 
+class CategoryCalibrationResult(BaseModel):
+    """Stage 3b: specialist agent adjusts one aspek score."""
+
+    category_key: str
+    preliminary_score: float
+    adjusted_score: float = Field(description="Skor akhir aspek setelah kalibrasi (0.0-10.0)")
+    adjustment_delta: float = Field(
+        description="Selisih adjusted - preliminary (boleh 0 jika tidak diubah)"
+    )
+    justification: str = Field(description="Alasan penyesuaian (Bahasa Indonesia)")
+    evidence_highlights: List[str] = Field(default_factory=list)
+
+
 class InterviewRecommendation(BaseModel):
     should_proceed: bool
     confidence_level: str
@@ -111,24 +192,36 @@ class InterviewSynthesisResult(BaseModel):
     summary: str
 
 
+class CategoryScoreDetail(BaseModel):
+    key: str
+    label: str
+    weight: float
+    preliminary_avg: float
+    adjusted_score: float
+    adjustment_delta: float
+    justification: str
+    evidence_highlights: List[str] = Field(default_factory=list)
+
+
 class ScoreBreakdown(BaseModel):
-    relevance_avg: float
-    depth_avg: float
-    communication_avg: float
-    job_fit_avg: float
+    category_scores: List[CategoryScoreDetail]
     base_weighted_score: float
     red_flag_count: int
     red_flag_penalty: float
     final_overall_score: float
     consistency_score: Optional[float] = None
+    weights: Dict[str, float]
 
 
 class InterviewScoreResult(BaseModel):
     overall_score: float
-    communication_score: float
-    relevance_score: float
-    depth_score: float
-    job_fit_score: float
+    sikap_penampilan_score: float
+    komunikasi_score: float
+    analisa_logika_score: float
+    kemampuan_teknis_score: float
+    motivasi_kerja_score: float
+    wawasan_berpikir_score: float
+    potensi_berkembang_score: float
     consistency_score: Optional[float] = None
     scored_question_count: int
     skipped_questions: List[SkippedQuestion]
@@ -142,6 +235,16 @@ class InterviewScoreResult(BaseModel):
     consistency_details: Optional[ConsistencyCheckResult] = None
 
 
+def _aspek_rubric_block() -> str:
+    lines = ["ASPEK YANG DINILAI (beri skor 0.0-10.0 untuk SETIAP aspek):"]
+    for key, meta in ASPEK_DEFINITIONS.items():
+        lines.append(
+            f"- {key} ({meta['label']}, bobot {float(meta['weight']) * 100:.0f}%): "
+            f"{meta['description']}"
+        )
+    return "\n".join(lines)
+
+
 # --- Stage 1: per-question micro-evaluation agent ---
 
 question_micro_agent = Agent(
@@ -151,6 +254,8 @@ question_micro_agent = Agent(
 
     {TRANSCRIPT_GUIDANCE}
     {SCORE_RUBRIC}
+
+    {_aspek_rubric_block()}
 
     TUGAS:
     1. Putuskan apakah item ini harus DIABAIKAN (should_skip=true) atau DINILAI (should_skip=false).
@@ -166,8 +271,11 @@ question_micro_agent = Agent(
     - Pertanyaan intro seperti perkenalan diri JIKA ada jawaban kandidat
 
     Jika DINILAI:
-    - Isi observed_evidence dan missing_elements SEBELUM memberi skor (chain-of-thought)
-    - Berikan relevance_score, depth_score, communication_score, job_fit_score
+    - Isi observed_evidence dan missing_elements SEBELUM memberi skor
+    - Berikan ketujuh skor aspek: sikap_penampilan, komunikasi, analisa_logika,
+      kemampuan_teknis, motivasi_kerja, wawasan_berpikir, potensi_berkembang
+    - Jika suatu aspek kurang relevan untuk pertanyaan ini, beri skor netral ~5.0-6.0
+      berdasarkan sinyal yang ada; jangan mengarang bukti
     - JANGAN hitung skor keseluruhan atau rata-rata — hanya skor baris ini
     - Semua teks dalam Bahasa Indonesia
 
@@ -203,7 +311,51 @@ consistency_agent = Agent(
     output_type=ConsistencyCheckResult,
 )
 
-# --- Stage 3b: narrative synthesis (scores provided, no math) ---
+
+def _build_category_calibration_agent(category_key: str) -> Agent:
+    meta = ASPEK_DEFINITIONS[category_key]
+    label = meta["label"]
+    description = meta["description"]
+    weight_pct = float(meta["weight"]) * 100
+
+    return Agent(
+        name=f"Interview Aspek Calibrator: {label}",
+        instructions=f"""
+        Anda adalah spesialis penilaian aspek "{label}" untuk wawancara kerja.
+
+        DEFINISI ASPEK:
+        {description}
+
+        Bobot aspek ini dalam skor keseluruhan: {weight_pct:.0f}%.
+
+        {TRANSCRIPT_GUIDANCE}
+        {SCORE_RUBRIC}
+
+        INPUT berisi:
+        - preliminary_score: rata-rata skor aspek dari evaluasi per-pertanyaan
+        - evidence: ringkasan bukti per jawaban
+        - job_title / job_description / target_skills
+        - consistency_summary (jika ada)
+
+        TUGAS:
+        1. Tinjau apakah preliminary_score sudah adil untuk aspek "{label}".
+        2. Sesuaikan adjusted_score jika perlu (naik/turun), maksimal ±{MAX_CATEGORY_ADJUSTMENT}
+           dari preliminary_score.
+        3. Jika sudah tepat, set adjusted_score = preliminary_score dan adjustment_delta = 0.
+        4. category_key HARUS "{category_key}".
+        5. justification dan evidence_highlights dalam Bahasa Indonesia.
+        6. JANGAN menilai aspek lain. JANGAN menghitung skor keseluruhan.
+        """,
+        model=MODEL,
+        output_type=CategoryCalibrationResult,
+    )
+
+
+category_calibration_agents: Dict[str, Agent] = {
+    key: _build_category_calibration_agent(key) for key in ASPEK_KEYS
+}
+
+# --- Stage 3c: narrative synthesis (scores provided, no math) ---
 
 synthesis_agent = Agent(
     name="Interview Synthesis Writer",
@@ -212,7 +364,7 @@ synthesis_agent = Agent(
 
     PENTING:
     - JANGAN menghitung atau mengubah skor — skor sudah dihitung oleh sistem
-    - Gunakan skor dan evaluasi per-pertanyaan yang diberikan sebagai dasar
+    - Gunakan skor aspek dan evaluasi per-pertanyaan yang diberikan sebagai dasar
     - Semua output Bahasa Indonesia
     - strengths: kekuatan kandidat yang terbukti dari jawaban
     - weaknesses: kelemahan spesifik
@@ -224,7 +376,7 @@ synthesis_agent = Agent(
 )
 
 
-# --- Deterministic reducer (Stage 3) ---
+# --- Deterministic reducer ---
 
 
 def _clamp_score(value: float) -> float:
@@ -239,88 +391,137 @@ def _normalize_llm_score(raw: float, question_number: int, dimension: str) -> fl
     return _clamp_score(raw)
 
 
+def _score_attr(key: str) -> str:
+    return f"{key}_score"
+
+
+def average_category_scores(
+    evaluations: List[QuestionEvaluation],
+) -> Dict[str, float]:
+    if not evaluations:
+        return {key: 0.0 for key in ASPEK_KEYS}
+
+    count = len(evaluations)
+    return {
+        key: sum(getattr(e, _score_attr(key)) for e in evaluations) / count
+        for key in ASPEK_KEYS
+    }
+
+
+def normalize_evaluations(
+    evaluations: List[QuestionEvaluation],
+) -> List[QuestionEvaluation]:
+    normalized: List[QuestionEvaluation] = []
+    for evaluation in evaluations:
+        kwargs = {
+            "question_number": evaluation.question_number,
+            "question": evaluation.question,
+            "observed_evidence": evaluation.observed_evidence,
+            "missing_elements": evaluation.missing_elements,
+            "feedback": evaluation.feedback,
+            "red_flags": evaluation.red_flags,
+        }
+        for key in ASPEK_KEYS:
+            attr = _score_attr(key)
+            kwargs[attr] = _normalize_llm_score(
+                getattr(evaluation, attr), evaluation.question_number, key
+            )
+        normalized.append(QuestionEvaluation(**kwargs))
+    return normalized
+
+
+def apply_category_calibrations(
+    preliminary: Dict[str, float],
+    calibrations: List[CategoryCalibrationResult],
+) -> Dict[str, CategoryScoreDetail]:
+    by_key = {c.category_key: c for c in calibrations}
+    details: Dict[str, CategoryScoreDetail] = {}
+
+    for key in ASPEK_KEYS:
+        meta = ASPEK_DEFINITIONS[key]
+        prelim = preliminary.get(key, 0.0)
+        cal = by_key.get(key)
+
+        if cal is None:
+            adjusted = prelim
+            delta = 0.0
+            justification = "Tidak ada kalibrasi aspek; memakai rata-rata per-pertanyaan."
+            highlights: List[str] = []
+        else:
+            # Enforce band around preliminary so agents can't wildly rewrite scores.
+            capped = max(
+                prelim - MAX_CATEGORY_ADJUSTMENT,
+                min(prelim + MAX_CATEGORY_ADJUSTMENT, cal.adjusted_score),
+            )
+            adjusted = _clamp_score(capped)
+            delta = round(adjusted - prelim, 2)
+            justification = cal.justification
+            highlights = cal.evidence_highlights
+
+        details[key] = CategoryScoreDetail(
+            key=key,
+            label=str(meta["label"]),
+            weight=float(meta["weight"]),
+            preliminary_avg=round(prelim, 2),
+            adjusted_score=round(adjusted, 2),
+            adjustment_delta=delta,
+            justification=justification,
+            evidence_highlights=highlights,
+        )
+
+    return details
+
+
 def compute_scores(
     evaluations: List[QuestionEvaluation],
+    category_details: Dict[str, CategoryScoreDetail],
     consistency_score: Optional[float] = None,
-) -> Tuple[ScoreBreakdown, List[QuestionEvaluation], float, float, float, float, float]:
+) -> Tuple[ScoreBreakdown, List[QuestionEvaluation], float, Dict[str, float]]:
     if not evaluations:
+        empty_details = [
+            CategoryScoreDetail(
+                key=key,
+                label=str(meta["label"]),
+                weight=float(meta["weight"]),
+                preliminary_avg=0.0,
+                adjusted_score=0.0,
+                adjustment_delta=0.0,
+                justification="Tidak ada pertanyaan yang dinilai.",
+            )
+            for key, meta in ASPEK_DEFINITIONS.items()
+        ]
         breakdown = ScoreBreakdown(
-            relevance_avg=0.0,
-            depth_avg=0.0,
-            communication_avg=0.0,
-            job_fit_avg=0.0,
+            category_scores=empty_details,
             base_weighted_score=0.0,
             red_flag_count=0,
             red_flag_penalty=0.0,
             final_overall_score=0.0,
             consistency_score=consistency_score,
+            weights=dict(WEIGHTS),
         )
-        return breakdown, [], 0.0, 0.0, 0.0, 0.0, 0.0
+        return breakdown, [], 0.0, {key: 0.0 for key in ASPEK_KEYS}
 
-    normalized: List[QuestionEvaluation] = []
-    for evaluation in evaluations:
-        normalized.append(
-            QuestionEvaluation(
-                question_number=evaluation.question_number,
-                question=evaluation.question,
-                observed_evidence=evaluation.observed_evidence,
-                missing_elements=evaluation.missing_elements,
-                relevance_score=_normalize_llm_score(
-                    evaluation.relevance_score, evaluation.question_number, "relevance"
-                ),
-                depth_score=_normalize_llm_score(
-                    evaluation.depth_score, evaluation.question_number, "depth"
-                ),
-                communication_score=_normalize_llm_score(
-                    evaluation.communication_score,
-                    evaluation.question_number,
-                    "communication",
-                ),
-                job_fit_score=_normalize_llm_score(
-                    evaluation.job_fit_score, evaluation.question_number, "job_fit"
-                ),
-                feedback=evaluation.feedback,
-                red_flags=evaluation.red_flags,
-            )
-        )
+    normalized = normalize_evaluations(evaluations)
+    adjusted_scores = {
+        key: category_details[key].adjusted_score for key in ASPEK_KEYS
+    }
 
-    count = len(normalized)
-    relevance = sum(e.relevance_score for e in normalized) / count
-    depth = sum(e.depth_score for e in normalized) / count
-    communication = sum(e.communication_score for e in normalized) / count
-    job_fit = sum(e.job_fit_score for e in normalized) / count
-
-    base_score = (
-        relevance * WEIGHT_RELEVANCE
-        + depth * WEIGHT_DEPTH
-        + communication * WEIGHT_COMMUNICATION
-        + job_fit * WEIGHT_JOB_FIT
-    )
+    base_score = sum(adjusted_scores[key] * WEIGHTS[key] for key in ASPEK_KEYS)
 
     red_flag_count = sum(len(e.red_flags) for e in normalized)
     red_flag_penalty = min(MAX_RED_FLAG_PENALTY, red_flag_count * RED_FLAG_PENALTY_EACH)
     final_overall = _clamp_score(base_score - red_flag_penalty)
 
     breakdown = ScoreBreakdown(
-        relevance_avg=round(relevance, 2),
-        depth_avg=round(depth, 2),
-        communication_avg=round(communication, 2),
-        job_fit_avg=round(job_fit, 2),
+        category_scores=[category_details[key] for key in ASPEK_KEYS],
         base_weighted_score=round(base_score, 2),
         red_flag_count=red_flag_count,
         red_flag_penalty=round(red_flag_penalty, 2),
         final_overall_score=round(final_overall, 2),
         consistency_score=consistency_score,
+        weights=dict(WEIGHTS),
     )
-    return (
-        breakdown,
-        normalized,
-        final_overall,
-        relevance,
-        depth,
-        communication,
-        job_fit,
-    )
+    return breakdown, normalized, final_overall, adjusted_scores
 
 
 def build_recommendation(overall_score: float) -> InterviewRecommendation:
@@ -414,6 +615,59 @@ async def _check_consistency(
     return result.final_output
 
 
+async def _calibrate_category(
+    category_key: str,
+    preliminary_score: float,
+    evaluations: List[QuestionEvaluation],
+    job_description: str,
+    job_title: Optional[str],
+    target_skills: List[str],
+    consistency: Optional[ConsistencyCheckResult],
+) -> CategoryCalibrationResult:
+    evidence = [
+        {
+            "question_number": e.question_number,
+            "question": e.question,
+            "observed_evidence": e.observed_evidence,
+            "missing_elements": e.missing_elements,
+            "category_score": getattr(e, _score_attr(category_key)),
+            "feedback": e.feedback,
+        }
+        for e in evaluations
+    ]
+    meta = ASPEK_DEFINITIONS[category_key]
+    payload = {
+        "category_key": category_key,
+        "category_label": meta["label"],
+        "category_description": meta["description"],
+        "weight": meta["weight"],
+        "preliminary_score": round(preliminary_score, 2),
+        "max_adjustment": MAX_CATEGORY_ADJUSTMENT,
+        "job_title": job_title,
+        "job_description": job_description,
+        "target_skills": target_skills,
+        "evidence": evidence,
+        "consistency_summary": consistency.summary if consistency else None,
+    }
+    payload = {k: v for k, v in payload.items() if v is not None}
+
+    agent = category_calibration_agents[category_key]
+    result = await safe_runner_run(agent, json.dumps(payload, ensure_ascii=False))
+    if not isinstance(result.final_output, CategoryCalibrationResult):
+        raise TypeError(f"Category calibrator {category_key} returned wrong type")
+
+    output = result.final_output
+    # Ensure key is correct even if the model mislabels it.
+    return CategoryCalibrationResult(
+        category_key=category_key,
+        preliminary_score=preliminary_score,
+        adjusted_score=_clamp_score(output.adjusted_score),
+        adjustment_delta=round(output.adjusted_score - preliminary_score, 2),
+        justification=output.justification,
+        evidence_highlights=output.evidence_highlights,
+    )
+
+
 async def _synthesize_narrative(
     evaluations: List[QuestionEvaluation],
     skipped: List[SkippedQuestion],
@@ -448,10 +702,11 @@ async def score_interview(
     target_skills: Optional[List[str]] = None,
 ) -> dict:
     """
-    3-stage interview scoring pipeline:
-    1. Parallel per-question micro-evaluation (map)
-    2. Isolated CV consistency check (optional)
-    3. Deterministic Python score aggregation (reduce) + narrative synthesis
+    Interview scoring pipeline against 7 aspek penilaian:
+    1. Parallel per-question micro-evaluation (7 category scores each)
+    2. Optional CV consistency check
+    3. Parallel per-aspek calibration agents (adjust preliminary averages)
+    4. Deterministic weighted aggregation + narrative synthesis
     """
     if not qa_pairs:
         raise ValueError("qa_pairs wajib diisi minimal 1 pertanyaan")
@@ -486,6 +741,8 @@ async def score_interview(
                 )
             )
 
+    evaluations = normalize_evaluations(evaluations)
+
     # Stage 2: CV cross-reference (optional)
     consistency: Optional[ConsistencyCheckResult] = None
     consistency_score: Optional[float] = None
@@ -497,39 +754,60 @@ async def score_interview(
             consistency.consistency_score, 0, "consistency"
         )
 
-    # Stage 3: deterministic reducer
-    (
-        breakdown,
-        evaluations,
-        overall_score,
-        relevance,
-        depth,
-        communication,
-        job_fit,
-    ) = compute_scores(evaluations, consistency_score)
+    # Stage 3a: preliminary averages
+    preliminary = average_category_scores(evaluations)
+
+    # Stage 3b: parallel aspek calibration agents
+    calibrations: List[CategoryCalibrationResult] = []
+    if evaluations:
+        calibrations = list(
+            await asyncio.gather(
+                *(
+                    _calibrate_category(
+                        key,
+                        preliminary[key],
+                        evaluations,
+                        job_description,
+                        job_title,
+                        skills,
+                        consistency,
+                    )
+                    for key in ASPEK_KEYS
+                )
+            )
+        )
+
+    category_details = apply_category_calibrations(preliminary, calibrations)
+
+    # Stage 3c: deterministic weighted reduce
+    breakdown, evaluations, overall_score, adjusted = compute_scores(
+        evaluations, category_details, consistency_score
+    )
 
     # Narrative synthesis (no score math)
     synthesis = await _synthesize_narrative(
         evaluations, skipped, breakdown, consistency, job_title, job_description
     )
 
-    # Merge red flags from all sources
     all_red_flags = list(synthesis.red_flags)
     for evaluation in evaluations:
         all_red_flags.extend(evaluation.red_flags)
     if consistency:
         all_red_flags.extend(consistency.explicit_contradictions)
         all_red_flags.extend(consistency.skill_exaggerations)
-    all_red_flags = list(dict.fromkeys(all_red_flags))  # dedupe, preserve order
+    all_red_flags = list(dict.fromkeys(all_red_flags))
 
     recommendation = build_recommendation(overall_score)
 
     result = InterviewScoreResult(
-        overall_score=overall_score,
-        communication_score=round(communication, 2),
-        relevance_score=round(relevance, 2),
-        depth_score=round(depth, 2),
-        job_fit_score=round(job_fit, 2),
+        overall_score=round(overall_score, 2),
+        sikap_penampilan_score=adjusted["sikap_penampilan"],
+        komunikasi_score=adjusted["komunikasi"],
+        analisa_logika_score=adjusted["analisa_logika"],
+        kemampuan_teknis_score=adjusted["kemampuan_teknis"],
+        motivasi_kerja_score=adjusted["motivasi_kerja"],
+        wawasan_berpikir_score=adjusted["wawasan_berpikir"],
+        potensi_berkembang_score=adjusted["potensi_berkembang"],
         consistency_score=consistency_score,
         scored_question_count=len(evaluations),
         skipped_questions=skipped,
