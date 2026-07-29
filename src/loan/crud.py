@@ -3246,6 +3246,26 @@ def get_karyawan_overdue_summary(db: Session,
         # For extradana, aku_cicil, and combined installment types, use td_loan_history table
         if loan_type not in ("extradana", "aku_cicil", "installment"):
             # Use td_loan table directly for kasbon
+            # Netting out partial payments already recorded against a lump-sum loan
+            # (duration = 1): a loan can be status = 4 (overdue) while still having
+            # a partial amount paid via td_loan_payment / td_loan_payment_allocation.
+            # total_payment is the remaining pokok+bunga still owed (monthly - paid);
+            # total_amount_owed (pokok) and total_admin_fee (bunga) are that same
+            # remainder split proportionally, so owed + admin_fee == total_payment.
+            # Mirrors the netting done in _UNRECOVERED_LUMP_PAYMENT_SQL.
+            _lump_paid_subquery = """(
+                SELECT COALESCE(SUM(amt), 0) FROM (
+                    SELECT p.amount amt FROM td_loan_payment p
+                    WHERE p.loan_id = l.id AND p.status = 1 AND p.loan_history_id IS NULL
+                      AND NOT EXISTS (SELECT 1 FROM td_loan_payment_allocation a WHERE a.payment_id = p.id)
+                    UNION ALL
+                    SELECT a.amount FROM td_loan_payment_allocation a
+                    INNER JOIN td_loan_payment p ON p.id = a.payment_id
+                    WHERE p.loan_id = l.id AND p.status = 1 AND a.loan_history_id IS NULL
+                ) t
+            )"""
+            _lump_remaining_payment = f"GREATEST(l.total_payment - {_lump_paid_subquery}, 0)"
+
             overdue_query = """
             SELECT DISTINCT
                 tk.id_karyawan,
@@ -3254,11 +3274,15 @@ def get_karyawan_overdue_summary(db: Session,
                 emp.keterangan AS company,
                 src.keterangan AS sourced_to,
                 prj.keterangan AS project,
-                SUM(l.total_loan) as total_amount_owed,
+                ROUND(SUM(CASE WHEN l.total_payment > 0
+                    THEN l.total_loan * {remaining_payment} / l.total_payment
+                    ELSE 0 END), 0) as total_amount_owed,
                 MAX(l.repayment_date) as repayment_date,
-                SUM(l.admin_fee) as total_admin_fee,
-                SUM(l.total_payment) as total_payment
-            FROM td_loan l
+                ROUND(SUM(CASE WHEN l.total_payment > 0
+                    THEN l.admin_fee * {remaining_payment} / l.total_payment
+                    ELSE 0 END), 0) as total_admin_fee,
+                SUM({remaining_payment}) as total_payment
+            FROM td_loan l""".format(remaining_payment=_lump_remaining_payment) + """
             LEFT JOIN td_karyawan tk
                 ON l.id_karyawan = tk.id_karyawan
             LEFT JOIN tbl_gmc emp
@@ -3285,6 +3309,27 @@ def get_karyawan_overdue_summary(db: Session,
             # Adapt loan_conditions for td_loan_history context by replacing l. with tl.
             loan_conditions_tl = loan_conditions.replace('l.', 'tl.')
 
+            # Netting out partial payments already recorded against an installment
+            # (duration > 1): a given month's td_loan_history row can be status = 4
+            # (overdue) while still having a partial amount paid via td_loan_payment /
+            # td_loan_payment_allocation for that specific installment.
+            # total_payment is the remaining pokok+bunga still owed (monthly - paid);
+            # total_amount_owed (pokok) and total_admin_fee (bunga) are that same
+            # remainder split proportionally, so owed + admin_fee == total_payment.
+            # Mirrors the netting done in _UNRECOVERED_INSTALLMENT_PAYMENT_SQL.
+            _installment_paid_subquery = """(
+                SELECT COALESCE(SUM(amt), 0) FROM (
+                    SELECT p.amount amt FROM td_loan_payment p
+                    WHERE p.loan_id = tl.id AND p.status = 1 AND p.loan_history_id = tlh.id
+                      AND NOT EXISTS (SELECT 1 FROM td_loan_payment_allocation a WHERE a.payment_id = p.id)
+                    UNION ALL
+                    SELECT a.amount FROM td_loan_payment_allocation a
+                    INNER JOIN td_loan_payment p ON p.id = a.payment_id
+                    WHERE p.loan_id = tl.id AND p.status = 1 AND a.loan_history_id = tlh.id
+                ) t
+            )"""
+            _installment_remaining_payment = f"GREATEST(tlh.monthly - {_installment_paid_subquery}, 0)"
+
             overdue_query = """
             SELECT DISTINCT
                 tk.id_karyawan,
@@ -3293,11 +3338,15 @@ def get_karyawan_overdue_summary(db: Session,
                 emp.keterangan AS company,
                 src.keterangan AS sourced_to,
                 prj.keterangan AS project,
-                SUM(ROUND(tl.total_loan / tl.duration, 0)) as total_amount_owed,
+                ROUND(SUM(CASE WHEN tlh.monthly > 0
+                    THEN ROUND(tl.total_loan / tl.duration, 0) * {remaining_payment} / tlh.monthly
+                    ELSE 0 END), 0) as total_amount_owed,
                 MAX(tlh.due_date) as repayment_date,
-                SUM(ROUND(tl.admin_fee / tl.duration, 0)) as total_admin_fee,
-                SUM(tlh.monthly) as total_payment
-            FROM td_loan_history tlh
+                ROUND(SUM(CASE WHEN tlh.monthly > 0
+                    THEN ROUND(tl.admin_fee / tl.duration, 0) * {remaining_payment} / tlh.monthly
+                    ELSE 0 END), 0) as total_admin_fee,
+                SUM({remaining_payment}) as total_payment
+            FROM td_loan_history tlh""".format(remaining_payment=_installment_remaining_payment) + """
             LEFT JOIN td_loan tl ON tlh.loan_form_id = tl.id
             LEFT JOIN td_karyawan tk ON tl.id_karyawan = tk.id_karyawan
             LEFT JOIN tbl_gmc emp
