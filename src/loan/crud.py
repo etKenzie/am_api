@@ -5808,7 +5808,7 @@ def get_client_summary(db: Session, start_date: str = None, end_date: str = None
                 WHEN SUM(CASE WHEN l.loan_status IN (1, 2, 4) THEN l.total_payment ELSE 0 END) > 0
                 THEN SUM(CASE WHEN l.loan_status IN (1, 4) THEN l.total_payment ELSE 0 END) / SUM(CASE WHEN l.loan_status IN (1, 2, 4) THEN l.total_payment ELSE 0 END)
                 ELSE 0
-            END as delinquency_rate,
+            END as delinquency_by_expected_repayment,
             COUNT(DISTINCT CASE WHEN l.loan_status IN (1, 2, 3, 4) THEN l.id_karyawan END) as unique_requesting_employees
         FROM td_loan l
         LEFT JOIN td_karyawan tk
@@ -5879,7 +5879,11 @@ def get_client_summary(db: Session, start_date: str = None, end_date: str = None
                 "total_admin_fee_collected": float(record[6]) if record[6] else 0,
                 "total_unrecovered_payment": float(record[7]) if record[7] else 0,
                 "admin_fee_profit": (float(record[6]) if record[6] else 0) - (float(record[7]) if record[7] else 0),
-                "delinquency_rate": float(record[8]) if record[8] else 0,
+                "delinquency_by_expected_repayment": float(record[8]) if record[8] else 0,
+                "delinquency_by_admin_fee": (
+                    (float(record[7]) if record[7] else 0) / (float(record[6]) if record[6] else 0)
+                    if record[6] else 0
+                ),
             })
 
         return client_disbursements
