@@ -765,7 +765,10 @@ async def get_repayment_risk(
     loan_type: str = "loan",
     db: Session = Depends(get_db)
 ):
-    """Get repayment risk summary. Use loan_type=all to combine kasbon, extradana, and aku_cicil."""
+    """Get repayment risk summary. Each repayment is counted in exactly one reporting
+    period: its payment date if paid on/before its due date or once it has crossed into
+    Bad Debt Recovery (see /loan/bad-debt-recovery), otherwise its original due date.
+    Use loan_type=all to combine kasbon, extradana, and aku_cicil."""
 
     try:
         repayment_risk_summary = crud.get_repayment_risk_summary(
@@ -841,7 +844,9 @@ async def get_repayment_risk_monthly(
     loan_type: str = "loan",
     db: Session = Depends(get_db)
 ):
-    """Get monthly repayment risk. Use loan_type=all to combine kasbon, extradana, and aku_cicil."""
+    """Get monthly repayment risk. Each repayment is bucketed into exactly one reporting
+    month using the same rule as /loan/repayment-risk (see that endpoint's docstring).
+    Use loan_type=all to combine kasbon, extradana, and aku_cicil."""
 
     try:
         monthly_repayment_risk_summary = crud.get_repayment_risk_monthly_summary(
@@ -887,9 +892,11 @@ async def get_bad_debt_recovery(
     loan_type: str = "loan",
     db: Session = Depends(get_db)
 ):
-    """Get bad debt recovery summary: loans/installments that were only paid after the grace
-    cutoff (the 15th of the month following their due date). These records are excluded from
-    repayment-risk to avoid double counting. Use loan_type=all to combine kasbon, extradana, and aku_cicil."""
+    """Get bad debt recovery summary: loans/installments paid two calendar months or more
+    after their due month (the M+2 rule). These same repayments also appear in
+    repayment-risk, attributed to their payment month instead of their due month, so a
+    repayment is still only counted once across repayment-risk's own metrics.
+    Use loan_type=all to combine kasbon, extradana, and aku_cicil."""
 
     try:
         bad_debt_recovery_summary = crud.get_bad_debt_recovery_summary(
@@ -944,7 +951,8 @@ async def get_bad_debt_recovery_monthly(
     loan_type: str = "loan",
     db: Session = Depends(get_db)
 ):
-    """Get monthly bad debt recovery, bucketed by the month the late payment posted.
+    """Get monthly bad debt recovery, bucketed by the month the late payment posted —
+    the same month repayment-risk-monthly attributes that repayment to.
     Use loan_type=all to combine kasbon, extradana, and aku_cicil."""
 
     try:
