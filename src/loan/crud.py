@@ -3681,6 +3681,7 @@ def get_loan_applicant_insights(db: Session,
         FROM td_loan l
         {_LOAN_GMC_JOINS}
         WHERE {loan_conditions}
+        AND l.loan_status IN (1, 2, 4)
         """
         gender_query = apply_common_filters(gender_query)
         if loan_status_filter is not None:
@@ -3699,6 +3700,7 @@ def get_loan_applicant_insights(db: Session,
         FROM td_loan l
         {_LOAN_GMC_JOINS}
         WHERE {loan_conditions}
+        AND l.loan_status IN (1, 2, 4)
         """
         age_query = apply_common_filters(age_query)
         if loan_status_filter is not None:
