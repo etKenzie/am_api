@@ -762,13 +762,15 @@ async def get_repayment_risk(
     product_type: str = None,
     loan_status: int = None,
     id_karyawan: int = None,
-    loan_type: str = "loan",
+    loan_type: str = "all",
     db: Session = Depends(get_db)
 ):
     """Get repayment risk summary. Each repayment is counted in exactly one reporting
     period: its payment date if paid on/before its due date or once it has crossed into
     Bad Debt Recovery (see /loan/bad-debt-recovery), otherwise its original due date.
-    Use loan_type=all to combine kasbon, extradana, and aku_cicil."""
+    Defaults to loan_type=all (kasbon + extradana + aku_cicil combined) to match the
+    all-products total reported elsewhere (e.g. ak-mj's monthly_performance); pass
+    loan_type=loan/extradana/aku_cicil to scope to a single product."""
 
     try:
         repayment_risk_summary = crud.get_repayment_risk_summary(
@@ -841,12 +843,13 @@ async def get_repayment_risk_monthly(
     product_type: str = None,
     loan_status: int = None,
     id_karyawan: int = None,
-    loan_type: str = "loan",
+    loan_type: str = "all",
     db: Session = Depends(get_db)
 ):
     """Get monthly repayment risk. Each repayment is bucketed into exactly one reporting
     month using the same rule as /loan/repayment-risk (see that endpoint's docstring).
-    Use loan_type=all to combine kasbon, extradana, and aku_cicil."""
+    Defaults to loan_type=all (kasbon + extradana + aku_cicil combined); pass
+    loan_type=loan/extradana/aku_cicil to scope to a single product."""
 
     try:
         monthly_repayment_risk_summary = crud.get_repayment_risk_monthly_summary(
