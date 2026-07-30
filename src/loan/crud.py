@@ -5092,6 +5092,7 @@ def get_coverage_utilization_summary(db: Session,
     try:
         company_filter = COMPANY_FILTER
         params = {}
+        loan_conditions = resolve_loan_conditions(loan_type, db)
 
         # Active employees still from td_karyawan; eligible from snapshot tables.
         employee_count_query = f"""
@@ -5175,6 +5176,7 @@ def get_coverage_utilization_summary(db: Session,
                 (l.received_date >= :start_date AND l.received_date <= :end_date)
                 OR (l.proses_date >= :start_date AND l.proses_date <= :end_date)
             )
+            AND {loan_conditions}
             """
         else:
             loan_metrics_query = f"""
@@ -5193,7 +5195,7 @@ def get_coverage_utilization_summary(db: Session,
                     ELSE NULL END) AS average_approval_time
             FROM td_loan l
             {_LOAN_GMC_JOINS}
-            WHERE 1=1
+            WHERE {loan_conditions}
             """
 
         loan_metrics_query = _append_loan_org_filters(
@@ -5221,7 +5223,9 @@ def get_coverage_utilization_summary(db: Session,
             WHERE l2.id_karyawan = l.id_karyawan
             AND l2.loan_status = 2
             AND l2.proses_date < l.proses_date
+            AND {loan_conditions}
         )
+        AND {loan_conditions}
         """
         first_borrow_query = _append_loan_org_filters(
             first_borrow_query,
