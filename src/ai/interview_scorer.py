@@ -26,23 +26,12 @@ TRANSKRIP SPEECH-TO-TEXT:
 """
 
 # Aspek penilaian (dari form "ASPEK YANG DINILAI") + bobot.
-# Bobot diarahkan ke hiring profesional berbasis transkrip:
-# teknis + analisa paling berat; sikap/penampilan paling ringan
-# (penampilan visual tidak dapat dinilai dari audio/teks).
+# Sikap & Penampilan dihapus: penilaian berbasis transkrip, tanpa video.
+# Bobot: teknis + analisa paling berat.
 ASPEK_DEFINITIONS: Dict[str, Dict[str, object]] = {
-    "sikap_penampilan": {
-        "label": "Sikap & Penampilan",
-        "weight": 0.08,
-        "description": (
-            "Penampilan keseluruhan, keluwesan, sopan santun, dll. "
-            "Dari transkrip: nilai kesopanan, profesionalisme, keluwesan "
-            "berbahasa, dan sikap terhadap pewawancara. "
-            "JANGAN menghukum karena penampilan visual yang tidak terlihat."
-        ),
-    },
     "komunikasi": {
         "label": "Komunikasi",
-        "weight": 0.16,
+        "weight": 0.18,
         "description": (
             "Cara kandidat mengungkapkan pikiran dan perasaannya secara lisan: "
             "kejelasan, struktur, kelancaran menyampaikan ide."
@@ -50,7 +39,7 @@ ASPEK_DEFINITIONS: Dict[str, Dict[str, object]] = {
     },
     "analisa_logika": {
         "label": "Analisa & Logika",
-        "weight": 0.18,
+        "weight": 0.20,
         "description": (
             "Kemampuan menganalisa dan menyimpulkan masalah dengan melihat "
             "faktor sebab-akibat sehingga kesimpulan masuk akal."
@@ -58,7 +47,7 @@ ASPEK_DEFINITIONS: Dict[str, Dict[str, object]] = {
     },
     "kemampuan_teknis": {
         "label": "Kemampuan Teknis Dibidangnya",
-        "weight": 0.20,
+        "weight": 0.22,
         "description": (
             "Pengetahuan dan keterampilan yang dimiliki kandidat sesuai "
             "dengan posisi yang dilamar."
@@ -66,7 +55,7 @@ ASPEK_DEFINITIONS: Dict[str, Dict[str, object]] = {
     },
     "motivasi_kerja": {
         "label": "Motivasi Kerja",
-        "weight": 0.14,
+        "weight": 0.15,
         "description": (
             "Besarnya dorongan dari dalam diri untuk mencapai suatu tujuan tertentu: "
             "semangat, alasan melamar, komitmen, ketekunan."
@@ -74,7 +63,7 @@ ASPEK_DEFINITIONS: Dict[str, Dict[str, object]] = {
     },
     "wawasan_berpikir": {
         "label": "Wawasan Berpikir",
-        "weight": 0.12,
+        "weight": 0.13,
         "description": (
             "Luasnya pengetahuan dan cara pandang kandidat dalam menghadapi masalah: "
             "perspektif, konteks industri, pemikiran terbuka."
@@ -121,7 +110,6 @@ class QuestionEvaluation(BaseModel):
     missing_elements: str = Field(
         description="Informasi penting yang seharusnya ada tetapi tidak disebutkan kandidat"
     )
-    sikap_penampilan_score: float = Field(description="Skor Sikap & Penampilan (0.0-10.0)")
     komunikasi_score: float = Field(description="Skor Komunikasi (0.0-10.0)")
     analisa_logika_score: float = Field(description="Skor Analisa & Logika (0.0-10.0)")
     kemampuan_teknis_score: float = Field(
@@ -132,7 +120,9 @@ class QuestionEvaluation(BaseModel):
     potensi_berkembang_score: float = Field(
         description="Skor Potensi untuk Berkembang (0.0-10.0)"
     )
-    feedback: str = Field(description="Umpan balik spesifik (Bahasa Indonesia)")
+    feedback: str = Field(
+        description="Umpan balik singkat 1-2 kalimat (Bahasa Indonesia), to the point"
+    )
     red_flags: List[str] = Field(default_factory=list)
 
 
@@ -173,8 +163,13 @@ class CategoryCalibrationResult(BaseModel):
     adjustment_delta: float = Field(
         description="Selisih adjusted - preliminary (boleh 0 jika tidak diubah)"
     )
-    justification: str = Field(description="Alasan penyesuaian (Bahasa Indonesia)")
-    evidence_highlights: List[str] = Field(default_factory=list)
+    justification: str = Field(
+        description="Alasan penyesuaian 1-2 kalimat maks, to the point (Bahasa Indonesia)"
+    )
+    evidence_highlights: List[str] = Field(
+        default_factory=list,
+        description="Maks 2 highlight singkat (frasa/kalimat pendek)",
+    )
 
 
 class InterviewRecommendation(BaseModel):
@@ -215,7 +210,6 @@ class ScoreBreakdown(BaseModel):
 
 class InterviewScoreResult(BaseModel):
     overall_score: float
-    sikap_penampilan_score: float
     komunikasi_score: float
     analisa_logika_score: float
     kemampuan_teknis_score: float
@@ -271,16 +265,17 @@ question_micro_agent = Agent(
     - Pertanyaan intro seperti perkenalan diri JIKA ada jawaban kandidat
 
     Jika DINILAI:
-    - Isi observed_evidence dan missing_elements SEBELUM memberi skor
-    - Berikan ketujuh skor aspek: sikap_penampilan, komunikasi, analisa_logika,
-      kemampuan_teknis, motivasi_kerja, wawasan_berpikir, potensi_berkembang
+    - Isi observed_evidence dan missing_elements SEBELUM memberi skor (masing-masing 1-2 kalimat)
+    - Berikan keenam skor aspek: komunikasi, analisa_logika, kemampuan_teknis,
+      motivasi_kerja, wawasan_berpikir, potensi_berkembang
     - Jika suatu aspek kurang relevan untuk pertanyaan ini, beri skor netral ~5.0-6.0
       berdasarkan sinyal yang ada; jangan mengarang bukti
+    - feedback: 1-2 kalimat, to the point
     - JANGAN hitung skor keseluruhan atau rata-rata — hanya skor baris ini
     - Semua teks dalam Bahasa Indonesia
 
     Jika DIABAIKAN:
-    - should_skip=true, skip_reason jelas, evaluation=null
+    - should_skip=true, skip_reason singkat (1 kalimat), evaluation=null
     """,
     model=MODEL,
     output_type=QuestionMicroResult,
@@ -343,8 +338,10 @@ def _build_category_calibration_agent(category_key: str) -> Agent:
            dari preliminary_score.
         3. Jika sudah tepat, set adjusted_score = preliminary_score dan adjustment_delta = 0.
         4. category_key HARUS "{category_key}".
-        5. justification dan evidence_highlights dalam Bahasa Indonesia.
-        6. JANGAN menilai aspek lain. JANGAN menghitung skor keseluruhan.
+        5. justification: WAJIB 1-2 kalimat maks, to the point, Bahasa Indonesia.
+           Jangan bertele-tele; sebutkan alasan utama saja.
+        6. evidence_highlights: maks 2 item, masing-masing frasa singkat.
+        7. JANGAN menilai aspek lain. JANGAN menghitung skor keseluruhan.
         """,
         model=MODEL,
         output_type=CategoryCalibrationResult,
@@ -366,10 +363,9 @@ synthesis_agent = Agent(
     - JANGAN menghitung atau mengubah skor — skor sudah dihitung oleh sistem
     - Gunakan skor aspek dan evaluasi per-pertanyaan yang diberikan sebagai dasar
     - Semua output Bahasa Indonesia
-    - strengths: kekuatan kandidat yang terbukti dari jawaban
-    - weaknesses: kelemahan spesifik
+    - strengths / weaknesses: masing-masing item 1 kalimat, to the point
     - red_flags: masalah serius (kontradiksi, jawaban kosong, exaggeration, dll.)
-    - summary: ringkasan profesional 2-4 kalimat
+    - summary: ringkasan profesional 2-3 kalimat
     """,
     model=MODEL,
     output_type=InterviewSynthesisResult,
@@ -702,8 +698,8 @@ async def score_interview(
     target_skills: Optional[List[str]] = None,
 ) -> dict:
     """
-    Interview scoring pipeline against 7 aspek penilaian:
-    1. Parallel per-question micro-evaluation (7 category scores each)
+    Interview scoring pipeline against 6 aspek penilaian:
+    1. Parallel per-question micro-evaluation (6 category scores each)
     2. Optional CV consistency check
     3. Parallel per-aspek calibration agents (adjust preliminary averages)
     4. Deterministic weighted aggregation + narrative synthesis
@@ -801,7 +797,6 @@ async def score_interview(
 
     result = InterviewScoreResult(
         overall_score=round(overall_score, 2),
-        sikap_penampilan_score=adjusted["sikap_penampilan"],
         komunikasi_score=adjusted["komunikasi"],
         analisa_logika_score=adjusted["analisa_logika"],
         kemampuan_teknis_score=adjusted["kemampuan_teknis"],
