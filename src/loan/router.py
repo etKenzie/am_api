@@ -895,8 +895,8 @@ async def get_bad_debt_recovery(
     loan_type: str = "loan",
     db: Session = Depends(get_db)
 ):
-    """Get bad debt recovery summary: loans/installments paid two calendar months or more
-    after their due month (the M+2 rule). These same repayments also appear in
+    """Get bad debt recovery summary: loans/installments paid three calendar months or more
+    after their due month (the M+3 rule). These same repayments also appear in
     repayment-risk, attributed to their payment month instead of their due month, so a
     repayment is still only counted once across repayment-risk's own metrics.
     Use loan_type=all to combine kasbon, extradana, and aku_cicil."""

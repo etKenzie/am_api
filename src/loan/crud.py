@@ -26,18 +26,20 @@ INSTALLMENT_LOAN_CONDITIONS = (
 )
 
 # Bad debt recovery: a record is only "bad debt" once it was actually paid (not merely
-# overdue) and that payment landed in the second calendar month after the due date's
-# month, or later — a pure M+2 rule, no day-of-month cutoff. E.g. due 20 Jan: paid any
-# time in Feb is NOT bad debt, paid 1 Mar onward IS bad debt.
+# overdue) and that payment landed three calendar months or more after the due date's
+# month — a pure M+3 rule, no day-of-month cutoff. The due month plus the next two
+# calendar months (M, M+1, M+2) still count as Repayment; only M+3 onward is Bad Debt
+# Recovery. E.g. due any day in Jan: paid anytime in Jan/Feb/Mar is NOT bad debt (still
+# Repayment), paid 1 Apr onward IS bad debt.
 # Still-unpaid loans never match this, regardless of how overdue — they remain in
 # repayment-risk's unrecovered/outstanding buckets instead.
 _BAD_DEBT_LUMP_PREDICATE = (
     "l.payment_date IS NOT NULL AND l.payment_date != '0000-00-00' "
-    "AND PERIOD_DIFF(DATE_FORMAT(l.payment_date, '%Y%m'), DATE_FORMAT(l.repayment_date, '%Y%m')) >= 2"
+    "AND PERIOD_DIFF(DATE_FORMAT(l.payment_date, '%Y%m'), DATE_FORMAT(l.repayment_date, '%Y%m')) >= 3"
 )
 _BAD_DEBT_INSTALLMENT_PREDICATE = (
     "tlh.payment_date IS NOT NULL AND tlh.payment_date != '0000-00-00' "
-    "AND PERIOD_DIFF(DATE_FORMAT(tlh.payment_date, '%Y%m'), DATE_FORMAT(tlh.due_date, '%Y%m')) >= 2"
+    "AND PERIOD_DIFF(DATE_FORMAT(tlh.payment_date, '%Y%m'), DATE_FORMAT(tlh.due_date, '%Y%m')) >= 3"
 )
 
 # repayment-risk reporting-month attribution: each repayment is counted in exactly one
@@ -4723,8 +4725,8 @@ def get_bad_debt_recovery_summary(db: Session,
                                   employer_filter: str = None, sourced_to_filter: str = None,
                                   project_filter: str = None, client_segment_filter: str = None, product_type_filter: str = None, loan_status_filter: int = None,
                                   id_karyawan_filter: int = None, start_date: str = None, end_date: str = None, loan_type: str = "loan") -> dict:
-    """Get bad debt recovery summary: loans/installments paid two calendar months or more
-    after their due month (the M+2 rule; see _BAD_DEBT_*_PREDICATE). These same repayments
+    """Get bad debt recovery summary: loans/installments paid three calendar months or more
+    after their due month (the M+3 rule; see _BAD_DEBT_*_PREDICATE). These same repayments
     are also reported in repayment-risk, attributed to their payment month rather than
     their due month — see _REPORTING_DATE_LUMP/_INSTALLMENT."""
 
