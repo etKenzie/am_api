@@ -765,12 +765,19 @@ async def get_repayment_risk(
     loan_type: str = "all",
     db: Session = Depends(get_db)
 ):
-    """Get repayment risk summary. Each repayment is counted in exactly one reporting
-    period: its payment date if paid on/before its due date or once it has crossed into
-    Bad Debt Recovery (see /loan/bad-debt-recovery), otherwise its original due date.
-    Defaults to loan_type=all (kasbon + extradana + aku_cicil combined) to match the
-    all-products total reported elsewhere (e.g. ak-mj's monthly_performance); pass
-    loan_type=loan/extradana/aku_cicil to scope to a single product."""
+    """Get repayment risk summary. total_expected_repayment is matched to ak-mj's
+    /loan/monthly_performance figure: SUM(td_loan.total_payment) bucketed by disbursement
+    month, for loan_status IN (1,2,4) — for loan_type=all this applies no product
+    predicate at all (matching ak-mj, which never splits this figure by product).
+    total_collected_repayment/total_unrecovered_repayment/total_outstanding_repayment (and
+    their rates) are due-date based and unrelated to bad debt. The principal-repayment,
+    admin-fee-repayment, and performance metrics (total_loan_principal_collected,
+    total_admin_fee_collected, delinquency_by_expected_repayment, delinquency_by_admin_fee,
+    admin_fee_profit, etc.) count toward exactly one reporting period: their payment date
+    if paid on/before their due date or once they've crossed into Bad Debt Recovery (see
+    /loan/bad-debt-recovery), otherwise their original due date. Defaults to loan_type=all
+    (kasbon + extradana + aku_cicil combined); pass loan_type=loan/extradana/aku_cicil to
+    scope to a single product."""
 
     try:
         repayment_risk_summary = crud.get_repayment_risk_summary(
