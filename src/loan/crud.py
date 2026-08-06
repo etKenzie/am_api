@@ -835,7 +835,9 @@ FROM (
     SELECT COUNT(DISTINCT de.id_karyawan) AS total_eligible
     FROM data_record_eligible de
     WHERE de.snapshot_date BETWEEN :start_date AND :end_date
-      AND (:f_company IS NULL OR de.company = :f_company)
+      AND de.is_loan_eligible = 1
+      AND ({allowed_employer_predicate})
+      AND (:f_employer IS NULL OR de.employer = :f_employer)
       AND (:f_sourced_to IS NULL OR de.sourced_to = :f_sourced_to)
       AND (:f_project IS NULL OR de.project = :f_project)
       AND (:f_branch IS NULL OR de.branch = :f_branch)
@@ -844,14 +846,19 @@ FROM (
 
     UNION ALL
 
+    -- Legacy fallback (pre data_record_eligible history): data_record.company is
+    -- keyed by td_karyawan.klient, which is '1' for ALL FOUR Valdo entities (the
+    -- klient/legal-group code, not the sub_client/employer code) — so this source
+    -- can only ever give the combined 4-company total, never a single employer's
+    -- number. Only used when no employer/dimension filter narrows below that.
     SELECT CAST(dr.value AS UNSIGNED) AS total_eligible
     FROM data_record dr
     INNER JOIN (
         SELECT company, MAX(created_at) AS max_created_at
         FROM data_record
         WHERE parameter = 'loan_eligible_company'
+          AND company = '1'
           AND DATE(created_at) BETWEEN :start_date AND :end_date
-          AND (:f_company IS NULL OR company = :f_company)
         GROUP BY company
     ) latest_snapshot ON latest_snapshot.company = dr.company
         AND latest_snapshot.max_created_at = dr.created_at
@@ -861,7 +868,7 @@ FROM (
           SELECT 1
           FROM data_record_eligible
           WHERE snapshot_date BETWEEN :start_date AND :end_date
-            AND (:f_company IS NULL OR company = :f_company)
+            AND is_loan_eligible = 1
       )
 ) x
 """
@@ -907,6 +914,28 @@ def _resolve_gmc_code(
     return code
 
 
+def _resolve_allowed_employer_codes(db: Session) -> list[str]:
+    """kode_gmc (sub_client) for ALLOWED_COMPANIES, for scoping data_record_eligible.employer."""
+    codes = []
+    for name in ALLOWED_COMPANIES:
+        code = _resolve_gmc_code(db, value=name, group_gmc="sub_client")
+        if code:
+            codes.append(code)
+    return codes
+
+
+def _allowed_employer_predicate(db: Session, params: dict, column: str = "de.employer") -> str:
+    codes = _resolve_allowed_employer_codes(db)
+    if not codes:
+        return "1=0"
+    placeholders = []
+    for index, code in enumerate(codes):
+        key = f"allowed_employer_{index}"
+        params[key] = code
+        placeholders.append(f":{key}")
+    return f"{column} IN ({', '.join(placeholders)})"
+
+
 def _eligible_segment_predicate(
     client_segment_filter: str,
     params: dict,
@@ -950,13 +979,18 @@ def get_total_eligible_employees(
     product_type_filter: str = None,
 ) -> int:
     """
-    Total eligible from snapshots, using the same filter meanings as other loan endpoints:
+    Total eligible from snapshots, scoped to the 4 Valdo companies (ALLOWED_COMPANIES),
+    using the same filter meanings as other loan endpoints:
 
-    - employer      -> de.company      (tbl_gmc sub_client kode_gmc; API sends keterangan)
+    - employer      -> de.employer   (tbl_gmc sub_client kode_gmc; API sends keterangan)
     - sourced_to    -> de.sourced_to  (tbl_gmc placement_client kode_gmc)
     - project       -> de.project     (tbl_gmc client_project kode_gmc)
     - client_segment-> de.client_segment (incl. all_bfsi / all_non_bfsi)
     - product_type  -> de.product_type
+
+    Note: de.company is td_karyawan.klient (the legal-group code, '1' for all four
+    Valdo entities) and is NOT usable for employer-level filtering — use de.employer
+    (td_karyawan.valdo_inc) instead.
     """
     try:
         range_start, range_end = _eligible_date_range(
@@ -965,8 +999,8 @@ def get_total_eligible_employees(
             as_of_date=as_of_date,
         )
 
-        # de.company stores numeric kode_gmc, while API employer filter is keterangan text.
-        company_filter = _resolve_gmc_code(
+        # de.employer stores numeric kode_gmc, while API employer filter is keterangan text.
+        employer_code = _resolve_gmc_code(
             db, value=employer_filter, group_gmc="sub_client"
         )
         sourced_to_code = _resolve_gmc_code(
@@ -979,7 +1013,7 @@ def get_total_eligible_employees(
         params = {
             "start_date": range_start,
             "end_date": range_end,
-            "f_company": company_filter,
+            "f_employer": employer_code,
             "f_sourced_to": sourced_to_code,
             "f_project": project_code,
             "f_branch": branch_filter,
@@ -988,10 +1022,13 @@ def get_total_eligible_employees(
         segment_predicate = _eligible_segment_predicate(
             client_segment_filter, params, db
         )
+        allowed_employer_predicate = _allowed_employer_predicate(db, params)
 
-        # data_record fallback only supports company (+ date); skip when finer filters used.
+        # data_record fallback only supports the combined 4-company total (+ date);
+        # skip when any filter narrows below that.
         detail_filters_used = any(
             [
+                employer_code,
                 sourced_to_code,
                 project_code,
                 branch_filter,
@@ -1001,7 +1038,10 @@ def get_total_eligible_employees(
         )
         params["allow_data_record_fallback"] = 0 if detail_filters_used else 1
 
-        query = _TOTAL_ELIGIBLE_SNAPSHOT_SQL.format(segment_predicate=segment_predicate)
+        query = _TOTAL_ELIGIBLE_SNAPSHOT_SQL.format(
+            segment_predicate=segment_predicate,
+            allowed_employer_predicate=allowed_employer_predicate,
+        )
         record = db.execute(text(query), params).fetchone()
         return int(record[0] or 0) if record else 0
     except Exception:
@@ -1011,16 +1051,46 @@ def get_total_eligible_employees(
 
 
 _TOTAL_ELIGIBLE_WITH_PROJECT_SNAPSHOT_SQL = """
-SELECT COUNT(DISTINCT de.project) AS total_coverage_project
-FROM data_record_eligible de
-WHERE de.snapshot_date BETWEEN :start_date AND :end_date
-  AND de.project IS NOT NULL AND de.project <> ''
-  AND (:f_company IS NULL OR de.company = :f_company)
-  AND (:f_sourced_to IS NULL OR de.sourced_to = :f_sourced_to)
-  AND (:f_project IS NULL OR de.project = :f_project)
-  AND (:f_branch IS NULL OR de.branch = :f_branch)
-  AND ({segment_predicate})
-  AND (:f_product IS NULL OR de.product_type = :f_product)
+SELECT COALESCE(SUM(total_coverage_project), 0) AS total_coverage_project
+FROM (
+    SELECT COUNT(DISTINCT de.project) AS total_coverage_project
+    FROM data_record_eligible de
+    WHERE de.snapshot_date BETWEEN :start_date AND :end_date
+      AND de.is_loan_eligible = 1
+      AND de.project IS NOT NULL AND de.project <> ''
+      AND ({allowed_employer_predicate})
+      AND (:f_employer IS NULL OR de.employer = :f_employer)
+      AND (:f_sourced_to IS NULL OR de.sourced_to = :f_sourced_to)
+      AND (:f_project IS NULL OR de.project = :f_project)
+      AND (:f_branch IS NULL OR de.branch = :f_branch)
+      AND ({segment_predicate})
+      AND (:f_product IS NULL OR de.product_type = :f_product)
+
+    UNION ALL
+
+    -- Legacy fallback: data_record.company is keyed by td_karyawan.klient, which is
+    -- '1' for all four Valdo entities combined — only usable for the unfiltered total.
+    SELECT CAST(dr.value AS UNSIGNED) AS total_coverage_project
+    FROM data_record dr
+    INNER JOIN (
+        SELECT company, MAX(created_at) AS max_created_at
+        FROM data_record
+        WHERE parameter = 'loan_project_covered'
+          AND company = '1'
+          AND DATE(created_at) BETWEEN :start_date AND :end_date
+        GROUP BY company
+    ) latest_snapshot ON latest_snapshot.company = dr.company
+        AND latest_snapshot.max_created_at = dr.created_at
+    WHERE dr.parameter = 'loan_project_covered'
+      AND :allow_data_record_fallback = 1
+      AND NOT EXISTS (
+          SELECT 1
+          FROM data_record_eligible
+          WHERE snapshot_date BETWEEN :start_date AND :end_date
+            AND is_loan_eligible = 1
+            AND project IS NOT NULL AND project <> ''
+      )
+) x
 """
 
 
@@ -1038,10 +1108,11 @@ def get_total_coverage_project(
     product_type_filter: str = None,
 ) -> int:
     """
-    Count of distinct coverage projects (de.project) among eligible employees
-    in the data_record_eligible snapshot. Same filter semantics as
-    get_total_eligible_employees; no data_record fallback since that source
-    has no project column.
+    Count of distinct coverage projects (de.project) among eligible employees,
+    scoped to the 4 Valdo companies. Same filter semantics as
+    get_total_eligible_employees (de.employer, not de.company), plus a
+    data_record('loan_project_covered') fallback for the unfiltered combined
+    total on dates before data_record_eligible existed.
     """
     try:
         range_start, range_end = _eligible_date_range(
@@ -1050,7 +1121,7 @@ def get_total_coverage_project(
             as_of_date=as_of_date,
         )
 
-        company_filter = _resolve_gmc_code(
+        employer_code = _resolve_gmc_code(
             db, value=employer_filter, group_gmc="sub_client"
         )
         sourced_to_code = _resolve_gmc_code(
@@ -1063,7 +1134,7 @@ def get_total_coverage_project(
         params = {
             "start_date": range_start,
             "end_date": range_end,
-            "f_company": company_filter,
+            "f_employer": employer_code,
             "f_sourced_to": sourced_to_code,
             "f_project": project_code,
             "f_branch": branch_filter,
@@ -1072,9 +1143,144 @@ def get_total_coverage_project(
         segment_predicate = _eligible_segment_predicate(
             client_segment_filter, params, db
         )
+        allowed_employer_predicate = _allowed_employer_predicate(db, params)
+
+        detail_filters_used = any(
+            [
+                employer_code,
+                sourced_to_code,
+                project_code,
+                branch_filter,
+                client_segment_filter,
+                product_type_filter,
+            ]
+        )
+        params["allow_data_record_fallback"] = 0 if detail_filters_used else 1
 
         query = _TOTAL_ELIGIBLE_WITH_PROJECT_SNAPSHOT_SQL.format(
-            segment_predicate=segment_predicate
+            segment_predicate=segment_predicate,
+            allowed_employer_predicate=allowed_employer_predicate,
+        )
+        record = db.execute(text(query), params).fetchone()
+        return int(record[0] or 0) if record else 0
+    except Exception:
+        import traceback
+        traceback.print_exc()
+        return 0
+
+
+_TOTAL_ACTIVE_SNAPSHOT_SQL = """
+SELECT COALESCE(SUM(total_active), 0) AS total_active
+FROM (
+    SELECT COUNT(DISTINCT de.id_karyawan) AS total_active
+    FROM data_record_eligible de
+    WHERE de.snapshot_date BETWEEN :start_date AND :end_date
+      AND ({allowed_employer_predicate})
+      AND (:f_employer IS NULL OR de.employer = :f_employer)
+      AND (:f_sourced_to IS NULL OR de.sourced_to = :f_sourced_to)
+      AND (:f_project IS NULL OR de.project = :f_project)
+      AND (:f_branch IS NULL OR de.branch = :f_branch)
+      AND ({segment_predicate})
+      AND (:f_product IS NULL OR de.product_type = :f_product)
+
+    UNION ALL
+
+    -- Legacy fallback: data_record.company is keyed by td_karyawan.klient, which is
+    -- '1' for all four Valdo entities combined — only usable for the unfiltered total,
+    -- and only for dates before data_record_eligible has any snapshot at all (that
+    -- table only started capturing the full active population, not just eligible
+    -- employees, from the is_loan_eligible migration date onward — see
+    -- sql/data_record_eligible.sql in the ak-mj repo).
+    SELECT CAST(dr.value AS UNSIGNED) AS total_active
+    FROM data_record dr
+    INNER JOIN (
+        SELECT company, MAX(created_at) AS max_created_at
+        FROM data_record
+        WHERE parameter = 'active_employee_client'
+          AND company = '1'
+          AND DATE(created_at) BETWEEN :start_date AND :end_date
+        GROUP BY company
+    ) latest_snapshot ON latest_snapshot.company = dr.company
+        AND latest_snapshot.max_created_at = dr.created_at
+    WHERE dr.parameter = 'active_employee_client'
+      AND :allow_data_record_fallback = 1
+      AND NOT EXISTS (
+          SELECT 1
+          FROM data_record_eligible
+          WHERE snapshot_date BETWEEN :start_date AND :end_date
+      )
+) x
+"""
+
+
+def get_total_active_employees(
+    db: Session,
+    *,
+    start_date: str = None,
+    end_date: str = None,
+    as_of_date: str = None,
+    employer_filter: str = None,
+    sourced_to_filter: str = None,
+    project_filter: str = None,
+    branch_filter: str = None,
+    client_segment_filter: str = None,
+    product_type_filter: str = None,
+) -> int:
+    """
+    Total active employees (td_karyawan.status = 1) from the data_record_eligible
+    snapshot, scoped to the 4 Valdo companies. Same filter/date-range semantics as
+    get_total_eligible_employees, but without the is_loan_eligible restriction.
+
+    Caveat: rows written before the is_loan_eligible migration (see
+    sql/data_record_eligible.sql in ak-mj) only ever captured eligible employees,
+    so any date range overlapping that period will undercount active employees.
+    """
+    try:
+        range_start, range_end = _eligible_date_range(
+            start_date=start_date,
+            end_date=end_date,
+            as_of_date=as_of_date,
+        )
+
+        employer_code = _resolve_gmc_code(
+            db, value=employer_filter, group_gmc="sub_client"
+        )
+        sourced_to_code = _resolve_gmc_code(
+            db, value=sourced_to_filter, group_gmc="placement_client"
+        )
+        project_code = _resolve_gmc_code(
+            db, value=project_filter, group_gmc="client_project"
+        )
+
+        params = {
+            "start_date": range_start,
+            "end_date": range_end,
+            "f_employer": employer_code,
+            "f_sourced_to": sourced_to_code,
+            "f_project": project_code,
+            "f_branch": branch_filter,
+            "f_product": product_type_filter,
+        }
+        segment_predicate = _eligible_segment_predicate(
+            client_segment_filter, params, db
+        )
+        allowed_employer_predicate = _allowed_employer_predicate(db, params)
+
+        detail_filters_used = any(
+            [
+                employer_code,
+                sourced_to_code,
+                project_code,
+                branch_filter,
+                client_segment_filter,
+                product_type_filter,
+            ]
+        )
+        params["allow_data_record_fallback"] = 0 if detail_filters_used else 1
+
+        query = _TOTAL_ACTIVE_SNAPSHOT_SQL.format(
+            segment_predicate=segment_predicate,
+            allowed_employer_predicate=allowed_employer_predicate,
         )
         record = db.execute(text(query), params).fetchone()
         return int(record[0] or 0) if record else 0
@@ -5647,24 +5853,15 @@ def get_coverage_utilization_summary(db: Session,
         params = {}
         loan_conditions = resolve_loan_conditions(loan_type, db)
 
-        # Active employees still from td_karyawan; eligible from snapshot tables.
-        employee_count_query = f"""
-        SELECT COUNT(*)
-        FROM td_karyawan tk
-        {_KARYAWAN_GMC_JOINS}
-        WHERE tk.status = '1'
-        """
-        employee_count_query = _append_karyawan_org_filters(
-            employee_count_query,
-            params,
-            id_karyawan_filter=id_karyawan_filter,
+        total_active_employees = get_total_active_employees(
+            db,
+            start_date=start_date,
+            end_date=end_date,
             employer_filter=employer_filter,
             sourced_to_filter=sourced_to_filter,
             project_filter=project_filter,
             client_segment_filter=client_segment_filter,
             product_type_filter=product_type_filter,
-            company_filter=company_filter,
-            db=db,
         )
 
         total_eligible_employees = get_total_eligible_employees(
@@ -5798,9 +5995,6 @@ def get_coverage_utilization_summary(db: Session,
             first_borrow_query = _append_proses_date_range(
                 first_borrow_query, params, start_date, end_date
             )
-
-        employee_row = db.execute(text(employee_count_query), params).fetchone()
-        total_active_employees = employee_row[0] or 0
 
         eligible_rate = (total_eligible_employees / total_active_employees) if total_active_employees > 0 else 0.0
 
