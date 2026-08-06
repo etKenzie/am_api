@@ -905,7 +905,9 @@ async def get_bad_debt_recovery(
     """Get bad debt recovery summary: loans/installments paid three calendar months or more
     after their due month (the M+3 rule). These same repayments also appear in
     repayment-risk, attributed to their payment month instead of their due month, so a
-    repayment is still only counted once across repayment-risk's own metrics.
+    repayment is still only counted once across repayment-risk's own metrics. Also covers
+    partial payments against still-open loans/installments whose partial payment itself
+    landed 3+ calendar months after the due month.
     Use loan_type=all to combine kasbon, extradana, and aku_cicil."""
 
     try:

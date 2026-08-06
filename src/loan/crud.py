@@ -58,6 +58,221 @@ _REPORTING_DATE_INSTALLMENT = (
     "THEN tlh.payment_date ELSE tlh.due_date END"
 ).format(bad_debt=_BAD_DEBT_INSTALLMENT_PREDICATE)
 
+# Partial-payment credit: td_loan_payment / td_loan_payment_allocation is ak-mj's "Refund
+# Management" side-channel for manual/extra repayments made outside normal payroll
+# deduction (only a handful of rows out of ~127k fully-paid loans/installments go through
+# it — the rest close via payroll deduction directly, which never touches these tables).
+# A payment there only flips td_loan_history.status/td_loan.loan_status to Paid (2) once it
+# fully covers the installment/loan (see ak-mj's M_refund::activate_loan_status); a payment
+# that doesn't close the row out entirely leaves status/payment_date untouched, so every
+# collected/recovered query above (gated on status = 2) never sees it even though real cash
+# came in. These fragments credit that partial amount instead, using the payment's own
+# created_at as its date (td_loan_payment.payment_date is unused/always NULL in practice)
+# and the same M+3 rule as the row-level predicates above, applied per payment: a partial
+# payment landing 3+ calendar months after the due month counts toward Bad Debt Recovery
+# (dated to the payment's own month); otherwise it counts toward ordinary Repayment
+# "collected" (dated to the due month, matching how a late-but-within-grace-period full
+# payment is attributed). Scoped to status/loan_status = 4 (overdue, still open) rows only —
+# a status = 2 row's payment(s) are already fully reflected via the row-level query above.
+# ak-mj never splits a payment between principal and admin fee, so the split here is
+# proportional to the loan's own principal:fee ratio (same ratio the row-level queries use
+# for a full installment/loan).
+_BAD_DEBT_PARTIAL_INSTALLMENT_PREDICATE = (
+    "PERIOD_DIFF(DATE_FORMAT(pay.created_at, '%Y%m'), DATE_FORMAT(tlh.due_date, '%Y%m')) >= 3"
+)
+_REPORTING_DATE_PARTIAL_INSTALLMENT = (
+    "CASE WHEN {bad_debt} THEN pay.created_at ELSE tlh.due_date END"
+).format(bad_debt=_BAD_DEBT_PARTIAL_INSTALLMENT_PREDICATE)
+_BAD_DEBT_PARTIAL_LUMP_PREDICATE = (
+    "PERIOD_DIFF(DATE_FORMAT(pay.created_at, '%Y%m'), DATE_FORMAT(l.repayment_date, '%Y%m')) >= 3"
+)
+_REPORTING_DATE_PARTIAL_LUMP = (
+    "CASE WHEN {bad_debt} THEN pay.created_at ELSE l.repayment_date END"
+).format(bad_debt=_BAD_DEBT_PARTIAL_LUMP_PREDICATE)
+
+_PARTIAL_PAYMENTS_INSTALLMENT_JOIN_SQL = """
+    INNER JOIN (
+        SELECT p.loan_history_id AS loan_history_id, p.amount, p.created_at
+        FROM td_loan_payment p
+        WHERE p.status = 1 AND p.loan_history_id IS NOT NULL
+          AND NOT EXISTS (SELECT 1 FROM td_loan_payment_allocation a WHERE a.payment_id = p.id)
+        UNION ALL
+        SELECT a.loan_history_id, a.amount, a.created_at
+        FROM td_loan_payment_allocation a
+        INNER JOIN td_loan_payment p ON p.id = a.payment_id AND p.status = 1
+    ) pay ON pay.loan_history_id = tlh.id"""
+
+
+def _installment_partial_recovery_sql(loan_conditions_tl: str) -> str:
+    """Per-payment-transaction principal/fee credit for still-open (status=4) installments
+    that have received a partial payment. See the block comment above
+    _BAD_DEBT_PARTIAL_INSTALLMENT_PREDICATE."""
+    return f"""
+    SELECT
+        {_REPORTING_DATE_PARTIAL_INSTALLMENT} AS reporting_date,
+        CASE WHEN {_BAD_DEBT_PARTIAL_INSTALLMENT_PREDICATE} THEN 1 ELSE 0 END AS is_bad_debt,
+        tlh.id AS row_id,
+        ROUND(pay.amount * ROUND(l.total_loan / l.duration, 0) / tlh.monthly, 0) AS principal_portion,
+        pay.amount - ROUND(pay.amount * ROUND(l.total_loan / l.duration, 0) / tlh.monthly, 0) AS fee_portion
+    FROM td_loan_history tlh
+    INNER JOIN td_loan l ON tlh.loan_form_id = l.id
+    {_LOAN_GMC_JOINS}
+    {_PARTIAL_PAYMENTS_INSTALLMENT_JOIN_SQL}
+    WHERE tlh.status = 4
+      AND tlh.monthly > 0
+      AND l.id_karyawan IS NOT NULL
+      AND {loan_conditions_tl}
+    """
+
+
+def _lump_partial_recovery_sql(loan_conditions: str) -> str:
+    """Per-payment-transaction principal/fee credit for still-open (loan_status=4) kasbon
+    loans that have received a partial payment. See the block comment above
+    _BAD_DEBT_PARTIAL_LUMP_PREDICATE."""
+    return f"""
+    SELECT
+        {_REPORTING_DATE_PARTIAL_LUMP} AS reporting_date,
+        CASE WHEN {_BAD_DEBT_PARTIAL_LUMP_PREDICATE} THEN 1 ELSE 0 END AS is_bad_debt,
+        l.id AS row_id,
+        ROUND(pay.amount * l.total_loan / l.total_payment, 0) AS principal_portion,
+        pay.amount - ROUND(pay.amount * l.total_loan / l.total_payment, 0) AS fee_portion
+    FROM td_loan l
+    {_LOAN_GMC_JOINS}
+    INNER JOIN (
+        SELECT p.loan_id AS loan_id, p.amount, p.created_at
+        FROM td_loan_payment p
+        WHERE p.status = 1 AND p.loan_history_id IS NULL
+    ) pay ON pay.loan_id = l.id
+    WHERE l.loan_status = 4
+      AND l.duration = 1
+      AND l.total_payment > 0
+      AND {loan_conditions}
+    """
+
+
+def _partial_recovery_totals(
+    db: Session,
+    base_sql: str,
+    *,
+    reporting_date_expr: str,
+    bad_debt_predicate: str,
+    bad_debt_filter: bool | None = None,
+    employer_filter: str = None,
+    sourced_to_filter: str = None,
+    project_filter: str = None,
+    client_segment_filter: str = None,
+    product_type_filter: str = None,
+    loan_status_filter: int = None,
+    id_karyawan_filter: int = None,
+    start_date: str = None,
+    end_date: str = None,
+    db_for_filters: Session = None,
+) -> tuple[float, float, int]:
+    """(principal_total, fee_total, distinct_row_count) for a partial-recovery base query
+    (see _installment_partial_recovery_sql/_lump_partial_recovery_sql), after applying the
+    standard repayment-risk org filters and optional reporting-date range. Bad Debt Recovery
+    and repayment-risk's principal/admin-fee/performance metrics are mutually exclusive: pass
+    bad_debt_filter=True to restrict to payments that themselves crossed the M+3 threshold
+    (for the Bad Debt Recovery endpoints), bad_debt_filter=False to restrict to payments that
+    have not (for repayment-risk's collected/unrecovered totals) — never leave it None for
+    either of those two call sites, or the same payment gets credited to both."""
+    params: dict = {}
+    query = _apply_repayment_risk_filters(
+        base_sql,
+        params,
+        employer_filter=employer_filter,
+        sourced_to_filter=sourced_to_filter,
+        project_filter=project_filter,
+        client_segment_filter=client_segment_filter,
+        product_type_filter=product_type_filter,
+        loan_status_filter=loan_status_filter,
+        id_karyawan_filter=id_karyawan_filter,
+        db=db_for_filters or db,
+    )
+    if bad_debt_filter is True:
+        query += f" AND {bad_debt_predicate}"
+    elif bad_debt_filter is False:
+        query += f" AND NOT ({bad_debt_predicate})"
+    if start_date and end_date:
+        query = append_date_filters(
+            query, params, start_date=start_date, end_date=end_date, date_column=reporting_date_expr
+        )
+    wrapped = (
+        "SELECT COALESCE(SUM(principal_portion), 0) AS principal_total, "
+        "COALESCE(SUM(fee_portion), 0) AS fee_total, "
+        f"COUNT(DISTINCT row_id) AS row_count FROM ({query}) t"
+    )
+    record = db.execute(text(wrapped), params).fetchone()
+    if not record:
+        return 0, 0, 0
+    return (
+        record[0] if record[0] is not None else 0,
+        record[1] if record[1] is not None else 0,
+        record[2] if record[2] is not None else 0,
+    )
+
+
+def _partial_recovery_monthly(
+    db: Session,
+    base_sql: str,
+    *,
+    reporting_date_expr: str,
+    bad_debt_predicate: str,
+    bad_debt_filter: bool | None = None,
+    employer_filter: str = None,
+    sourced_to_filter: str = None,
+    project_filter: str = None,
+    client_segment_filter: str = None,
+    product_type_filter: str = None,
+    loan_status_filter: int = None,
+    id_karyawan_filter: int = None,
+    start_date: str = None,
+    end_date: str = None,
+    db_for_filters: Session = None,
+) -> dict:
+    """Month-bucketed twin of _partial_recovery_totals: {month_year: (principal, fee, row_count)}.
+    See _partial_recovery_totals for bad_debt_filter semantics."""
+    params: dict = {}
+    query = _apply_repayment_risk_filters(
+        base_sql,
+        params,
+        employer_filter=employer_filter,
+        sourced_to_filter=sourced_to_filter,
+        project_filter=project_filter,
+        client_segment_filter=client_segment_filter,
+        product_type_filter=product_type_filter,
+        loan_status_filter=loan_status_filter,
+        id_karyawan_filter=id_karyawan_filter,
+        db=db_for_filters or db,
+    )
+    if bad_debt_filter is True:
+        query += f" AND {bad_debt_predicate}"
+    elif bad_debt_filter is False:
+        query += f" AND NOT ({bad_debt_predicate})"
+    if start_date and end_date:
+        query = append_date_filters(
+            query, params, start_date=start_date, end_date=end_date, date_column=reporting_date_expr
+        )
+    wrapped = f"""
+    SELECT DATE_FORMAT(reporting_date, '%M %Y') AS month_year,
+        COALESCE(SUM(principal_portion), 0) AS principal_total,
+        COALESCE(SUM(fee_portion), 0) AS fee_total,
+        COUNT(DISTINCT row_id) AS row_count
+    FROM ({query}) t
+    GROUP BY DATE_FORMAT(reporting_date, '%M %Y')
+    """
+    monthly = {}
+    for row in db.execute(text(wrapped), params).fetchall():
+        if row[0] is None:
+            continue
+        monthly[row[0]] = (
+            row[1] if row[1] is not None else 0,
+            row[2] if row[2] is not None else 0,
+            row[3] if row[3] is not None else 0,
+        )
+    return monthly
+
+
 ALL_LOAN_TYPES = ("kasbon", "extradana", "aku_cicil")
 ALLOWED_COMPANIES = (
     "PT Valdo Sumber Daya Mandiri",
@@ -4992,7 +5207,12 @@ def get_bad_debt_recovery_summary(db: Session,
     """Get bad debt recovery summary: loans/installments paid three calendar months or more
     after their due month (the M+3 rule; see _BAD_DEBT_*_PREDICATE). These same repayments
     are also reported in repayment-risk, attributed to their payment month rather than
-    their due month — see _REPORTING_DATE_LUMP/_INSTALLMENT."""
+    their due month — see _REPORTING_DATE_LUMP/_INSTALLMENT.
+
+    Also includes partial payments (td_loan_payment/td_loan_payment_allocation) against
+    still-open (status=4) rows whose partial payment itself landed 3+ calendar months after
+    the due month — see _BAD_DEBT_PARTIAL_INSTALLMENT_PREDICATE/_BAD_DEBT_PARTIAL_LUMP_
+    PREDICATE. Fully-closed (status=2) rows are unaffected; that path is unchanged."""
 
     try:
         if is_all_loan_types(loan_type):
@@ -5048,6 +5268,9 @@ def get_bad_debt_recovery_summary(db: Session,
                 bad_debt_predicate=_BAD_DEBT_INSTALLMENT_PREDICATE,
             )
             date_column = "tlh.payment_date"
+            partial_base_sql = _installment_partial_recovery_sql(loan_conditions_tl)
+            partial_reporting_date = _REPORTING_DATE_PARTIAL_INSTALLMENT
+            partial_bad_debt_predicate = _BAD_DEBT_PARTIAL_INSTALLMENT_PREDICATE
         else:
             query = """
             SELECT
@@ -5065,6 +5288,9 @@ def get_bad_debt_recovery_summary(db: Session,
                 bad_debt_predicate=_BAD_DEBT_LUMP_PREDICATE,
             )
             date_column = "l.payment_date"
+            partial_base_sql = _lump_partial_recovery_sql(loan_conditions)
+            partial_reporting_date = _REPORTING_DATE_PARTIAL_LUMP
+            partial_bad_debt_predicate = _BAD_DEBT_PARTIAL_LUMP_PREDICATE
 
         query = _append_loan_org_filters(
             query,
@@ -5092,6 +5318,26 @@ def get_bad_debt_recovery_summary(db: Session,
         total_principal_recovered = record[0] if record and record[0] is not None else 0
         total_admin_fee_recovered = record[1] if record and record[1] is not None else 0
         loan_request_count = record[2] if record and record[2] is not None else 0
+
+        partial_principal, partial_fee, partial_row_count = _partial_recovery_totals(
+            db,
+            partial_base_sql,
+            reporting_date_expr=partial_reporting_date,
+            bad_debt_predicate=partial_bad_debt_predicate,
+            bad_debt_filter=True,
+            employer_filter=employer_filter,
+            sourced_to_filter=sourced_to_filter,
+            project_filter=project_filter,
+            client_segment_filter=client_segment_filter,
+            product_type_filter=product_type_filter,
+            loan_status_filter=loan_status_filter,
+            id_karyawan_filter=id_karyawan_filter,
+            start_date=start_date,
+            end_date=end_date,
+        )
+        total_principal_recovered += partial_principal
+        total_admin_fee_recovered += partial_fee
+        loan_request_count += partial_row_count
 
         return _finalize_bad_debt_recovery(total_principal_recovered, total_admin_fee_recovered, loan_request_count)
 
@@ -5185,6 +5431,9 @@ def get_bad_debt_recovery_monthly_summary(db: Session,
                 bad_debt_predicate=_BAD_DEBT_INSTALLMENT_PREDICATE,
             )
             date_column = "tlh.payment_date"
+            partial_base_sql = _installment_partial_recovery_sql(loan_conditions_tl)
+            partial_reporting_date = _REPORTING_DATE_PARTIAL_INSTALLMENT
+            partial_bad_debt_predicate = _BAD_DEBT_PARTIAL_INSTALLMENT_PREDICATE
         else:
             query = """
             SELECT
@@ -5203,6 +5452,9 @@ def get_bad_debt_recovery_monthly_summary(db: Session,
                 bad_debt_predicate=_BAD_DEBT_LUMP_PREDICATE,
             )
             date_column = "l.payment_date"
+            partial_base_sql = _lump_partial_recovery_sql(loan_conditions)
+            partial_reporting_date = _REPORTING_DATE_PARTIAL_LUMP
+            partial_bad_debt_predicate = _BAD_DEBT_PARTIAL_LUMP_PREDICATE
 
         query = _append_loan_org_filters(
             query,
@@ -5238,11 +5490,46 @@ def get_bad_debt_recovery_monthly_summary(db: Session,
             total_principal_recovered = record[1] if record[1] is not None else 0
             total_admin_fee_recovered = record[2] if record[2] is not None else 0
             loan_request_count = record[3] if record[3] is not None else 0
-            monthly_data[month_year] = _finalize_bad_debt_recovery(
-                total_principal_recovered, total_admin_fee_recovered, loan_request_count
-            )
+            monthly_data[month_year] = {
+                "total_principal_recovered": total_principal_recovered,
+                "total_admin_fee_recovered": total_admin_fee_recovered,
+                "loan_request_count": loan_request_count,
+            }
 
-        return monthly_data
+        partial_monthly = _partial_recovery_monthly(
+            db,
+            partial_base_sql,
+            reporting_date_expr=partial_reporting_date,
+            bad_debt_predicate=partial_bad_debt_predicate,
+            bad_debt_filter=True,
+            employer_filter=employer_filter,
+            sourced_to_filter=sourced_to_filter,
+            project_filter=project_filter,
+            client_segment_filter=client_segment_filter,
+            product_type_filter=product_type_filter,
+            loan_status_filter=loan_status_filter,
+            id_karyawan_filter=id_karyawan_filter,
+            start_date=start_date,
+            end_date=end_date,
+        )
+        for month_year, (partial_principal, partial_fee, partial_row_count) in partial_monthly.items():
+            bucket = monthly_data.setdefault(month_year, {
+                "total_principal_recovered": 0,
+                "total_admin_fee_recovered": 0,
+                "loan_request_count": 0,
+            })
+            bucket["total_principal_recovered"] += partial_principal
+            bucket["total_admin_fee_recovered"] += partial_fee
+            bucket["loan_request_count"] += partial_row_count
+
+        return {
+            month_year: _finalize_bad_debt_recovery(
+                metrics["total_principal_recovered"],
+                metrics["total_admin_fee_recovered"],
+                metrics["loan_request_count"],
+            )
+            for month_year, metrics in monthly_data.items()
+        }
 
     except Exception as e:
         import traceback
