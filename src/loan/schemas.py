@@ -342,6 +342,8 @@ class RepaymentRiskResponse(BaseModel):
     total_admin_fee_collected: int
     total_unrecovered_admin_fee: int
     admin_fee_collection_rate: float
+    total_disbursed_amount: int
+    total_admin_fee_disbursed: int
     delinquency_by_expected_repayment: float
     delinquency_by_admin_fee: float
     admin_fee_profit: int

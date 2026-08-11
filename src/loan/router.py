@@ -770,14 +770,17 @@ async def get_repayment_risk(
     month, for loan_status IN (1,2,4) — for loan_type=all this applies no product
     predicate at all (matching ak-mj, which never splits this figure by product).
     total_collected_repayment/total_unrecovered_repayment/total_outstanding_repayment (and
-    their rates) are due-date based and unrelated to bad debt. The principal-repayment,
-    admin-fee-repayment, and performance metrics (total_loan_principal_collected,
-    total_admin_fee_collected, delinquency_by_expected_repayment, delinquency_by_admin_fee,
-    admin_fee_profit, etc.) count toward exactly one reporting period: their payment date
-    if paid on/before their due date or once they've crossed into Bad Debt Recovery (see
-    /loan/bad-debt-recovery), otherwise their original due date. Defaults to loan_type=all
-    (kasbon + extradana + aku_cicil combined); pass loan_type=loan/extradana/aku_cicil to
-    scope to a single product."""
+    their rates) are due-date based and unrelated to bad debt. The principal-repayment and
+    admin-fee-repayment metrics (total_loan_principal_collected, total_admin_fee_collected,
+    etc.) count toward exactly one reporting period: their payment date if paid on/before
+    their due date or once they've crossed into Bad Debt Recovery (see
+    /loan/bad-debt-recovery), otherwise their original due date.
+    delinquency_by_expected_repayment = total_unrecovered_repayment / total_disbursed_amount
+    (matched to /loan/coverage-utilization's total_disbursed_amount); delinquency_by_
+    admin_fee = total_unrecovered_repayment / (total_disbursed_amount +
+    total_admin_fee_disbursed), where total_admin_fee_disbursed sums td_loan.admin_fee over
+    the same disbursed cohort. Defaults to loan_type=all (kasbon + extradana + aku_cicil
+    combined); pass loan_type=loan/extradana/aku_cicil to scope to a single product."""
 
     try:
         repayment_risk_summary = crud.get_repayment_risk_summary(
@@ -811,6 +814,8 @@ async def get_repayment_risk(
             "total_admin_fee_collected": repayment_risk_summary["total_admin_fee_collected"],
             "total_unrecovered_admin_fee": repayment_risk_summary["total_unrecovered_admin_fee"],
             "admin_fee_collection_rate": repayment_risk_summary["admin_fee_collection_rate"],
+            "total_disbursed_amount": repayment_risk_summary["total_disbursed_amount"],
+            "total_admin_fee_disbursed": repayment_risk_summary["total_admin_fee_disbursed"],
             "delinquency_by_expected_repayment": repayment_risk_summary["delinquency_by_expected_repayment"],
             "delinquency_by_admin_fee": repayment_risk_summary["delinquency_by_admin_fee"],
             "admin_fee_profit": repayment_risk_summary["admin_fee_profit"]
@@ -833,6 +838,8 @@ async def get_repayment_risk(
             "total_admin_fee_collected": 0,
             "total_unrecovered_admin_fee": 0,
             "admin_fee_collection_rate": 0,
+            "total_disbursed_amount": 0,
+            "total_admin_fee_disbursed": 0,
             "delinquency_by_expected_repayment": 0,
             "delinquency_by_admin_fee": 0,
             "admin_fee_profit": 0
