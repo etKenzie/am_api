@@ -1461,8 +1461,9 @@ def _recalculate_repayment_risk_derivatives(summary: dict) -> dict:
     to /loan/coverage-utilization's total_disbursed_amount, see get_total_disbursed_amount)
     for the former, and over total_disbursed_amount + total_admin_fee_disbursed (td_loan.
     admin_fee summed over the same disbursed cohort) for the latter — independent of
-    total_expected_repayment. admin_fee_profit stays derived from the collected/unrecovered
-    admin-fee totals.
+    total_expected_repayment. admin_fee_profit is total_admin_fee_collected net of
+    total_unrecovered_repayment (principal + admin fee combined), not just the
+    unrecovered admin-fee slice.
     """
     total_expected = summary.get("total_expected_repayment", 0) or 0
     principal_collected = summary.get("total_loan_principal_collected", 0) or 0
@@ -1474,7 +1475,6 @@ def _recalculate_repayment_risk_derivatives(summary: dict) -> dict:
     outstanding = summary.get("total_outstanding_repayment", 0) or 0
     total_expected_principal = summary.get("total_expected_loan_principal", 0) or 0
     total_expected_admin_fee = summary.get("total_expected_admin_fee", 0) or 0
-    unrecovered_admin_fee = summary.get("total_unrecovered_admin_fee", 0) or 0
     total_disbursed_amount = summary.get("total_disbursed_amount", 0) or 0
     total_admin_fee_disbursed = summary.get("total_admin_fee_disbursed", 0) or 0
 
@@ -1499,7 +1499,9 @@ def _recalculate_repayment_risk_derivatives(summary: dict) -> dict:
     summary["delinquency_by_admin_fee"] = (
         (unrecovered / total_disbursed_plus_admin_fee) if total_disbursed_plus_admin_fee > 0 else 0
     )
-    summary["admin_fee_profit"] = admin_fee_collected - unrecovered_admin_fee
+    # admin_fee_profit is admin fee collected net of total unrecovered repayment
+    # (principal + admin fee combined), not just the unrecovered admin-fee slice.
+    summary["admin_fee_profit"] = admin_fee_collected - unrecovered
 
     # Principal ("pokok") and admin fee ("bunga") collection rates, separate from
     # total_expected_repayment which is pokok + bunga combined.
