@@ -1445,24 +1445,19 @@ def _apply_repayment_risk_filters(
 def _recalculate_repayment_risk_derivatives(summary: dict) -> dict:
     """Derive the repayment-risk response's rate/residual fields from raw totals.
 
-    Three independent attribution models feed this function and must not be mixed:
-      - total_expected_repayment itself is the ak-mj-matched, disbursement-month figure
-        (see get_total_expected_repayment) and is NOT used in any of the math below — it's
-        a standalone total, passed through unchanged.
-      - total_due_date_expected_repayment / total_unrecovered_repayment /
-        total_outstanding_repayment (the "total repayment" section: total_collected_
-        repayment, repayment_recovery_rate, unrecovered_rate, outstanding_rate) are
-        due-date based and have no relationship to bad debt — a repayment here stays keyed
-        to its original due date regardless of how late it was eventually paid.
-      - total_loan_principal_collected/total_admin_fee_collected and their unrecovered/
-        expected counterparts (the principal-repayment and admin-fee-repayment sections)
-        are reporting-date based (see _REPORTING_DATE_LUMP/_INSTALLMENT) and loan_status=4
-        ("Bad Debt Recovery") aware. The "performance" section (delinquency_by_expected_
-        repayment, delinquency_by_admin_fee, admin_fee_profit) is derived from these
-        bad-debt-aware totals and total_due_date_expected_repayment, not from
-        total_unrecovered_repayment or the ak-mj-matched total_expected_repayment.
+    total_expected_repayment is the ak-mj-matched, disbursement-month figure (see
+    get_total_expected_repayment) and is now the single basis for total_collected_
+    repayment, repayment_recovery_rate, unrecovered_rate, outstanding_rate, and
+    delinquency_by_expected_repayment, so that total_collected_repayment +
+    total_unrecovered_repayment reconciles exactly to total_expected_repayment.
+
+    total_loan_principal_collected/total_admin_fee_collected and their unrecovered/
+    expected counterparts (the principal-repayment and admin-fee-repayment sections)
+    are reporting-date based (see _REPORTING_DATE_LUMP/_INSTALLMENT) and loan_status=4
+    ("Bad Debt Recovery") aware; delinquency_by_admin_fee and admin_fee_profit are
+    derived from those, independent of total_expected_repayment.
     """
-    total_expected = summary.get("total_due_date_expected_repayment", 0) or 0
+    total_expected = summary.get("total_expected_repayment", 0) or 0
     principal_collected = summary.get("total_loan_principal_collected", 0) or 0
     admin_fee_collected = summary.get("total_admin_fee_collected", 0) or 0
     # total_unrecovered_repayment/total_outstanding_repayment (not-yet-due payments still
@@ -1472,26 +1467,23 @@ def _recalculate_repayment_risk_derivatives(summary: dict) -> dict:
     outstanding = summary.get("total_outstanding_repayment", 0) or 0
     total_expected_principal = summary.get("total_expected_loan_principal", 0) or 0
     total_expected_admin_fee = summary.get("total_expected_admin_fee", 0) or 0
-    unrecovered_principal = summary.get("total_unrecovered_loan_principal", 0) or 0
     unrecovered_admin_fee = summary.get("total_unrecovered_admin_fee", 0) or 0
 
-    # total_collected_repayment must reconcile exactly with expected = collected +
-    # unrecovered + outstanding, so it's derived as the residual rather than summed
-    # from principal_collected + admin_fee_collected (which only recognizes loans
-    # marked fully closed/lunas and misses partial payments already made on loans
-    # that are still open — unrecovered/outstanding already account for that
-    # remainder in full, so the residual is the true amount collected to date).
-    collected = max(total_expected - unrecovered - outstanding, 0)
+    # total_collected_repayment must reconcile exactly with total_expected_repayment =
+    # collected + unrecovered, so it's derived as the residual rather than summed from
+    # principal_collected + admin_fee_collected (which only recognizes loans marked
+    # fully closed/lunas and misses partial payments already made on loans that are
+    # still open — unrecovered already accounts for that remainder in full, so the
+    # residual is the true amount collected to date).
+    collected = max(total_expected - unrecovered, 0)
     summary["total_collected_repayment"] = collected
     summary["repayment_recovery_rate"] = (collected / total_expected) if total_expected > 0 else 0
     summary["unrecovered_rate"] = (unrecovered / total_expected) if total_expected > 0 else 0
     summary["outstanding_rate"] = (outstanding / total_expected) if total_expected > 0 else 0
 
-    # Performance section: bad-debt based, independent of the due-date-based unrecovered/
-    # outstanding above.
-    bad_debt_unrecovered = unrecovered_principal + unrecovered_admin_fee
+    # Performance section.
     summary["delinquency_by_expected_repayment"] = (
-        (bad_debt_unrecovered / total_expected) if total_expected > 0 else 0
+        (unrecovered / total_expected) if total_expected > 0 else 0
     )
     summary["delinquency_by_admin_fee"] = (
         (unrecovered_admin_fee / admin_fee_collected) if admin_fee_collected > 0 else 0
