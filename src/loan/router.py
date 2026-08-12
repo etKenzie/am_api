@@ -765,16 +765,18 @@ async def get_repayment_risk(
     loan_type: str = "all",
     db: Session = Depends(get_db)
 ):
-    """Get repayment risk summary. total_expected_repayment is matched to ak-mj's
-    /loan/monthly_performance figure: SUM(td_loan.total_payment) bucketed by disbursement
-    month, for loan_status IN (1,2,4) — for loan_type=all this applies no product
-    predicate at all (matching ak-mj, which never splits this figure by product).
-    total_collected_repayment/total_unrecovered_repayment/total_outstanding_repayment (and
-    their rates) are due-date based and unrelated to bad debt. The principal-repayment and
+    """Get repayment risk summary. total_expected_repayment/total_collected_repayment/
+    total_unrecovered_repayment/total_outstanding_repayment (and their rates) are due-date
+    based (l.repayment_date for kasbon, tlh.due_date for extradana/aku_cicil) and unrelated
+    to bad debt — total_collected_repayment is a direct sum of paid rows (loan_status/
+    status = 2) plus partial-payment credit on still-open rows, not a residual, and the
+    three reconcile exactly (total_collected_repayment + total_unrecovered_repayment ==
+    total_expected_repayment). The principal-repayment and
     admin-fee-repayment metrics (total_loan_principal_collected, total_admin_fee_collected,
     etc.) count toward exactly one reporting period: their payment date if paid on/before
-    their due date or once they've crossed into Bad Debt Recovery (see
-    /loan/bad-debt-recovery), otherwise their original due date.
+    their due date, otherwise their original due date — a row that's crossed into Bad Debt
+    Recovery (paid 3+ calendar months late) is excluded here entirely and reported only via
+    /loan/bad-debt-recovery instead, never both.
     delinquency_by_expected_repayment = total_unrecovered_repayment / total_disbursed_amount
     (matched to /loan/coverage-utilization's total_disbursed_amount); delinquency_by_
     admin_fee = total_unrecovered_repayment / (total_disbursed_amount +
