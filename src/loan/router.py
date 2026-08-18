@@ -1005,6 +1005,106 @@ async def get_bad_debt_recovery_monthly(
         }
 
 
+@router.get("/disbursement-expected-return", response_model=schemas.DisbursementExpectedReturnResponse)
+async def get_disbursement_expected_return(
+    start_date: str = None,
+    end_date: str = None,
+    employer: str = None,
+    sourced_to: str = None,
+    project: str = None,
+    client_segment: str = None,
+    product_type: str = None,
+    loan_status: int = None,
+    id_karyawan: int = None,
+    loan_type: str = "loan",
+    db: Session = Depends(get_db)
+):
+    """Get expected return (principal + admin fee) on loans disbursed within a period.
+    Disbursement-date based (l.proses_date), matches /loan/coverage-utilization's
+    total_disbursed_amount — distinct from the due-date-based expected repayment
+    elsewhere in /loan. Use loan_type=all to combine kasbon, extradana, and aku_cicil."""
+
+    try:
+        summary = crud.get_disbursement_expected_return_summary(
+            db,
+            employer_filter=employer,
+            sourced_to_filter=sourced_to,
+            project_filter=project,
+            client_segment_filter=client_segment,
+            product_type_filter=product_type,
+            loan_status_filter=loan_status,
+            id_karyawan_filter=id_karyawan,
+            start_date=start_date,
+            end_date=end_date,
+            loan_type=loan_type
+        )
+
+        return {
+            "status": "success",
+            "disbursed_loans_count": summary["disbursed_loans_count"],
+            "total_disbursed_amount": summary["total_disbursed_amount"],
+            "total_expected_admin_fee": summary["total_expected_admin_fee"],
+            "total_expected_return": summary["total_expected_return"],
+            "expected_return_rate": summary["expected_return_rate"],
+        }
+    except Exception as e:
+        # Return error response with status
+        return {
+            "status": "error",
+            "message": str(e),
+            "disbursed_loans_count": 0,
+            "total_disbursed_amount": 0,
+            "total_expected_admin_fee": 0,
+            "total_expected_return": 0,
+            "expected_return_rate": 0.0,
+        }
+
+
+@router.get("/disbursement-expected-return-monthly", response_model=schemas.DisbursementExpectedReturnMonthlyResponse)
+async def get_disbursement_expected_return_monthly(
+    start_date: str,
+    end_date: str,
+    employer: str = None,
+    sourced_to: str = None,
+    project: str = None,
+    client_segment: str = None,
+    product_type: str = None,
+    loan_status: int = None,
+    id_karyawan: int = None,
+    loan_type: str = "loan",
+    db: Session = Depends(get_db)
+):
+    """Get monthly expected return (principal + admin fee) on loans disbursed within a
+    date range. Use loan_type=all to combine kasbon, extradana, and aku_cicil."""
+
+    try:
+        monthly_summary = crud.get_disbursement_expected_return_monthly_summary(
+            db,
+            employer_filter=employer,
+            sourced_to_filter=sourced_to,
+            project_filter=project,
+            client_segment_filter=client_segment,
+            product_type_filter=product_type,
+            loan_status_filter=loan_status,
+            id_karyawan_filter=id_karyawan,
+            start_date=start_date,
+            end_date=end_date,
+            loan_type=loan_type
+        )
+
+        return {
+            "status": "success",
+            "monthly_data": monthly_summary
+        }
+    except Exception as e:
+        # Return error response with status
+        return {
+            "status": "error",
+            "message": str(e),
+            "monthly_data": {}
+        }
+
+
 @router.get("/coverage-utilization")
 async def get_coverage_utilization(
     start_date: str = None,
