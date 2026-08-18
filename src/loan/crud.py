@@ -7128,6 +7128,155 @@ def get_coverage_utilization_monthly_summary(db: Session,
         }
 
 
+def get_disbursement_expected_return_summary(db: Session,
+                                             employer_filter: str = None, sourced_to_filter: str = None,
+                                             project_filter: str = None, client_segment_filter: str = None, product_type_filter: str = None, loan_status_filter: int = None,
+                                             id_karyawan_filter: int = None, start_date: str = None, end_date: str = None, loan_type: str = "loan") -> dict:
+    """Expected return (principal + admin fee) on loans disbursed within a period.
+
+    Disbursement-date based: sums l.total_loan/l.admin_fee for loans with
+    loan_status IN (1, 2, 4) bucketed by l.proses_date — matches
+    /loan/coverage-utilization's total_disbursed_amount. Distinct from the
+    due-date-based "expected repayment" in get_total_expected_repayment, which
+    tracks what falls due in a period regardless of disbursement month.
+    """
+
+    try:
+        company_filter = COMPANY_FILTER
+        params = {}
+        loan_conditions = resolve_loan_conditions(loan_type, db)
+
+        query = f"""
+        SELECT
+            COUNT(CASE WHEN l.loan_status IN (1, 2, 4) THEN 1 END) AS disbursed_loans_count,
+            COALESCE(SUM(CASE WHEN l.loan_status IN (1, 2, 4) THEN l.total_loan ELSE 0 END), 0) AS total_disbursed_amount,
+            COALESCE(SUM(CASE WHEN l.loan_status IN (1, 2, 4) THEN l.admin_fee ELSE 0 END), 0) AS total_expected_admin_fee
+        FROM td_loan l
+        {_LOAN_GMC_JOINS}
+        WHERE {loan_conditions}
+        """
+
+        query = append_date_filters(query, params, start_date=start_date, end_date=end_date)
+
+        query = _append_loan_org_filters(
+            query,
+            params,
+            id_karyawan_filter=id_karyawan_filter,
+            employer_filter=employer_filter,
+            sourced_to_filter=sourced_to_filter,
+            project_filter=project_filter,
+            client_segment_filter=client_segment_filter,
+            product_type_filter=product_type_filter,
+            loan_status_filter=loan_status_filter,
+            company_filter=company_filter,
+            db=db,
+        )
+
+        row = db.execute(text(query), params).fetchone()
+        disbursed_loans_count = row[0] or 0
+        total_disbursed_amount = row[1] or 0
+        total_expected_admin_fee = row[2] or 0
+        total_expected_return = total_disbursed_amount + total_expected_admin_fee
+
+        expected_return_rate = 0.0
+        if total_disbursed_amount > 0:
+            expected_return_rate = total_expected_return / total_disbursed_amount
+
+        return {
+            "disbursed_loans_count": disbursed_loans_count,
+            "total_disbursed_amount": total_disbursed_amount,
+            "total_expected_admin_fee": total_expected_admin_fee,
+            "total_expected_return": total_expected_return,
+            "expected_return_rate": expected_return_rate,
+        }
+
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return {
+            "disbursed_loans_count": 0,
+            "total_disbursed_amount": 0,
+            "total_expected_admin_fee": 0,
+            "total_expected_return": 0,
+            "expected_return_rate": 0.0,
+        }
+
+
+def get_disbursement_expected_return_monthly_summary(db: Session,
+                                                      employer_filter: str = None, sourced_to_filter: str = None,
+                                                      project_filter: str = None, client_segment_filter: str = None, product_type_filter: str = None, loan_status_filter: int = None,
+                                                      id_karyawan_filter: int = None, start_date: str = None,
+                                                      end_date: str = None, loan_type: str = "loan") -> dict:
+    """Monthly breakdown of get_disbursement_expected_return_summary, bucketed by
+    l.proses_date (disbursement date) — same grouping as /loan/coverage-utilization-monthly."""
+
+    try:
+        company_filter = COMPANY_FILTER
+        params = {}
+        loan_conditions = resolve_loan_conditions(loan_type, db)
+
+        query = f"""
+        SELECT
+            DATE_FORMAT(l.proses_date, '%M %Y') AS month_year,
+            COUNT(CASE WHEN l.loan_status IN (1, 2, 4) THEN 1 END) AS disbursed_loans_count,
+            COALESCE(SUM(CASE WHEN l.loan_status IN (1, 2, 4) THEN l.total_loan ELSE 0 END), 0) AS total_disbursed_amount,
+            COALESCE(SUM(CASE WHEN l.loan_status IN (1, 2, 4) THEN l.admin_fee ELSE 0 END), 0) AS total_expected_admin_fee
+        FROM td_loan l
+        {_LOAN_GMC_JOINS}
+        WHERE l.proses_date IS NOT NULL
+        AND {loan_conditions}
+        """
+
+        query = _append_loan_org_filters(
+            query,
+            params,
+            id_karyawan_filter=id_karyawan_filter,
+            employer_filter=employer_filter,
+            sourced_to_filter=sourced_to_filter,
+            project_filter=project_filter,
+            client_segment_filter=client_segment_filter,
+            product_type_filter=product_type_filter,
+            loan_status_filter=loan_status_filter,
+            company_filter=company_filter,
+            db=db,
+        )
+
+        query = append_date_filters(query, params, start_date=start_date, end_date=end_date)
+
+        query += " GROUP BY DATE_FORMAT(l.proses_date, '%M %Y') ORDER BY MIN(l.proses_date)"
+
+        rows = db.execute(text(query), params).fetchall()
+
+        monthly_data = {}
+        for row in rows:
+            month_year = row[0]
+            if month_year is None:
+                continue
+            disbursed_loans_count = row[1] or 0
+            total_disbursed_amount = row[2] or 0
+            total_expected_admin_fee = row[3] or 0
+            total_expected_return = total_disbursed_amount + total_expected_admin_fee
+
+            expected_return_rate = 0.0
+            if total_disbursed_amount > 0:
+                expected_return_rate = total_expected_return / total_disbursed_amount
+
+            monthly_data[month_year] = {
+                "disbursed_loans_count": disbursed_loans_count,
+                "total_disbursed_amount": total_disbursed_amount,
+                "total_expected_admin_fee": total_expected_admin_fee,
+                "total_expected_return": total_expected_return,
+                "expected_return_rate": expected_return_rate,
+            }
+
+        return monthly_data
+
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return {}
+
+
 def _apply_installment_delinquency_override(
     db: Session,
     client_disbursements: list,

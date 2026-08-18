@@ -460,4 +460,40 @@ class CoverageUtilizationMonthlyResponse(BaseModel):
     message: Optional[str] = None
 
     class Config:
-        from_attributes = True 
+        from_attributes = True
+
+
+class DisbursementExpectedReturnResponse(BaseModel):
+    """Response model for disbursement expected-return summary (principal + admin fee on loans disbursed in a period)"""
+    status: str
+    disbursed_loans_count: int
+    total_disbursed_amount: int
+    total_expected_admin_fee: int
+    total_expected_return: int
+    expected_return_rate: float
+    message: Optional[str] = None
+
+    class Config:
+        from_attributes = True
+
+
+class MonthlyDisbursementExpectedReturnData(BaseModel):
+    """Monthly data for disbursement expected-return summary"""
+    disbursed_loans_count: int
+    total_disbursed_amount: int
+    total_expected_admin_fee: int
+    total_expected_return: int
+    expected_return_rate: float
+
+    class Config:
+        from_attributes = True
+
+
+class DisbursementExpectedReturnMonthlyResponse(BaseModel):
+    """Response model for monthly disbursement expected-return summary data"""
+    status: str
+    monthly_data: dict[str, MonthlyDisbursementExpectedReturnData]
+    message: Optional[str] = None
+
+    class Config:
+        from_attributes = True
