@@ -1050,6 +1050,237 @@ def get_total_eligible_employees(
         return 0
 
 
+def _loan_setting_type_predicate(loan_type: str) -> Optional[str]:
+    """SQL predicate on loan_setting.loan_type identifying the rows that define a
+    given product's eligibility rules, for the live (non-snapshot) fallback in
+    get_total_eligible_employees_by_product.
+
+    Returns None only for "all": loan_kasbon_eligible is already a precondition
+    every product requires (see M_loan::eligible_emp in ak-mj), so the existing
+    HRIS-flag-based get_total_eligible_employees total already covers "eligible
+    for any product" and is left untouched for that case.
+    """
+    if loan_type in (None, "", "loan", "kasbon"):
+        return "ls.loan_type LIKE 'Kasbon%'"
+    if loan_type == "extradana":
+        return "ls.loan_type LIKE 'Extradana%'"
+    if loan_type == "aku_cicil":
+        return "ls.loan_type = 'AkuCicil'"
+    if loan_type == "installment":
+        return "(ls.loan_type LIKE 'Extradana%' OR ls.loan_type = 'AkuCicil')"
+    return None
+
+
+def get_total_eligible_employees_by_product(
+    db: Session,
+    *,
+    loan_setting_predicate: str,
+    employer_filter: str = None,
+    sourced_to_filter: str = None,
+    project_filter: str = None,
+    client_segment_filter: str = None,
+    product_type_filter: str = None,
+) -> int:
+    """
+    Product-specific eligible count for extradana/aku_cicil/installment: counts
+    active, loan_kasbon_eligible employees who additionally match at least one
+    loan_setting row of that product — project list, minimum_salary, contract
+    type (via tbl_gmc group_gmc='sts_contract', matching td_karyawan.status_kontrak),
+    and tenure since tgl_joint_valdo — the same per-employee criteria
+    M_loan::get_loan_setting_new() (ak-mj) checks when an employee opens the loan
+    request screen.
+
+    minimum_month = 999 is a data convention for "permanent employee" rows (per
+    ak-mj business rule), not a literal 999-month tenure requirement — those rows
+    gate on td_karyawan.tgl_resign being unset ('0000-00-00' or NULL) instead.
+
+    Reads live td_karyawan (no historical snapshot exists for these per-product
+    criteria), so this reflects eligibility as of now, not as of a past date.
+    Excludes the app's remaining-contract-vs-tenor (EOC) check, which needs a
+    live per-employee active-contract lookup.
+    """
+    try:
+        query = f"""
+        SELECT COUNT(DISTINCT tk.id_karyawan)
+        FROM td_karyawan tk
+        {_KARYAWAN_GMC_JOINS}
+        INNER JOIN loan_setting ls
+            ON ls.company = tk.klient
+            AND ls.loan_partner IS NULL
+            AND FIND_IN_SET(tk.project, ls.project)
+            AND ({loan_setting_predicate})
+        LEFT JOIN tbl_gmc contract
+            ON contract.kode_gmc = tk.status_kontrak
+            AND contract.group_gmc = 'sts_contract'
+        WHERE tk.status = '1'
+        AND tk.loan_kasbon_eligible = '1'
+        AND tk.gaji >= ls.minimum_salary
+        AND FIND_IN_SET(contract.keterangan, ls.contract_allowed)
+        AND (
+            (ls.minimum_month >= 999 AND (tk.tgl_resign = '0000-00-00' OR tk.tgl_resign IS NULL))
+            OR (
+                ls.minimum_month < 999
+                AND tk.tgl_joint_valdo IS NOT NULL
+                AND TIMESTAMPDIFF(MONTH, tk.tgl_joint_valdo, CURDATE()) >= ls.minimum_month
+            )
+        )
+        """
+        params = {}
+        query = _append_karyawan_org_filters(
+            query,
+            params,
+            employer_filter=employer_filter,
+            sourced_to_filter=sourced_to_filter,
+            project_filter=project_filter,
+            client_segment_filter=client_segment_filter,
+            product_type_filter=product_type_filter,
+            db=db,
+        )
+        record = db.execute(text(query), params).fetchone()
+        return int(record[0] or 0) if record else 0
+    except Exception:
+        import traceback
+        traceback.print_exc()
+        return 0
+
+
+def _eligible_product_snapshot_predicate(loan_type: str) -> Optional[str]:
+    """SQL predicate on data_record_eligible's per-product snapshot columns
+    (is_kasbon_eligible / is_aku_cicil_eligible / is_extradana_eligible —
+    populated daily by ak-mj's daily_data_record(), same criteria as
+    get_total_eligible_employees_by_product's live query).
+
+    Returns None for "all" (and unrecognized values), which keeps using the
+    original is_loan_eligible-based get_total_eligible_employees untouched.
+    """
+    if loan_type in (None, "", "loan", "kasbon"):
+        return "de.is_kasbon_eligible = 1"
+    if loan_type == "extradana":
+        return "de.is_extradana_eligible = 1"
+    if loan_type == "aku_cicil":
+        return "de.is_aku_cicil_eligible = 1"
+    if loan_type == "installment":
+        return "(de.is_aku_cicil_eligible = 1 OR de.is_extradana_eligible = 1)"
+    return None
+
+
+def get_total_eligible_employees_for_loan_type(
+    db: Session,
+    loan_type: str,
+    *,
+    start_date: str = None,
+    end_date: str = None,
+    as_of_date: str = None,
+    employer_filter: str = None,
+    sourced_to_filter: str = None,
+    project_filter: str = None,
+    client_segment_filter: str = None,
+    product_type_filter: str = None,
+) -> int:
+    """
+    Single entry point for "total eligible employees" across all loan_type values
+    used by /loan/coverage-utilization (and its -monthly variant).
+
+    loan_type == "all" (or unrecognized) keeps the original HRIS-flag-based
+    get_total_eligible_employees (data_record_eligible.is_loan_eligible, with its
+    own legacy data_record fallback) untouched — still the documented
+    company-wide "source of truth" figure.
+
+    kasbon/extradana/aku_cicil/installment read the per-product snapshot columns
+    on data_record_eligible for any date range the snapshot covers, and fall back
+    to a live td_karyawan+loan_setting computation
+    (get_total_eligible_employees_by_product) for dates before those columns
+    existed / before the first daily run after this migration — including if the
+    columns don't exist yet at all (ALTER TABLE not deployed), which raises a SQL
+    error caught below rather than being mistaken for "zero eligible".
+    """
+
+    def _live_fallback() -> int:
+        return get_total_eligible_employees_by_product(
+            db,
+            loan_setting_predicate=_loan_setting_type_predicate(loan_type),
+            employer_filter=employer_filter,
+            sourced_to_filter=sourced_to_filter,
+            project_filter=project_filter,
+            client_segment_filter=client_segment_filter,
+            product_type_filter=product_type_filter,
+        )
+
+    snapshot_predicate = _eligible_product_snapshot_predicate(loan_type)
+    if snapshot_predicate is None:
+        return get_total_eligible_employees(
+            db,
+            start_date=start_date,
+            end_date=end_date,
+            as_of_date=as_of_date,
+            employer_filter=employer_filter,
+            sourced_to_filter=sourced_to_filter,
+            project_filter=project_filter,
+            client_segment_filter=client_segment_filter,
+            product_type_filter=product_type_filter,
+        )
+
+    try:
+        range_start, range_end = _eligible_date_range(
+            start_date=start_date, end_date=end_date, as_of_date=as_of_date
+        )
+        # Rows written before this migration default all three new columns to 0,
+        # indistinguishable from "genuinely 0 eligible" by presence alone — so
+        # require at least one row where a flag is actually set (kasbon/aku_cicil/
+        # extradana are never realistically 0 company-wide) to trust the snapshot
+        # for this range; this also doubles as the "columns don't exist yet" probe,
+        # since an unknown-column error here is caught below and falls back live.
+        has_computed_snapshot = db.execute(
+            text(
+                "SELECT EXISTS (SELECT 1 FROM data_record_eligible "
+                "WHERE snapshot_date BETWEEN :start_date AND :end_date "
+                "AND (is_kasbon_eligible = 1 OR is_aku_cicil_eligible = 1 OR is_extradana_eligible = 1))"
+            ),
+            {"start_date": range_start, "end_date": range_end},
+        ).scalar()
+
+        if not has_computed_snapshot:
+            return _live_fallback()
+
+        employer_code = _resolve_gmc_code(db, value=employer_filter, group_gmc="sub_client")
+        sourced_to_code = _resolve_gmc_code(db, value=sourced_to_filter, group_gmc="placement_client")
+        project_code = _resolve_gmc_code(db, value=project_filter, group_gmc="client_project")
+
+        params = {
+            "start_date": range_start,
+            "end_date": range_end,
+            "f_employer": employer_code,
+            "f_sourced_to": sourced_to_code,
+            "f_project": project_code,
+            "f_product": product_type_filter,
+        }
+        segment_predicate = _eligible_segment_predicate(client_segment_filter, params, db)
+        allowed_employer_predicate = _allowed_employer_predicate(db, params)
+
+        query = f"""
+        SELECT COUNT(DISTINCT de.id_karyawan)
+        FROM data_record_eligible de
+        WHERE de.snapshot_date BETWEEN :start_date AND :end_date
+          AND {snapshot_predicate}
+          AND ({allowed_employer_predicate})
+          AND (:f_employer IS NULL OR de.employer = :f_employer)
+          AND (:f_sourced_to IS NULL OR de.sourced_to = :f_sourced_to)
+          AND (:f_project IS NULL OR de.project = :f_project)
+          AND ({segment_predicate})
+          AND (:f_product IS NULL OR de.product_type = :f_product)
+        """
+        record = db.execute(text(query), params).fetchone()
+        return int(record[0] or 0) if record else 0
+    except Exception:
+        import traceback
+        traceback.print_exc()
+        try:
+            return _live_fallback()
+        except Exception:
+            traceback.print_exc()
+            return 0
+
+
 _TOTAL_ELIGIBLE_WITH_PROJECT_SNAPSHOT_SQL = """
 SELECT COALESCE(SUM(total_coverage_project), 0) AS total_coverage_project
 FROM (
@@ -6132,8 +6363,9 @@ def get_coverage_utilization_summary(db: Session,
             product_type_filter=product_type_filter,
         )
 
-        total_eligible_employees = get_total_eligible_employees(
+        total_eligible_employees = get_total_eligible_employees_for_loan_type(
             db,
+            loan_type,
             start_date=start_date,
             end_date=end_date,
             employer_filter=employer_filter,
@@ -6711,8 +6943,9 @@ def get_coverage_utilization_monthly_summary(db: Session,
                 range_start, range_end = month_range
             else:
                 range_start, range_end = start_date, end_date
-            total_eligible_employees = get_total_eligible_employees(
+            total_eligible_employees = get_total_eligible_employees_for_loan_type(
                 db,
+                loan_type,
                 start_date=range_start,
                 end_date=range_end,
                 employer_filter=employer_filter,
