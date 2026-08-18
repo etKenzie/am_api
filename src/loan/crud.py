@@ -1164,6 +1164,70 @@ def _eligible_product_snapshot_predicate(loan_type: str) -> Optional[str]:
     return None
 
 
+def _has_computed_eligible_product_snapshot(db: Session, range_start: str, range_end: str) -> bool:
+    """
+    Whether data_record_eligible has at least one row in this range with a
+    per-product flag actually set. Rows written before the is_*_eligible
+    columns existed default all three to 0, indistinguishable from "genuinely 0
+    eligible" by presence alone — so we require a set flag (kasbon/aku_cicil/
+    extradana are never realistically 0 company-wide) to trust the snapshot for
+    this range. An unknown-column error here (columns not migrated yet) is left
+    to the caller to catch.
+    """
+    return bool(db.execute(
+        text(
+            "SELECT EXISTS (SELECT 1 FROM data_record_eligible "
+            "WHERE snapshot_date BETWEEN :start_date AND :end_date "
+            "AND (is_kasbon_eligible = 1 OR is_aku_cicil_eligible = 1 OR is_extradana_eligible = 1))"
+        ),
+        {"start_date": range_start, "end_date": range_end},
+    ).scalar())
+
+
+def _eligible_product_snapshot_count(
+    db: Session,
+    snapshot_predicate: str,
+    range_start: str,
+    range_end: str,
+    *,
+    employer_filter: str = None,
+    sourced_to_filter: str = None,
+    project_filter: str = None,
+    client_segment_filter: str = None,
+    product_type_filter: str = None,
+) -> int:
+    """Runs the data_record_eligible per-product snapshot COUNT for one date range."""
+    employer_code = _resolve_gmc_code(db, value=employer_filter, group_gmc="sub_client")
+    sourced_to_code = _resolve_gmc_code(db, value=sourced_to_filter, group_gmc="placement_client")
+    project_code = _resolve_gmc_code(db, value=project_filter, group_gmc="client_project")
+
+    params = {
+        "start_date": range_start,
+        "end_date": range_end,
+        "f_employer": employer_code,
+        "f_sourced_to": sourced_to_code,
+        "f_project": project_code,
+        "f_product": product_type_filter,
+    }
+    segment_predicate = _eligible_segment_predicate(client_segment_filter, params, db)
+    allowed_employer_predicate = _allowed_employer_predicate(db, params)
+
+    query = f"""
+    SELECT COUNT(DISTINCT de.id_karyawan)
+    FROM data_record_eligible de
+    WHERE de.snapshot_date BETWEEN :start_date AND :end_date
+      AND {snapshot_predicate}
+      AND ({allowed_employer_predicate})
+      AND (:f_employer IS NULL OR de.employer = :f_employer)
+      AND (:f_sourced_to IS NULL OR de.sourced_to = :f_sourced_to)
+      AND (:f_project IS NULL OR de.project = :f_project)
+      AND ({segment_predicate})
+      AND (:f_product IS NULL OR de.product_type = :f_product)
+    """
+    record = db.execute(text(query), params).fetchone()
+    return int(record[0] or 0) if record else 0
+
+
 def get_total_eligible_employees_for_loan_type(
     db: Session,
     loan_type: str,
@@ -1179,7 +1243,10 @@ def get_total_eligible_employees_for_loan_type(
 ) -> int:
     """
     Single entry point for "total eligible employees" across all loan_type values
-    used by /loan/coverage-utilization (and its -monthly variant).
+    used by /loan/coverage-utilization. For the monthly variant (which needs this
+    per month over a range), use get_monthly_eligible_employees_for_loan_type
+    instead — it shares this same logic but computes the live fallback at most
+    once per request rather than once per month.
 
     loan_type == "all" (or unrecognized) keeps the original HRIS-flag-based
     get_total_eligible_employees (data_record_eligible.is_loan_eligible, with its
@@ -1224,53 +1291,20 @@ def get_total_eligible_employees_for_loan_type(
         range_start, range_end = _eligible_date_range(
             start_date=start_date, end_date=end_date, as_of_date=as_of_date
         )
-        # Rows written before this migration default all three new columns to 0,
-        # indistinguishable from "genuinely 0 eligible" by presence alone — so
-        # require at least one row where a flag is actually set (kasbon/aku_cicil/
-        # extradana are never realistically 0 company-wide) to trust the snapshot
-        # for this range; this also doubles as the "columns don't exist yet" probe,
-        # since an unknown-column error here is caught below and falls back live.
-        has_computed_snapshot = db.execute(
-            text(
-                "SELECT EXISTS (SELECT 1 FROM data_record_eligible "
-                "WHERE snapshot_date BETWEEN :start_date AND :end_date "
-                "AND (is_kasbon_eligible = 1 OR is_aku_cicil_eligible = 1 OR is_extradana_eligible = 1))"
-            ),
-            {"start_date": range_start, "end_date": range_end},
-        ).scalar()
-
-        if not has_computed_snapshot:
+        if not _has_computed_eligible_product_snapshot(db, range_start, range_end):
             return _live_fallback()
 
-        employer_code = _resolve_gmc_code(db, value=employer_filter, group_gmc="sub_client")
-        sourced_to_code = _resolve_gmc_code(db, value=sourced_to_filter, group_gmc="placement_client")
-        project_code = _resolve_gmc_code(db, value=project_filter, group_gmc="client_project")
-
-        params = {
-            "start_date": range_start,
-            "end_date": range_end,
-            "f_employer": employer_code,
-            "f_sourced_to": sourced_to_code,
-            "f_project": project_code,
-            "f_product": product_type_filter,
-        }
-        segment_predicate = _eligible_segment_predicate(client_segment_filter, params, db)
-        allowed_employer_predicate = _allowed_employer_predicate(db, params)
-
-        query = f"""
-        SELECT COUNT(DISTINCT de.id_karyawan)
-        FROM data_record_eligible de
-        WHERE de.snapshot_date BETWEEN :start_date AND :end_date
-          AND {snapshot_predicate}
-          AND ({allowed_employer_predicate})
-          AND (:f_employer IS NULL OR de.employer = :f_employer)
-          AND (:f_sourced_to IS NULL OR de.sourced_to = :f_sourced_to)
-          AND (:f_project IS NULL OR de.project = :f_project)
-          AND ({segment_predicate})
-          AND (:f_product IS NULL OR de.product_type = :f_product)
-        """
-        record = db.execute(text(query), params).fetchone()
-        return int(record[0] or 0) if record else 0
+        return _eligible_product_snapshot_count(
+            db,
+            snapshot_predicate,
+            range_start,
+            range_end,
+            employer_filter=employer_filter,
+            sourced_to_filter=sourced_to_filter,
+            project_filter=project_filter,
+            client_segment_filter=client_segment_filter,
+            product_type_filter=product_type_filter,
+        )
     except Exception:
         import traceback
         traceback.print_exc()
@@ -1279,6 +1313,90 @@ def get_total_eligible_employees_for_loan_type(
         except Exception:
             traceback.print_exc()
             return 0
+
+
+def get_monthly_eligible_employees_for_loan_type(
+    db: Session,
+    loan_type: str,
+    month_ranges: dict,
+    *,
+    employer_filter: str = None,
+    sourced_to_filter: str = None,
+    project_filter: str = None,
+    client_segment_filter: str = None,
+    product_type_filter: str = None,
+) -> dict:
+    """
+    Batched version of get_total_eligible_employees_for_loan_type for
+    /loan/coverage-utilization-monthly: month_ranges is {month_year: (range_start,
+    range_end)}, returns {month_year: total_eligible_employees}.
+
+    The live td_karyawan+loan_setting fallback is date-independent (it always
+    reflects "now"), so any month lacking snapshot data would recompute the exact
+    same expensive query — calling it once per such month made a multi-month
+    range take minutes (every historical month falls back until enough days
+    accumulate in data_record_eligible, which can never happen for months before
+    this migration). Computed at most once per request here instead.
+    """
+    snapshot_predicate = _eligible_product_snapshot_predicate(loan_type)
+    if snapshot_predicate is None:
+        return {
+            month_year: get_total_eligible_employees(
+                db,
+                start_date=range_start,
+                end_date=range_end,
+                employer_filter=employer_filter,
+                sourced_to_filter=sourced_to_filter,
+                project_filter=project_filter,
+                client_segment_filter=client_segment_filter,
+                product_type_filter=product_type_filter,
+            )
+            for month_year, (range_start, range_end) in month_ranges.items()
+        }
+
+    live_value = None
+
+    def _live_fallback() -> int:
+        nonlocal live_value
+        if live_value is None:
+            live_value = get_total_eligible_employees_by_product(
+                db,
+                loan_setting_predicate=_loan_setting_type_predicate(loan_type),
+                employer_filter=employer_filter,
+                sourced_to_filter=sourced_to_filter,
+                project_filter=project_filter,
+                client_segment_filter=client_segment_filter,
+                product_type_filter=product_type_filter,
+            )
+        return live_value
+
+    results = {}
+    for month_year, (range_start, range_end) in month_ranges.items():
+        try:
+            if not _has_computed_eligible_product_snapshot(db, range_start, range_end):
+                results[month_year] = _live_fallback()
+                continue
+            results[month_year] = _eligible_product_snapshot_count(
+                db,
+                snapshot_predicate,
+                range_start,
+                range_end,
+                employer_filter=employer_filter,
+                sourced_to_filter=sourced_to_filter,
+                project_filter=project_filter,
+                client_segment_filter=client_segment_filter,
+                product_type_filter=product_type_filter,
+            )
+        except Exception:
+            import traceback
+            traceback.print_exc()
+            try:
+                results[month_year] = _live_fallback()
+            except Exception:
+                traceback.print_exc()
+                results[month_year] = 0
+
+    return results
 
 
 _TOTAL_ELIGIBLE_WITH_PROJECT_SNAPSHOT_SQL = """
@@ -6932,28 +7050,32 @@ def get_coverage_utilization_monthly_summary(db: Session,
         monthly_data = {}
         all_months = set(monthly_processed_data.keys()) | set(monthly_approved_data.keys()) | set(monthly_rejected_data.keys()) | set(monthly_disbursed_data.keys()) | set(monthly_first_borrow_data.keys())
 
+        # Batched so the (date-independent) live fallback runs at most once per
+        # request instead of once per month lacking snapshot data — see
+        # get_monthly_eligible_employees_for_loan_type.
+        month_ranges = {
+            month_year: (_month_year_date_range(month_year) or (start_date, end_date))
+            for month_year in all_months
+        }
+        eligible_by_month = get_monthly_eligible_employees_for_loan_type(
+            db,
+            loan_type,
+            month_ranges,
+            employer_filter=employer_filter,
+            sourced_to_filter=sourced_to_filter,
+            project_filter=project_filter,
+            client_segment_filter=client_segment_filter,
+            product_type_filter=product_type_filter,
+        )
+
         for month_year in all_months:
             total_loan_requests = monthly_processed_data.get(month_year, 0) or 0
             total_approved_requests = monthly_approved_data.get(month_year, 0) or 0
             total_rejected_requests = monthly_rejected_data.get(month_year, 0) or 0
             total_disbursed_amount = monthly_disbursed_data.get(month_year, 0) or 0
             total_first_borrow = monthly_first_borrow_data.get(month_year, 0) or 0
-            month_range = _month_year_date_range(month_year)
-            if month_range:
-                range_start, range_end = month_range
-            else:
-                range_start, range_end = start_date, end_date
-            total_eligible_employees = get_total_eligible_employees_for_loan_type(
-                db,
-                loan_type,
-                start_date=range_start,
-                end_date=range_end,
-                employer_filter=employer_filter,
-                sourced_to_filter=sourced_to_filter,
-                project_filter=project_filter,
-                client_segment_filter=client_segment_filter,
-                product_type_filter=product_type_filter,
-            )
+            range_start, range_end = month_ranges[month_year]
+            total_eligible_employees = eligible_by_month.get(month_year, 0)
             total_coverage_project = get_total_coverage_project(
                 db,
                 start_date=range_start,
