@@ -6617,9 +6617,11 @@ def get_coverage_utilization_summary(db: Session,
         eligible_rate = (total_eligible_employees / total_active_employees) if total_active_employees > 0 else 0.0
 
         metrics_row = db.execute(text(loan_metrics_query), params).fetchone()
-        total_loan_requests = metrics_row[0] or 0
         total_approved_requests = metrics_row[1] or 0
         total_rejected_requests = metrics_row[2] or 0
+        # Total requests = approved + rejected, so it stays consistent with
+        # the approved/rejected breakdown shown directly below it in the UI.
+        total_loan_requests = total_approved_requests + total_rejected_requests
         total_disbursed_amount = metrics_row[3] or 0
         average_approval_time = metrics_row[4] if metrics_row[4] is not None else 0
         disbursed_loans_count = total_approved_requests
@@ -7069,9 +7071,11 @@ def get_coverage_utilization_monthly_summary(db: Session,
         )
 
         for month_year in all_months:
-            total_loan_requests = monthly_processed_data.get(month_year, 0) or 0
             total_approved_requests = monthly_approved_data.get(month_year, 0) or 0
             total_rejected_requests = monthly_rejected_data.get(month_year, 0) or 0
+            # Total requests = approved + rejected, so it stays consistent with
+            # the approved/rejected breakdown shown directly below it in the UI.
+            total_loan_requests = total_approved_requests + total_rejected_requests
             total_disbursed_amount = monthly_disbursed_data.get(month_year, 0) or 0
             total_first_borrow = monthly_first_borrow_data.get(month_year, 0) or 0
             range_start, range_end = month_ranges[month_year]
@@ -7086,9 +7090,11 @@ def get_coverage_utilization_monthly_summary(db: Session,
                 client_segment_filter=client_segment_filter,
                 product_type_filter=product_type_filter,
             )
+            # Matches get_coverage_utilization_summary: penetration is approved
+            # requests over eligible employees, not total (approved+rejected) requests.
             penetration_rate = 0
             if total_eligible_employees > 0:
-                penetration_rate = total_loan_requests / total_eligible_employees
+                penetration_rate = total_approved_requests / total_eligible_employees
 
             approval_rate = 0
             rejected_rate = 0
