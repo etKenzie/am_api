@@ -2781,8 +2781,8 @@ def _merge_karyawan_overdue_aging_lists(lists: List[list]) -> list:
             existing["total_amount_owed"] = (existing.get("total_amount_owed", 0) or 0) + (
                 row.get("total_amount_owed", 0) or 0
             )
-            existing["total_admin_fee"] = (existing.get("total_admin_fee", 0) or 0) + (
-                row.get("total_admin_fee", 0) or 0
+            existing["admin_fee"] = (existing.get("admin_fee", 0) or 0) + (
+                row.get("admin_fee", 0) or 0
             )
             existing["total_payment"] = (existing.get("total_payment", 0) or 0) + (
                 row.get("total_payment", 0) or 0
