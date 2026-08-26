@@ -751,6 +751,58 @@ async def get_karyawan_overdue(
         }
 
 
+@router.get("/karyawan-overdue-aging", response_model=schemas.KaryawanOverdueAgingListResponse)
+async def get_karyawan_overdue_aging(
+    employer: str = None,
+    sourced_to: str = None,
+    project: str = None,
+    client_segment: str = None,
+    product_type: str = None,
+    loan_status: int = None,
+    id_karyawan: int = None,
+    start_date: str = None,
+    end_date: str = None,
+    loan_type: str = "loan",
+    aging_status: str = None,
+    db: Session = Depends(get_db)
+):
+    """Get karyawan with overdue loans bucketed into OD1/OD2/WRITE_OFF aging, based on full
+    calendar months elapsed since the loan's due date (due month itself is not yet OD1 — the
+    next billing month is). Use loan_type=all to combine kasbon, extradana, and aku_cicil.
+    Filter to one bucket with aging_status=OD1|OD2|WRITE_OFF (case-insensitive)."""
+
+    try:
+        overdue_list = crud.get_karyawan_overdue_aging_summary(
+            db,
+            employer_filter=employer,
+            sourced_to_filter=sourced_to,
+            project_filter=project,
+            client_segment_filter=client_segment,
+            product_type_filter=product_type,
+            loan_status_filter=loan_status,
+            id_karyawan_filter=id_karyawan,
+            start_date=start_date,
+            end_date=end_date,
+            loan_type=loan_type,
+            aging_status_filter=aging_status
+        )
+
+        # Return structured response
+        return {
+            "status": "success",
+            "count": len(overdue_list),
+            "results": overdue_list
+        }
+    except Exception as e:
+        # Return error response with status
+        return {
+            "status": "error",
+            "message": str(e),
+            "count": 0,
+            "results": []
+        }
+
+
 @router.get("/repayment-risk")
 async def get_repayment_risk(
     start_date: str = None,
