@@ -265,6 +265,35 @@ class KaryawanOverdueListResponse(BaseModel):
         from_attributes = True
 
 
+class KaryawanOverdueAgingResponse(BaseModel):
+    """Response model for karyawan with overdue loans, bucketed by OD1/OD2/WRITE_OFF aging."""
+    id_karyawan: Optional[int] = None
+    ktp: Optional[str] = None
+    name: Optional[str] = None
+    company: Optional[str] = None
+    sourced_to: Optional[str] = None
+    project: Optional[str] = None
+    total_amount_owed: int
+    repayment_date: Optional[str] = None
+    days_overdue: int
+    admin_fee: int
+    total_payment: int
+    aging_status: str
+
+    class Config:
+        from_attributes = True
+
+
+class KaryawanOverdueAgingListResponse(BaseModel):
+    status: str
+    count: int
+    results: List[KaryawanOverdueAgingResponse]
+    message: Optional[str] = None
+
+    class Config:
+        from_attributes = True
+
+
 class LoanPurposeSummaryResponse(BaseModel):
     """Response model for loan purpose summary data"""
     purpose_id: Optional[int] = None
