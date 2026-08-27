@@ -790,7 +790,12 @@ async def get_repayment_risk(
     partial breakdown of total_loan_principal_collected/total_admin_fee_collected by how
     many calendar months late the payment was (OD1 = 1 month late, OD2 = 2 months late);
     on-time payments aren't broken out and 3+ months late is Bad Debt Recovery, so OD1+OD2
-    do not sum back to the parent totals."""
+    do not sum back to the parent totals.
+    total_unrecovered_loan_principal + total_unrecovered_admin_fee reconciles with
+    total_unrecovered_repayment for loan_type=loan/extradana/aku_cicil/installment (both are
+    the same still-unpaid, past-due population, partial payments netted out the same way on
+    both sides); loan_type=all is the one exception and does not reconcile, a separate,
+    pre-existing, documented gap in how "all" scopes total_unrecovered_repayment."""
 
     try:
         repayment_risk_summary = crud.get_repayment_risk_summary(
