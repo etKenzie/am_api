@@ -42,50 +42,29 @@ _BAD_DEBT_INSTALLMENT_PREDICATE = (
     "AND PERIOD_DIFF(DATE_FORMAT(tlh.payment_date, '%Y%m'), DATE_FORMAT(tlh.due_date, '%Y%m')) >= 3"
 )
 
-# Overdue aging (OD1/OD2/WRITE_OFF): unlike the bad-debt predicates above (which classify
-# an already-PAID row by how late payment_date landed relative to due_date), this
-# classifies a still-open, overdue (status/loan_status = 4) row by how many full calendar
-# months have elapsed between today (CURDATE()) and its due date — a pure month-count via
-# PERIOD_DIFF on YYYYMM periods, so it handles year boundaries (e.g. due December, checked
-# March = WRITE_OFF) with no special-casing. month_diff <= 0 (due date this month or later)
-# is not yet in any OD bucket. Used by get_karyawan_overdue_aging_summary only.
-_OVERDUE_AGING_MONTH_DIFF_LUMP = (
-    "PERIOD_DIFF(DATE_FORMAT(CURDATE(), '%Y%m'), DATE_FORMAT(l.repayment_date, '%Y%m'))"
+# OD1/OD2 breakdown of already-collected (status/loan_status = 2) repayments: same
+# calendar-month-late measurement as the bad-debt predicates above (payment_date vs
+# due_date, PERIOD_DIFF on YYYYMM), but for the 1- and 2-month-late slices that still count
+# as ordinary Repayment (M+3+ is Bad Debt Recovery, handled separately above). On-time
+# payments (paid on/before the due date) are intentionally not broken out here — only the
+# OD1/OD2 slices of total_loan_principal_collected/total_admin_fee_collected are exposed,
+# per explicit request; they are not required to sum back to those totals.
+_COLLECTED_OD1_LUMP_PREDICATE = (
+    "l.payment_date IS NOT NULL AND l.payment_date != '0000-00-00' "
+    "AND PERIOD_DIFF(DATE_FORMAT(l.payment_date, '%Y%m'), DATE_FORMAT(l.repayment_date, '%Y%m')) = 1"
 )
-_OVERDUE_AGING_STATUS_CASE_LUMP = (
-    f"CASE WHEN {_OVERDUE_AGING_MONTH_DIFF_LUMP} = 1 THEN 'OD1' "
-    f"WHEN {_OVERDUE_AGING_MONTH_DIFF_LUMP} = 2 THEN 'OD2' "
-    f"WHEN {_OVERDUE_AGING_MONTH_DIFF_LUMP} >= 3 THEN 'WRITE_OFF' "
-    f"ELSE NULL END"
+_COLLECTED_OD2_LUMP_PREDICATE = (
+    "l.payment_date IS NOT NULL AND l.payment_date != '0000-00-00' "
+    "AND PERIOD_DIFF(DATE_FORMAT(l.payment_date, '%Y%m'), DATE_FORMAT(l.repayment_date, '%Y%m')) = 2"
 )
-_OVERDUE_AGING_MONTH_DIFF_INSTALLMENT = (
-    "PERIOD_DIFF(DATE_FORMAT(CURDATE(), '%Y%m'), DATE_FORMAT(tlh.due_date, '%Y%m'))"
+_COLLECTED_OD1_INSTALLMENT_PREDICATE = (
+    "tlh.payment_date IS NOT NULL AND tlh.payment_date != '0000-00-00' "
+    "AND PERIOD_DIFF(DATE_FORMAT(tlh.payment_date, '%Y%m'), DATE_FORMAT(tlh.due_date, '%Y%m')) = 1"
 )
-_OVERDUE_AGING_STATUS_CASE_INSTALLMENT = (
-    f"CASE WHEN {_OVERDUE_AGING_MONTH_DIFF_INSTALLMENT} = 1 THEN 'OD1' "
-    f"WHEN {_OVERDUE_AGING_MONTH_DIFF_INSTALLMENT} = 2 THEN 'OD2' "
-    f"WHEN {_OVERDUE_AGING_MONTH_DIFF_INSTALLMENT} >= 3 THEN 'WRITE_OFF' "
-    f"ELSE NULL END"
+_COLLECTED_OD2_INSTALLMENT_PREDICATE = (
+    "tlh.payment_date IS NOT NULL AND tlh.payment_date != '0000-00-00' "
+    "AND PERIOD_DIFF(DATE_FORMAT(tlh.payment_date, '%Y%m'), DATE_FORMAT(tlh.due_date, '%Y%m')) = 2"
 )
-
-_VALID_OVERDUE_AGING_STATUSES = ("OD1", "OD2", "WRITE_OFF")
-
-
-def _normalize_aging_status_filter(aging_status_filter):
-    """Normalize/validate an aging_status query filter. Returns None (no filter), or one
-    of _VALID_OVERDUE_AGING_STATUSES. Raises ValueError for anything else — callers must
-    NOT call this from inside a try/except that swallows exceptions into a default return,
-    since an invalid filter should surface as a real error message, not silently match
-    nothing."""
-    if not aging_status_filter:
-        return None
-    normalized = aging_status_filter.strip().upper().replace("-", "_")
-    if normalized not in _VALID_OVERDUE_AGING_STATUSES:
-        raise ValueError(
-            f"Invalid aging_status '{aging_status_filter}'. "
-            f"Must be one of {_VALID_OVERDUE_AGING_STATUSES}."
-        )
-    return normalized
 
 # repayment-risk reporting-month attribution: each repayment is counted in exactly one
 # month — the payment month if paid on/before its due date, or once it has crossed into
@@ -2692,6 +2671,10 @@ def _merge_repayment_risk_summaries(summaries: List[dict]) -> dict:
         "total_expected_repayment",
         "total_loan_principal_collected",
         "total_admin_fee_collected",
+        "total_loan_principal_collected_od1",
+        "total_loan_principal_collected_od2",
+        "total_admin_fee_collected_od1",
+        "total_admin_fee_collected_od2",
         "total_unrecovered_repayment",
         "total_unrecovered_loan_principal",
         "total_unrecovered_admin_fee",
@@ -2707,6 +2690,10 @@ _MONTHLY_REPAYMENT_RISK_SUM_KEYS = (
     "total_expected_repayment",
     "total_loan_principal_collected",
     "total_admin_fee_collected",
+    "total_loan_principal_collected_od1",
+    "total_loan_principal_collected_od2",
+    "total_admin_fee_collected_od1",
+    "total_admin_fee_collected_od2",
     "total_unrecovered_loan_principal",
     "total_unrecovered_admin_fee",
     "total_expected_loan_principal",
@@ -2759,44 +2746,6 @@ def _merge_karyawan_overdue_lists(lists: List[list]) -> list:
                 # overdue of the two branches wins both fields together.
                 existing["days_overdue"] = row.get("days_overdue", 0)
                 existing["aging_status"] = row.get("aging_status")
-
-    return sorted(
-        merged.values(),
-        key=lambda item: item.get("total_amount_owed", 0) or 0,
-        reverse=True,
-    )
-
-
-def _merge_karyawan_overdue_aging_lists(lists: List[list]) -> list:
-    """Same additive merge as _merge_karyawan_overdue_lists, but keyed by
-    (id_karyawan, aging_status) instead of id_karyawan alone — used when loan_type="all"
-    combines the kasbon and installment branches. A karyawan can have overdue loans in two
-    different aging buckets at once (e.g. one loan at OD1, another at OD2); those must stay
-    as separate rows, not be summed together into a single misleading bucket."""
-    merged = {}
-    for overdue_list in lists:
-        for row in overdue_list:
-            key = (row.get("id_karyawan"), row.get("aging_status"))
-            if key not in merged:
-                merged[key] = row.copy()
-                continue
-
-            existing = merged[key]
-            existing["total_amount_owed"] = (existing.get("total_amount_owed", 0) or 0) + (
-                row.get("total_amount_owed", 0) or 0
-            )
-            existing["admin_fee"] = (existing.get("admin_fee", 0) or 0) + (
-                row.get("admin_fee", 0) or 0
-            )
-            existing["total_payment"] = (existing.get("total_payment", 0) or 0) + (
-                row.get("total_payment", 0) or 0
-            )
-            existing_repayment = existing.get("repayment_date")
-            new_repayment = row.get("repayment_date")
-            if new_repayment and (not existing_repayment or new_repayment > existing_repayment):
-                existing["repayment_date"] = new_repayment
-            if (row.get("days_overdue", 0) or 0) > (existing.get("days_overdue", 0) or 0):
-                existing["days_overdue"] = row.get("days_overdue", 0)
 
     return sorted(
         merged.values(),
@@ -4805,11 +4754,10 @@ def get_karyawan_overdue_summary(db: Session,
                     days_overdue = (today - repayment_date).days
                     # Full calendar months between today and repayment_date (this row's
                     # MAX due date across the karyawan's overdue loans/installments), no
-                    # day-of-month cutoff — same OD1/OD2/WRITE_OFF rule as
-                    # get_karyawan_overdue_aging_summary's SQL CASE, but derived here from
-                    # the same repayment_date already returned by this row rather than a
-                    # second query, since a karyawan's overdue loans are already blended
-                    # into one row by this point (see GROUP BY above).
+                    # day-of-month cutoff: due month + 1 = OD1, +2 = OD2, +3 or more =
+                    # WRITE_OFF. Derived from the same repayment_date already returned by
+                    # this row rather than a second query, since a karyawan's overdue loans
+                    # are already blended into one row by this point (see GROUP BY above).
                     month_diff = (today.year - repayment_date.year) * 12 + (today.month - repayment_date.month)
                     if month_diff == 1:
                         aging_status = "OD1"
@@ -4842,330 +4790,6 @@ def get_karyawan_overdue_summary(db: Session,
         import traceback
         traceback.print_exc()
         return []
-
-
-def get_karyawan_overdue_aging_summary(db: Session,
-                                       employer_filter: str = None, sourced_to_filter: str = None,
-                                       project_filter: str = None, client_segment_filter: str = None, product_type_filter: str = None, loan_status_filter: int = None,
-                                       id_karyawan_filter: int = None, start_date: str = None, end_date: str = None, loan_type: str = "loan",
-                                       aging_status_filter: str = None) -> List[dict]:
-    """Get karyawan with overdue loans (status 4), bucketed by OD1/OD2/WRITE_OFF aging
-    (see _OVERDUE_AGING_STATUS_CASE_LUMP/_INSTALLMENT). Mirrors get_karyawan_overdue_summary's
-    query shape/joins/filters exactly, but groups by (id_karyawan, aging_status) instead of
-    id_karyawan alone, since one karyawan can have overdue loans in different aging buckets
-    at once."""
-
-    # Validated outside the try/except below on purpose: an invalid aging_status_filter must
-    # surface as a real error to the caller, not be swallowed into an empty-list result.
-    aging_status_normalized = _normalize_aging_status_filter(aging_status_filter)
-
-    try:
-        if is_all_loan_types(loan_type):
-            return _merge_karyawan_overdue_aging_lists([
-                get_karyawan_overdue_aging_summary(
-                    db,
-                    employer_filter=employer_filter,
-                    sourced_to_filter=sourced_to_filter,
-                    project_filter=project_filter,
-                    client_segment_filter=client_segment_filter,
-                    product_type_filter=product_type_filter,
-                    loan_status_filter=loan_status_filter,
-                    id_karyawan_filter=id_karyawan_filter,
-                    start_date=start_date,
-                    end_date=end_date,
-                    loan_type="kasbon",
-                    aging_status_filter=aging_status_normalized,
-                ),
-                get_karyawan_overdue_aging_summary(
-                    db,
-                    employer_filter=employer_filter,
-                    sourced_to_filter=sourced_to_filter,
-                    project_filter=project_filter,
-                    client_segment_filter=client_segment_filter,
-                    product_type_filter=product_type_filter,
-                    loan_status_filter=loan_status_filter,
-                    id_karyawan_filter=id_karyawan_filter,
-                    start_date=start_date,
-                    end_date=end_date,
-                    loan_type="installment",
-                    aging_status_filter=aging_status_normalized,
-                ),
-            ])
-
-        loan_conditions = resolve_loan_conditions(loan_type, db)
-
-        if loan_type not in ("extradana", "aku_cicil", "installment"):
-            # Use td_loan table directly for kasbon — same partial-payment netting as
-            # get_karyawan_overdue_summary (see its comment above _lump_paid_subquery).
-            _lump_paid_subquery = """(
-                SELECT COALESCE(SUM(amt), 0) FROM (
-                    SELECT p.amount amt FROM td_loan_payment p
-                    WHERE p.loan_id = l.id AND p.status = 1 AND p.loan_history_id IS NULL
-                      AND NOT EXISTS (SELECT 1 FROM td_loan_payment_allocation a WHERE a.payment_id = p.id)
-                    UNION ALL
-                    SELECT a.amount FROM td_loan_payment_allocation a
-                    INNER JOIN td_loan_payment p ON p.id = a.payment_id
-                    WHERE p.loan_id = l.id AND p.status = 1 AND a.loan_history_id IS NULL
-                ) t
-            )"""
-            _lump_remaining_payment = f"GREATEST(l.total_payment - {_lump_paid_subquery}, 0)"
-
-            overdue_query = """
-            SELECT DISTINCT
-                tk.id_karyawan,
-                tk.ktp AS ktp,
-                tk.nama AS name,
-                emp.keterangan AS company,
-                src.keterangan AS sourced_to,
-                prj.keterangan AS project,
-                ROUND(SUM(CASE WHEN l.total_payment > 0
-                    THEN l.total_loan * {remaining_payment} / l.total_payment
-                    ELSE 0 END), 0) as total_amount_owed,
-                MAX(l.repayment_date) as repayment_date,
-                ROUND(SUM(CASE WHEN l.total_payment > 0
-                    THEN l.admin_fee * {remaining_payment} / l.total_payment
-                    ELSE 0 END), 0) as total_admin_fee,
-                SUM({remaining_payment}) as total_payment,
-                {aging_case} as aging_status
-            FROM td_loan l""".format(
-                remaining_payment=_lump_remaining_payment,
-                aging_case=_OVERDUE_AGING_STATUS_CASE_LUMP,
-            ) + """
-            LEFT JOIN td_karyawan tk
-                ON l.id_karyawan = tk.id_karyawan
-            LEFT JOIN tbl_gmc emp
-                ON tk.valdo_inc = emp.kode_gmc
-                AND emp.group_gmc = 'sub_client'
-                AND emp.aktif = 'Yes'
-                AND emp.keterangan3 = 1
-            LEFT JOIN tbl_gmc src
-                ON tk.placement = src.kode_gmc
-                AND src.group_gmc = 'placement_client'
-                AND src.aktif = 'Yes'
-                AND src.keterangan3 = 1
-            LEFT JOIN tbl_gmc prj
-                ON tk.project = prj.kode_gmc
-                AND prj.group_gmc = 'client_project'
-                AND prj.aktif = 'Yes'
-                AND prj.keterangan3 = 1
-            WHERE l.loan_status = 4
-            AND l.id_karyawan IS NOT NULL
-            AND {overdue_aging_month_diff} >= 1
-            AND {loan_conditions}
-            """.format(
-                overdue_aging_month_diff=_OVERDUE_AGING_MONTH_DIFF_LUMP,
-                loan_conditions=loan_conditions,
-            )
-        else:
-            # For extradana/aku_cicil/installment, use td_loan_history — same partial-payment
-            # netting as get_karyawan_overdue_summary.
-            loan_conditions_tl = loan_conditions.replace('l.', 'tl.')
-
-            _installment_paid_subquery = """(
-                SELECT COALESCE(SUM(amt), 0) FROM (
-                    SELECT p.amount amt FROM td_loan_payment p
-                    WHERE p.loan_id = tl.id AND p.status = 1 AND p.loan_history_id = tlh.id
-                      AND NOT EXISTS (SELECT 1 FROM td_loan_payment_allocation a WHERE a.payment_id = p.id)
-                    UNION ALL
-                    SELECT a.amount FROM td_loan_payment_allocation a
-                    INNER JOIN td_loan_payment p ON p.id = a.payment_id
-                    WHERE p.loan_id = tl.id AND p.status = 1 AND a.loan_history_id = tlh.id
-                ) t
-            )"""
-            _installment_remaining_payment = f"GREATEST(tlh.monthly - {_installment_paid_subquery}, 0)"
-
-            overdue_query = """
-            SELECT DISTINCT
-                tk.id_karyawan,
-                tk.ktp AS ktp,
-                tk.nama AS name,
-                emp.keterangan AS company,
-                src.keterangan AS sourced_to,
-                prj.keterangan AS project,
-                ROUND(SUM(CASE WHEN tlh.monthly > 0
-                    THEN ROUND(tl.total_loan / tl.duration, 0) * {remaining_payment} / tlh.monthly
-                    ELSE 0 END), 0) as total_amount_owed,
-                MAX(tlh.due_date) as repayment_date,
-                ROUND(SUM(CASE WHEN tlh.monthly > 0
-                    THEN ROUND(tl.admin_fee / tl.duration, 0) * {remaining_payment} / tlh.monthly
-                    ELSE 0 END), 0) as total_admin_fee,
-                SUM({remaining_payment}) as total_payment,
-                {aging_case} as aging_status
-            FROM td_loan_history tlh""".format(
-                remaining_payment=_installment_remaining_payment,
-                aging_case=_OVERDUE_AGING_STATUS_CASE_INSTALLMENT,
-            ) + """
-            LEFT JOIN td_loan tl ON tlh.loan_form_id = tl.id
-            LEFT JOIN td_karyawan tk ON tl.id_karyawan = tk.id_karyawan
-            LEFT JOIN tbl_gmc emp
-                ON tk.valdo_inc = emp.kode_gmc
-                AND emp.group_gmc = 'sub_client'
-                AND emp.aktif = 'Yes'
-                AND emp.keterangan3 = 1
-            LEFT JOIN tbl_gmc src
-                ON tk.placement = src.kode_gmc
-                AND src.group_gmc = 'placement_client'
-                AND src.aktif = 'Yes'
-                AND src.keterangan3 = 1
-            LEFT JOIN tbl_gmc prj
-                ON tk.project = prj.kode_gmc
-                AND prj.group_gmc = 'client_project'
-                AND prj.aktif = 'Yes'
-                AND prj.keterangan3 = 1
-            WHERE tlh.due_date IS NOT NULL
-            AND tlh.status = 4
-            AND tl.id_karyawan IS NOT NULL
-            AND {overdue_aging_month_diff} >= 1
-            AND {loan_conditions_tl}
-            """.format(
-                overdue_aging_month_diff=_OVERDUE_AGING_MONTH_DIFF_INSTALLMENT,
-                loan_conditions_tl=loan_conditions_tl,
-            )
-
-        params = {}
-
-        use_td_loan = loan_type not in ("extradana", "aku_cicil", "installment")
-
-        if id_karyawan_filter:
-            if use_td_loan:
-                overdue_query += " AND l.id_karyawan = :id_karyawan"
-            else:
-                overdue_query += " AND tl.id_karyawan = :id_karyawan"
-            params['id_karyawan'] = id_karyawan_filter
-
-        company_filter = COMPANY_FILTER
-        overdue_query += f" AND emp.keterangan IN {company_filter}"
-
-        if employer_filter and employer_filter in ALLOWED_COMPANIES:
-            overdue_query += " AND emp.keterangan = :employer"
-            params['employer'] = employer_filter
-
-        if sourced_to_filter:
-            overdue_query += " AND src.keterangan = :sourced_to"
-            params['sourced_to'] = sourced_to_filter
-
-        if project_filter:
-            overdue_query += " AND prj.keterangan = :project"
-            params['project'] = project_filter
-
-        overdue_query = _apply_project_management_filters(overdue_query, params, client_segment_filter, product_type_filter, db=db)
-
-        if loan_status_filter is not None:
-            if use_td_loan:
-                overdue_query += " AND l.loan_status = :loan_status"
-            else:
-                overdue_query += " AND tlh.status = :loan_status"
-            params['loan_status'] = loan_status_filter
-
-        if start_date and end_date:
-            if use_td_loan:
-                overdue_query += " AND l.repayment_date >= :start_date"
-                overdue_query += " AND l.repayment_date <= :end_date"
-            else:
-                overdue_query += " AND tlh.due_date >= :start_date"
-                overdue_query += " AND tlh.due_date <= :end_date"
-            params["start_date"] = start_date
-            params["end_date"] = end_date
-
-        overdue_query += """
-        GROUP BY tk.id_karyawan, tk.nama, tk.ktp, emp.keterangan, src.keterangan, prj.keterangan, aging_status
-        """
-
-        if aging_status_normalized:
-            overdue_query += " HAVING aging_status = :aging_status"
-            params['aging_status'] = aging_status_normalized
-
-        overdue_query += " ORDER BY total_amount_owed DESC"
-
-        result = db.execute(text(overdue_query), params)
-        records = result.fetchall()
-
-        overdue_list = []
-        for record in records:
-            if record[0] is None:
-                continue
-
-            days_overdue = 0
-            if record[7] is not None:
-                from datetime import datetime, date
-                try:
-                    repayment_date = record[7]
-                    if isinstance(repayment_date, str):
-                        repayment_date = datetime.strptime(repayment_date, '%Y-%m-%d').date()
-                    elif hasattr(repayment_date, 'date'):
-                        repayment_date = repayment_date.date()
-                    today = date.today()
-                    days_overdue = (today - repayment_date).days
-                except Exception:
-                    days_overdue = 0
-
-            overdue_list.append({
-                "id_karyawan": record[0],
-                "ktp": record[1],
-                "name": record[2],
-                "company": record[3],
-                "sourced_to": record[4],
-                "project": record[5],
-                "total_amount_owed": record[6] if record[6] is not None else 0,
-                "repayment_date": str(record[7]) if record[7] else None,
-                "days_overdue": days_overdue,
-                "admin_fee": record[8] if record[8] is not None else 0,
-                "total_payment": record[9] if record[9] is not None else 0,
-                "aging_status": record[10],
-            })
-
-        return overdue_list
-    except Exception as e:
-        import traceback
-        traceback.print_exc()
-        return []
-
-
-_OVERDUE_AGING_BUCKETS = ("OD1", "OD2", "WRITE_OFF")
-
-
-def get_karyawan_overdue_aging_totals(db: Session,
-                                      employer_filter: str = None, sourced_to_filter: str = None,
-                                      project_filter: str = None, client_segment_filter: str = None, product_type_filter: str = None, loan_status_filter: int = None,
-                                      id_karyawan_filter: int = None, start_date: str = None, end_date: str = None, loan_type: str = "loan") -> dict:
-    """Sum get_karyawan_overdue_aging_summary's per-karyawan-per-bucket rows into a
-    per-bucket total (total_loan_principal/total_admin_fee/total_expected_repayment) for
-    each of OD1/OD2/WRITE_OFF. Reuses that function's rows rather than a second SQL query,
-    so it inherits the same filters/company-restriction/loan_type="all" merge behavior
-    exactly. Every bucket is always present in the result, zeroed if it has no rows."""
-    totals = {
-        bucket: {"total_loan_principal": 0, "total_admin_fee": 0, "total_expected_repayment": 0}
-        for bucket in _OVERDUE_AGING_BUCKETS
-    }
-
-    try:
-        rows = get_karyawan_overdue_aging_summary(
-            db,
-            employer_filter=employer_filter,
-            sourced_to_filter=sourced_to_filter,
-            project_filter=project_filter,
-            client_segment_filter=client_segment_filter,
-            product_type_filter=product_type_filter,
-            loan_status_filter=loan_status_filter,
-            id_karyawan_filter=id_karyawan_filter,
-            start_date=start_date,
-            end_date=end_date,
-            loan_type=loan_type,
-        )
-
-        for row in rows:
-            bucket = totals.get(row.get("aging_status"))
-            if bucket is None:
-                continue
-            bucket["total_loan_principal"] += row.get("total_amount_owed", 0) or 0
-            bucket["total_admin_fee"] += row.get("admin_fee", 0) or 0
-            bucket["total_expected_repayment"] += row.get("total_payment", 0) or 0
-
-        return totals
-    except Exception as e:
-        import traceback
-        traceback.print_exc()
-        return totals
 
 
 def get_loan_purpose_summary(db: Session,
@@ -5847,6 +5471,16 @@ def get_repayment_risk_summary(db: Session,
       metrics) are unrecovered-vs-disbursement ratios, matched to /loan/coverage-
       utilization's total_disbursed_amount rather than to total_expected_repayment — see
       get_total_disbursed_amount and _recalculate_repayment_risk_derivatives.
+    - total_loan_principal_collected_od1/_od2 and total_admin_fee_collected_od1/_od2 are a
+      partial breakdown of total_loan_principal_collected/total_admin_fee_collected by how
+      late the payment landed relative to its due date (see _COLLECTED_OD1_LUMP_PREDICATE/
+      _COLLECTED_OD2_LUMP_PREDICATE and their _INSTALLMENT counterparts): OD1 = paid exactly
+      1 calendar month after the due month, OD2 = exactly 2. On-time payments (paid on/
+      before the due date) are deliberately not broken out into their own field, and 3+
+      months late is already Bad Debt Recovery (excluded from total_loan_principal_collected/
+      total_admin_fee_collected entirely, per the bullet above) — so OD1 + OD2 do NOT sum
+      back to total_loan_principal_collected/total_admin_fee_collected; there is always a
+      remaining on-time slice not represented by either OD1 or OD2.
     """
 
     try:
@@ -5950,6 +5584,10 @@ def get_repayment_risk_summary(db: Session,
             SELECT
                 SUM(CASE WHEN tlh.status = 2 AND NOT ({bad_debt}) THEN ROUND(l.total_loan / l.duration, 0) ELSE 0 END) as total_loan_principal_collected,
                 SUM(CASE WHEN tlh.status = 2 AND NOT ({bad_debt}) THEN ROUND(l.admin_fee / l.duration, 0) ELSE 0 END) as total_admin_fee_collected,
+                SUM(CASE WHEN tlh.status = 2 AND {od1} THEN ROUND(l.total_loan / l.duration, 0) ELSE 0 END) as total_loan_principal_collected_od1,
+                SUM(CASE WHEN tlh.status = 2 AND {od2} THEN ROUND(l.total_loan / l.duration, 0) ELSE 0 END) as total_loan_principal_collected_od2,
+                SUM(CASE WHEN tlh.status = 2 AND {od1} THEN ROUND(l.admin_fee / l.duration, 0) ELSE 0 END) as total_admin_fee_collected_od1,
+                SUM(CASE WHEN tlh.status = 2 AND {od2} THEN ROUND(l.admin_fee / l.duration, 0) ELSE 0 END) as total_admin_fee_collected_od2,
                 SUM(CASE WHEN tlh.status = 4 THEN ROUND(l.total_loan / l.duration, 0) ELSE 0 END) as total_unrecovered_loan_principal,
                 SUM(CASE WHEN tlh.status = 4 THEN ROUND(l.admin_fee / l.duration, 0) ELSE 0 END) as total_unrecovered_admin_fee,
                 SUM(ROUND(l.total_loan / l.duration, 0)) as total_expected_loan_principal,
@@ -5965,6 +5603,8 @@ def get_repayment_risk_summary(db: Session,
                 gmc_joins=_LOAN_GMC_JOINS,
                 loan_conditions_tl=loan_conditions_tl,
                 bad_debt=_BAD_DEBT_INSTALLMENT_PREDICATE,
+                od1=_COLLECTED_OD1_INSTALLMENT_PREDICATE,
+                od2=_COLLECTED_OD2_INSTALLMENT_PREDICATE,
             )
 
             params: dict = {}
@@ -5992,16 +5632,24 @@ def get_repayment_risk_summary(db: Session,
             record = db.execute(text(risk_query), params).fetchone()
             total_loan_principal_collected = record[0] if record and record[0] is not None else 0
             total_admin_fee_collected = record[1] if record and record[1] is not None else 0
-            total_unrecovered_loan_principal = record[2] if record and record[2] is not None else 0
-            total_unrecovered_admin_fee = record[3] if record and record[3] is not None else 0
-            total_expected_loan_principal = record[4] if record and record[4] is not None else 0
-            total_expected_admin_fee = record[5] if record and record[5] is not None else 0
+            total_loan_principal_collected_od1 = record[2] if record and record[2] is not None else 0
+            total_loan_principal_collected_od2 = record[3] if record and record[3] is not None else 0
+            total_admin_fee_collected_od1 = record[4] if record and record[4] is not None else 0
+            total_admin_fee_collected_od2 = record[5] if record and record[5] is not None else 0
+            total_unrecovered_loan_principal = record[6] if record and record[6] is not None else 0
+            total_unrecovered_admin_fee = record[7] if record and record[7] is not None else 0
+            total_expected_loan_principal = record[8] if record and record[8] is not None else 0
+            total_expected_admin_fee = record[9] if record and record[9] is not None else 0
         else:
             # kasbon / loan: single td_loan aggregate for principal/admin-fee collected.
             risk_query = """
             SELECT
                 SUM(CASE WHEN l.loan_status = 2 AND NOT ({bad_debt}) THEN l.total_loan ELSE 0 END) as total_loan_principal_collected,
                 SUM(CASE WHEN l.loan_status = 2 AND NOT ({bad_debt}) THEN l.admin_fee ELSE 0 END) as total_admin_fee_collected,
+                SUM(CASE WHEN l.loan_status = 2 AND {od1} THEN l.total_loan ELSE 0 END) as total_loan_principal_collected_od1,
+                SUM(CASE WHEN l.loan_status = 2 AND {od2} THEN l.total_loan ELSE 0 END) as total_loan_principal_collected_od2,
+                SUM(CASE WHEN l.loan_status = 2 AND {od1} THEN l.admin_fee ELSE 0 END) as total_admin_fee_collected_od1,
+                SUM(CASE WHEN l.loan_status = 2 AND {od2} THEN l.admin_fee ELSE 0 END) as total_admin_fee_collected_od2,
                 SUM(CASE WHEN l.loan_status IN (4) THEN l.total_loan ELSE 0 END) as total_unrecovered_loan_principal,
                 SUM(CASE WHEN l.loan_status IN (4) THEN l.admin_fee ELSE 0 END) as total_unrecovered_admin_fee,
                 SUM(l.total_loan) as total_expected_loan_principal,
@@ -6014,6 +5662,8 @@ def get_repayment_risk_summary(db: Session,
                 gmc_joins=_LOAN_GMC_JOINS,
                 loan_conditions=loan_conditions,
                 bad_debt=_BAD_DEBT_LUMP_PREDICATE,
+                od1=_COLLECTED_OD1_LUMP_PREDICATE,
+                od2=_COLLECTED_OD2_LUMP_PREDICATE,
             )
 
             params: dict = {}
@@ -6041,10 +5691,14 @@ def get_repayment_risk_summary(db: Session,
             record = db.execute(text(risk_query), params).fetchone()
             total_loan_principal_collected = record[0] if record and record[0] is not None else 0
             total_admin_fee_collected = record[1] if record and record[1] is not None else 0
-            total_unrecovered_loan_principal = record[2] if record and record[2] is not None else 0
-            total_unrecovered_admin_fee = record[3] if record and record[3] is not None else 0
-            total_expected_loan_principal = record[4] if record and record[4] is not None else 0
-            total_expected_admin_fee = record[5] if record and record[5] is not None else 0
+            total_loan_principal_collected_od1 = record[2] if record and record[2] is not None else 0
+            total_loan_principal_collected_od2 = record[3] if record and record[3] is not None else 0
+            total_admin_fee_collected_od1 = record[4] if record and record[4] is not None else 0
+            total_admin_fee_collected_od2 = record[5] if record and record[5] is not None else 0
+            total_unrecovered_loan_principal = record[6] if record and record[6] is not None else 0
+            total_unrecovered_admin_fee = record[7] if record and record[7] is not None else 0
+            total_expected_loan_principal = record[8] if record and record[8] is not None else 0
+            total_expected_admin_fee = record[9] if record and record[9] is not None else 0
 
         # total_collected_repayment now shares total_loan_principal_collected/total_
         # admin_fee_collected's reporting-date + bad-debt-exclusion basis (per explicit
@@ -6098,6 +5752,10 @@ def get_repayment_risk_summary(db: Session,
             "total_collected_repayment": total_collected_repayment,
             "total_loan_principal_collected": total_loan_principal_collected,
             "total_admin_fee_collected": total_admin_fee_collected,
+            "total_loan_principal_collected_od1": total_loan_principal_collected_od1,
+            "total_loan_principal_collected_od2": total_loan_principal_collected_od2,
+            "total_admin_fee_collected_od1": total_admin_fee_collected_od1,
+            "total_admin_fee_collected_od2": total_admin_fee_collected_od2,
             "total_unrecovered_repayment": total_unrecovered_repayment,
             "total_unrecovered_loan_principal": total_unrecovered_loan_principal,
             "total_unrecovered_admin_fee": total_unrecovered_admin_fee,
@@ -6116,6 +5774,10 @@ def get_repayment_risk_summary(db: Session,
             "total_collected_repayment": 0,
             "total_loan_principal_collected": 0,
             "total_admin_fee_collected": 0,
+            "total_loan_principal_collected_od1": 0,
+            "total_loan_principal_collected_od2": 0,
+            "total_admin_fee_collected_od1": 0,
+            "total_admin_fee_collected_od2": 0,
             "total_unrecovered_repayment": 0,
             "total_unrecovered_loan_principal": 0,
             "total_unrecovered_admin_fee": 0,
@@ -6155,6 +5817,13 @@ def get_repayment_risk_monthly_summary(db: Session,
     reporting-month bucketing and bad-debt exclusion (per explicit user decision — see
     get_repayment_risk_summary's docstring for the expected/collected+unrecovered+
     outstanding divergence this causes for months with early payments).
+
+    total_loan_principal_collected_od1/_od2 and total_admin_fee_collected_od1/_od2 per
+    month: same OD1 (paid exactly 1 calendar month late)/OD2 (exactly 2) breakdown as
+    get_repayment_risk_summary, keyed to the same reporting month as their parent
+    total_loan_principal_collected/total_admin_fee_collected fields — see that function's
+    docstring for the full semantics (on-time payments not broken out; 3+ months late is
+    Bad Debt Recovery, not represented here).
     """
 
     try:
@@ -6276,6 +5945,10 @@ def get_repayment_risk_monthly_summary(db: Session,
                 DATE_FORMAT({reporting_date}, '%M %Y') as month_year,
                 SUM(CASE WHEN tlh.status = 2 AND NOT ({bad_debt}) THEN ROUND(l.total_loan / l.duration, 0) ELSE 0 END) as total_loan_principal_collected,
                 SUM(CASE WHEN tlh.status = 2 AND NOT ({bad_debt}) THEN ROUND(l.admin_fee / l.duration, 0) ELSE 0 END) as total_admin_fee_collected,
+                SUM(CASE WHEN tlh.status = 2 AND {od1} THEN ROUND(l.total_loan / l.duration, 0) ELSE 0 END) as total_loan_principal_collected_od1,
+                SUM(CASE WHEN tlh.status = 2 AND {od2} THEN ROUND(l.total_loan / l.duration, 0) ELSE 0 END) as total_loan_principal_collected_od2,
+                SUM(CASE WHEN tlh.status = 2 AND {od1} THEN ROUND(l.admin_fee / l.duration, 0) ELSE 0 END) as total_admin_fee_collected_od1,
+                SUM(CASE WHEN tlh.status = 2 AND {od2} THEN ROUND(l.admin_fee / l.duration, 0) ELSE 0 END) as total_admin_fee_collected_od2,
                 SUM(CASE WHEN tlh.status = 4 THEN ROUND(l.total_loan / l.duration, 0) ELSE 0 END) as total_unrecovered_loan_principal,
                 SUM(CASE WHEN tlh.status = 4 THEN ROUND(l.admin_fee / l.duration, 0) ELSE 0 END) as total_unrecovered_admin_fee,
                 SUM(ROUND(l.total_loan / l.duration, 0)) as total_expected_loan_principal,
@@ -6291,6 +5964,8 @@ def get_repayment_risk_monthly_summary(db: Session,
                 gmc_joins=_LOAN_GMC_JOINS,
                 loan_conditions_tl=loan_conditions_tl,
                 bad_debt=_BAD_DEBT_INSTALLMENT_PREDICATE,
+                od1=_COLLECTED_OD1_INSTALLMENT_PREDICATE,
+                od2=_COLLECTED_OD2_INSTALLMENT_PREDICATE,
             )
         else:
             reporting_date = _REPORTING_DATE_LUMP
@@ -6300,6 +5975,10 @@ def get_repayment_risk_monthly_summary(db: Session,
                 DATE_FORMAT({reporting_date}, '%M %Y') as month_year,
                 SUM(CASE WHEN l.loan_status = 2 AND NOT ({bad_debt}) THEN l.total_loan ELSE 0 END) as total_loan_principal_collected,
                 SUM(CASE WHEN l.loan_status = 2 AND NOT ({bad_debt}) THEN l.admin_fee ELSE 0 END) as total_admin_fee_collected,
+                SUM(CASE WHEN l.loan_status = 2 AND {od1} THEN l.total_loan ELSE 0 END) as total_loan_principal_collected_od1,
+                SUM(CASE WHEN l.loan_status = 2 AND {od2} THEN l.total_loan ELSE 0 END) as total_loan_principal_collected_od2,
+                SUM(CASE WHEN l.loan_status = 2 AND {od1} THEN l.admin_fee ELSE 0 END) as total_admin_fee_collected_od1,
+                SUM(CASE WHEN l.loan_status = 2 AND {od2} THEN l.admin_fee ELSE 0 END) as total_admin_fee_collected_od2,
                 SUM(CASE WHEN l.loan_status = 4 THEN l.total_loan ELSE 0 END) as total_unrecovered_loan_principal,
                 SUM(CASE WHEN l.loan_status = 4 THEN l.admin_fee ELSE 0 END) as total_unrecovered_admin_fee,
                 SUM(l.total_loan) as total_expected_loan_principal,
@@ -6313,6 +5992,8 @@ def get_repayment_risk_monthly_summary(db: Session,
                 gmc_joins=_LOAN_GMC_JOINS,
                 loan_conditions=loan_conditions,
                 bad_debt=_BAD_DEBT_LUMP_PREDICATE,
+                od1=_COLLECTED_OD1_LUMP_PREDICATE,
+                od2=_COLLECTED_OD2_LUMP_PREDICATE,
             )
 
         params: dict = {}
@@ -6397,10 +6078,14 @@ def get_repayment_risk_monthly_summary(db: Session,
             principal_by_month[month_year] = {
                 "total_loan_principal_collected": record[1] if record[1] is not None else 0,
                 "total_admin_fee_collected": record[2] if record[2] is not None else 0,
-                "total_unrecovered_loan_principal": record[3] if record[3] is not None else 0,
-                "total_unrecovered_admin_fee": record[4] if record[4] is not None else 0,
-                "total_expected_loan_principal": record[5] if record[5] is not None else 0,
-                "total_expected_admin_fee": record[6] if record[6] is not None else 0,
+                "total_loan_principal_collected_od1": record[3] if record[3] is not None else 0,
+                "total_loan_principal_collected_od2": record[4] if record[4] is not None else 0,
+                "total_admin_fee_collected_od1": record[5] if record[5] is not None else 0,
+                "total_admin_fee_collected_od2": record[6] if record[6] is not None else 0,
+                "total_unrecovered_loan_principal": record[7] if record[7] is not None else 0,
+                "total_unrecovered_admin_fee": record[8] if record[8] is not None else 0,
+                "total_expected_loan_principal": record[9] if record[9] is not None else 0,
+                "total_expected_admin_fee": record[10] if record[10] is not None else 0,
             }
 
         # total_expected_repayment (expected_monthly, keyed by due month) and the

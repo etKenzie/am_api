@@ -754,58 +754,6 @@ async def get_karyawan_overdue(
         }
 
 
-@router.get("/karyawan-overdue-aging-summary", response_model=schemas.KaryawanOverdueAgingSummaryResponse)
-async def get_karyawan_overdue_aging_summary(
-    employer: str = None,
-    sourced_to: str = None,
-    project: str = None,
-    client_segment: str = None,
-    product_type: str = None,
-    loan_status: int = None,
-    id_karyawan: int = None,
-    start_date: str = None,
-    end_date: str = None,
-    loan_type: str = "loan",
-    db: Session = Depends(get_db)
-):
-    """Get total loan principal (pokok), admin fee, and expected repayment (pokok+admin)
-    per overdue aging bucket (OD1/OD2/WRITE_OFF). Use loan_type=all to combine kasbon,
-    extradana, and aku_cicil. Every bucket is always present in the response, zeroed if it
-    has no matching rows."""
-
-    try:
-        summary = crud.get_karyawan_overdue_aging_totals(
-            db,
-            employer_filter=employer,
-            sourced_to_filter=sourced_to,
-            project_filter=project,
-            client_segment_filter=client_segment,
-            product_type_filter=product_type,
-            loan_status_filter=loan_status,
-            id_karyawan_filter=id_karyawan,
-            start_date=start_date,
-            end_date=end_date,
-            loan_type=loan_type
-        )
-
-        # Return structured response
-        return {
-            "status": "success",
-            "summary": summary
-        }
-    except Exception as e:
-        # Return error response with status
-        return {
-            "status": "error",
-            "message": str(e),
-            "summary": {
-                "OD1": {"total_loan_principal": 0, "total_admin_fee": 0, "total_expected_repayment": 0},
-                "OD2": {"total_loan_principal": 0, "total_admin_fee": 0, "total_expected_repayment": 0},
-                "WRITE_OFF": {"total_loan_principal": 0, "total_admin_fee": 0, "total_expected_repayment": 0}
-            }
-        }
-
-
 @router.get("/repayment-risk")
 async def get_repayment_risk(
     start_date: str = None,
@@ -837,7 +785,12 @@ async def get_repayment_risk(
     admin_fee = total_unrecovered_repayment / (total_disbursed_amount +
     total_admin_fee_disbursed), where total_admin_fee_disbursed sums td_loan.admin_fee over
     the same disbursed cohort. Defaults to loan_type=all (kasbon + extradana + aku_cicil
-    combined); pass loan_type=loan/extradana/aku_cicil to scope to a single product."""
+    combined); pass loan_type=loan/extradana/aku_cicil to scope to a single product.
+    total_loan_principal_collected_od1/_od2 and total_admin_fee_collected_od1/_od2 are a
+    partial breakdown of total_loan_principal_collected/total_admin_fee_collected by how
+    many calendar months late the payment was (OD1 = 1 month late, OD2 = 2 months late);
+    on-time payments aren't broken out and 3+ months late is Bad Debt Recovery, so OD1+OD2
+    do not sum back to the parent totals."""
 
     try:
         repayment_risk_summary = crud.get_repayment_risk_summary(
@@ -866,9 +819,13 @@ async def get_repayment_risk(
             "total_outstanding_repayment": repayment_risk_summary["total_outstanding_repayment"],
             "outstanding_rate": repayment_risk_summary["outstanding_rate"],
             "total_loan_principal_collected": repayment_risk_summary["total_loan_principal_collected"],
+            "total_loan_principal_collected_od1": repayment_risk_summary["total_loan_principal_collected_od1"],
+            "total_loan_principal_collected_od2": repayment_risk_summary["total_loan_principal_collected_od2"],
             "total_unrecovered_loan_principal": repayment_risk_summary["total_unrecovered_loan_principal"],
             "principal_collection_rate": repayment_risk_summary["principal_collection_rate"],
             "total_admin_fee_collected": repayment_risk_summary["total_admin_fee_collected"],
+            "total_admin_fee_collected_od1": repayment_risk_summary["total_admin_fee_collected_od1"],
+            "total_admin_fee_collected_od2": repayment_risk_summary["total_admin_fee_collected_od2"],
             "total_unrecovered_admin_fee": repayment_risk_summary["total_unrecovered_admin_fee"],
             "admin_fee_collection_rate": repayment_risk_summary["admin_fee_collection_rate"],
             "total_disbursed_amount": repayment_risk_summary["total_disbursed_amount"],
@@ -890,9 +847,13 @@ async def get_repayment_risk(
             "total_outstanding_repayment": 0,
             "outstanding_rate": 0,
             "total_loan_principal_collected": 0,
+            "total_loan_principal_collected_od1": 0,
+            "total_loan_principal_collected_od2": 0,
             "total_unrecovered_loan_principal": 0,
             "principal_collection_rate": 0,
             "total_admin_fee_collected": 0,
+            "total_admin_fee_collected_od1": 0,
+            "total_admin_fee_collected_od2": 0,
             "total_unrecovered_admin_fee": 0,
             "admin_fee_collection_rate": 0,
             "total_disbursed_amount": 0,
