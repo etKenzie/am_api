@@ -803,6 +803,58 @@ async def get_karyawan_overdue_aging(
         }
 
 
+@router.get("/karyawan-overdue-aging-summary", response_model=schemas.KaryawanOverdueAgingSummaryResponse)
+async def get_karyawan_overdue_aging_summary(
+    employer: str = None,
+    sourced_to: str = None,
+    project: str = None,
+    client_segment: str = None,
+    product_type: str = None,
+    loan_status: int = None,
+    id_karyawan: int = None,
+    start_date: str = None,
+    end_date: str = None,
+    loan_type: str = "loan",
+    db: Session = Depends(get_db)
+):
+    """Get total loan principal (pokok), admin fee, and expected repayment (pokok+admin)
+    per overdue aging bucket (OD1/OD2/WRITE_OFF). Use loan_type=all to combine kasbon,
+    extradana, and aku_cicil. Every bucket is always present in the response, zeroed if it
+    has no matching rows."""
+
+    try:
+        summary = crud.get_karyawan_overdue_aging_totals(
+            db,
+            employer_filter=employer,
+            sourced_to_filter=sourced_to,
+            project_filter=project,
+            client_segment_filter=client_segment,
+            product_type_filter=product_type,
+            loan_status_filter=loan_status,
+            id_karyawan_filter=id_karyawan,
+            start_date=start_date,
+            end_date=end_date,
+            loan_type=loan_type
+        )
+
+        # Return structured response
+        return {
+            "status": "success",
+            "summary": summary
+        }
+    except Exception as e:
+        # Return error response with status
+        return {
+            "status": "error",
+            "message": str(e),
+            "summary": {
+                "OD1": {"total_loan_principal": 0, "total_admin_fee": 0, "total_expected_repayment": 0},
+                "OD2": {"total_loan_principal": 0, "total_admin_fee": 0, "total_expected_repayment": 0},
+                "WRITE_OFF": {"total_loan_principal": 0, "total_admin_fee": 0, "total_expected_repayment": 0}
+            }
+        }
+
+
 @router.get("/repayment-risk")
 async def get_repayment_risk(
     start_date: str = None,

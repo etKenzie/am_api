@@ -5100,6 +5100,53 @@ def get_karyawan_overdue_aging_summary(db: Session,
         return []
 
 
+_OVERDUE_AGING_BUCKETS = ("OD1", "OD2", "WRITE_OFF")
+
+
+def get_karyawan_overdue_aging_totals(db: Session,
+                                      employer_filter: str = None, sourced_to_filter: str = None,
+                                      project_filter: str = None, client_segment_filter: str = None, product_type_filter: str = None, loan_status_filter: int = None,
+                                      id_karyawan_filter: int = None, start_date: str = None, end_date: str = None, loan_type: str = "loan") -> dict:
+    """Sum get_karyawan_overdue_aging_summary's per-karyawan-per-bucket rows into a
+    per-bucket total (total_loan_principal/total_admin_fee/total_expected_repayment) for
+    each of OD1/OD2/WRITE_OFF. Reuses that function's rows rather than a second SQL query,
+    so it inherits the same filters/company-restriction/loan_type="all" merge behavior
+    exactly. Every bucket is always present in the result, zeroed if it has no rows."""
+    totals = {
+        bucket: {"total_loan_principal": 0, "total_admin_fee": 0, "total_expected_repayment": 0}
+        for bucket in _OVERDUE_AGING_BUCKETS
+    }
+
+    try:
+        rows = get_karyawan_overdue_aging_summary(
+            db,
+            employer_filter=employer_filter,
+            sourced_to_filter=sourced_to_filter,
+            project_filter=project_filter,
+            client_segment_filter=client_segment_filter,
+            product_type_filter=product_type_filter,
+            loan_status_filter=loan_status_filter,
+            id_karyawan_filter=id_karyawan_filter,
+            start_date=start_date,
+            end_date=end_date,
+            loan_type=loan_type,
+        )
+
+        for row in rows:
+            bucket = totals.get(row.get("aging_status"))
+            if bucket is None:
+                continue
+            bucket["total_loan_principal"] += row.get("total_amount_owed", 0) or 0
+            bucket["total_admin_fee"] += row.get("admin_fee", 0) or 0
+            bucket["total_expected_repayment"] += row.get("total_payment", 0) or 0
+
+        return totals
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return totals
+
+
 def get_loan_purpose_summary(db: Session,
                             employer_filter: str = None, sourced_to_filter: str = None,
                             project_filter: str = None, client_segment_filter: str = None, product_type_filter: str = None, loan_status_filter: int = None,

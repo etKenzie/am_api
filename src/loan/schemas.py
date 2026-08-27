@@ -1,5 +1,5 @@
 from pydantic import BaseModel
-from typing import List, Optional
+from typing import Dict, List, Optional
 
 
 class TdKaryawanEnhancedResponse(BaseModel):
@@ -288,6 +288,25 @@ class KaryawanOverdueAgingListResponse(BaseModel):
     status: str
     count: int
     results: List[KaryawanOverdueAgingResponse]
+    message: Optional[str] = None
+
+    class Config:
+        from_attributes = True
+
+
+class KaryawanOverdueAgingBucketTotals(BaseModel):
+    """Total pokok (principal), admin fee, and pokok+admin for one aging bucket."""
+    total_loan_principal: int
+    total_admin_fee: int
+    total_expected_repayment: int
+
+    class Config:
+        from_attributes = True
+
+
+class KaryawanOverdueAgingSummaryResponse(BaseModel):
+    status: str
+    summary: Dict[str, KaryawanOverdueAgingBucketTotals] = {}
     message: Optional[str] = None
 
     class Config:
