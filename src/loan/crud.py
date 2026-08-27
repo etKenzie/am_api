@@ -42,6 +42,30 @@ _BAD_DEBT_INSTALLMENT_PREDICATE = (
     "AND PERIOD_DIFF(DATE_FORMAT(tlh.payment_date, '%Y%m'), DATE_FORMAT(tlh.due_date, '%Y%m')) >= 3"
 )
 
+# OD1/OD2 breakdown of already-collected (status/loan_status = 2) repayments: same
+# calendar-month-late measurement as the bad-debt predicates above (payment_date vs
+# due_date, PERIOD_DIFF on YYYYMM), but for the 1- and 2-month-late slices that still count
+# as ordinary Repayment (M+3+ is Bad Debt Recovery, handled separately above). On-time
+# payments (paid on/before the due date) are intentionally not broken out here — only the
+# OD1/OD2 slices of total_loan_principal_collected/total_admin_fee_collected are exposed,
+# per explicit request; they are not required to sum back to those totals.
+_COLLECTED_OD1_LUMP_PREDICATE = (
+    "l.payment_date IS NOT NULL AND l.payment_date != '0000-00-00' "
+    "AND PERIOD_DIFF(DATE_FORMAT(l.payment_date, '%Y%m'), DATE_FORMAT(l.repayment_date, '%Y%m')) = 1"
+)
+_COLLECTED_OD2_LUMP_PREDICATE = (
+    "l.payment_date IS NOT NULL AND l.payment_date != '0000-00-00' "
+    "AND PERIOD_DIFF(DATE_FORMAT(l.payment_date, '%Y%m'), DATE_FORMAT(l.repayment_date, '%Y%m')) = 2"
+)
+_COLLECTED_OD1_INSTALLMENT_PREDICATE = (
+    "tlh.payment_date IS NOT NULL AND tlh.payment_date != '0000-00-00' "
+    "AND PERIOD_DIFF(DATE_FORMAT(tlh.payment_date, '%Y%m'), DATE_FORMAT(tlh.due_date, '%Y%m')) = 1"
+)
+_COLLECTED_OD2_INSTALLMENT_PREDICATE = (
+    "tlh.payment_date IS NOT NULL AND tlh.payment_date != '0000-00-00' "
+    "AND PERIOD_DIFF(DATE_FORMAT(tlh.payment_date, '%Y%m'), DATE_FORMAT(tlh.due_date, '%Y%m')) = 2"
+)
+
 # repayment-risk reporting-month attribution: each repayment is counted in exactly one
 # month — the payment month if paid on/before its due date, or once it has crossed into
 # Bad Debt Recovery (see the predicates above); otherwise the original due month. A row
@@ -2647,6 +2671,10 @@ def _merge_repayment_risk_summaries(summaries: List[dict]) -> dict:
         "total_expected_repayment",
         "total_loan_principal_collected",
         "total_admin_fee_collected",
+        "total_loan_principal_collected_od1",
+        "total_loan_principal_collected_od2",
+        "total_admin_fee_collected_od1",
+        "total_admin_fee_collected_od2",
         "total_unrecovered_repayment",
         "total_unrecovered_loan_principal",
         "total_unrecovered_admin_fee",
@@ -2662,6 +2690,10 @@ _MONTHLY_REPAYMENT_RISK_SUM_KEYS = (
     "total_expected_repayment",
     "total_loan_principal_collected",
     "total_admin_fee_collected",
+    "total_loan_principal_collected_od1",
+    "total_loan_principal_collected_od2",
+    "total_admin_fee_collected_od1",
+    "total_admin_fee_collected_od2",
     "total_unrecovered_loan_principal",
     "total_unrecovered_admin_fee",
     "total_expected_loan_principal",
@@ -2698,8 +2730,8 @@ def _merge_karyawan_overdue_lists(lists: List[list]) -> list:
             existing["total_amount_owed"] = (existing.get("total_amount_owed", 0) or 0) + (
                 row.get("total_amount_owed", 0) or 0
             )
-            existing["total_admin_fee"] = (existing.get("total_admin_fee", 0) or 0) + (
-                row.get("total_admin_fee", 0) or 0
+            existing["admin_fee"] = (existing.get("admin_fee", 0) or 0) + (
+                row.get("admin_fee", 0) or 0
             )
             existing["total_payment"] = (existing.get("total_payment", 0) or 0) + (
                 row.get("total_payment", 0) or 0
@@ -2709,7 +2741,11 @@ def _merge_karyawan_overdue_lists(lists: List[list]) -> list:
             if new_repayment and (not existing_repayment or new_repayment > existing_repayment):
                 existing["repayment_date"] = new_repayment
             if (row.get("days_overdue", 0) or 0) > (existing.get("days_overdue", 0) or 0):
+                # aging_status travels with days_overdue (not with repayment_date above) so
+                # the two stay derived from the same underlying branch's row — the more
+                # overdue of the two branches wins both fields together.
                 existing["days_overdue"] = row.get("days_overdue", 0)
+                existing["aging_status"] = row.get("aging_status")
 
     return sorted(
         merged.values(),
@@ -4705,6 +4741,7 @@ def get_karyawan_overdue_summary(db: Session,
                 continue
 
             days_overdue = 0
+            aging_status = None
             if record[7] is not None:
                 from datetime import datetime, date
                 try:
@@ -4715,8 +4752,22 @@ def get_karyawan_overdue_summary(db: Session,
                         repayment_date = repayment_date.date()
                     today = date.today()
                     days_overdue = (today - repayment_date).days
+                    # Full calendar months between today and repayment_date (this row's
+                    # MAX due date across the karyawan's overdue loans/installments), no
+                    # day-of-month cutoff: due month + 1 = OD1, +2 = OD2, +3 or more =
+                    # WRITE_OFF. Derived from the same repayment_date already returned by
+                    # this row rather than a second query, since a karyawan's overdue loans
+                    # are already blended into one row by this point (see GROUP BY above).
+                    month_diff = (today.year - repayment_date.year) * 12 + (today.month - repayment_date.month)
+                    if month_diff == 1:
+                        aging_status = "OD1"
+                    elif month_diff == 2:
+                        aging_status = "OD2"
+                    elif month_diff >= 3:
+                        aging_status = "WRITE_OFF"
                 except Exception:
                     days_overdue = 0
+                    aging_status = None
 
             overdue_list.append({
                 "id_karyawan": record[0],
@@ -4729,7 +4780,8 @@ def get_karyawan_overdue_summary(db: Session,
                 "repayment_date": str(record[7]) if record[7] else None,
                 "days_overdue": days_overdue,
                 "admin_fee": record[8] if record[8] is not None else 0,
-                "total_payment": record[9] if record[9] is not None else 0
+                "total_payment": record[9] if record[9] is not None else 0,
+                "aging_status": aging_status
             })
 
         return overdue_list
@@ -5419,6 +5471,16 @@ def get_repayment_risk_summary(db: Session,
       metrics) are unrecovered-vs-disbursement ratios, matched to /loan/coverage-
       utilization's total_disbursed_amount rather than to total_expected_repayment — see
       get_total_disbursed_amount and _recalculate_repayment_risk_derivatives.
+    - total_loan_principal_collected_od1/_od2 and total_admin_fee_collected_od1/_od2 are a
+      partial breakdown of total_loan_principal_collected/total_admin_fee_collected by how
+      late the payment landed relative to its due date (see _COLLECTED_OD1_LUMP_PREDICATE/
+      _COLLECTED_OD2_LUMP_PREDICATE and their _INSTALLMENT counterparts): OD1 = paid exactly
+      1 calendar month after the due month, OD2 = exactly 2. On-time payments (paid on/
+      before the due date) are deliberately not broken out into their own field, and 3+
+      months late is already Bad Debt Recovery (excluded from total_loan_principal_collected/
+      total_admin_fee_collected entirely, per the bullet above) — so OD1 + OD2 do NOT sum
+      back to total_loan_principal_collected/total_admin_fee_collected; there is always a
+      remaining on-time slice not represented by either OD1 or OD2.
     """
 
     try:
@@ -5522,6 +5584,10 @@ def get_repayment_risk_summary(db: Session,
             SELECT
                 SUM(CASE WHEN tlh.status = 2 AND NOT ({bad_debt}) THEN ROUND(l.total_loan / l.duration, 0) ELSE 0 END) as total_loan_principal_collected,
                 SUM(CASE WHEN tlh.status = 2 AND NOT ({bad_debt}) THEN ROUND(l.admin_fee / l.duration, 0) ELSE 0 END) as total_admin_fee_collected,
+                SUM(CASE WHEN tlh.status = 2 AND {od1} THEN ROUND(l.total_loan / l.duration, 0) ELSE 0 END) as total_loan_principal_collected_od1,
+                SUM(CASE WHEN tlh.status = 2 AND {od2} THEN ROUND(l.total_loan / l.duration, 0) ELSE 0 END) as total_loan_principal_collected_od2,
+                SUM(CASE WHEN tlh.status = 2 AND {od1} THEN ROUND(l.admin_fee / l.duration, 0) ELSE 0 END) as total_admin_fee_collected_od1,
+                SUM(CASE WHEN tlh.status = 2 AND {od2} THEN ROUND(l.admin_fee / l.duration, 0) ELSE 0 END) as total_admin_fee_collected_od2,
                 SUM(CASE WHEN tlh.status = 4 THEN ROUND(l.total_loan / l.duration, 0) ELSE 0 END) as total_unrecovered_loan_principal,
                 SUM(CASE WHEN tlh.status = 4 THEN ROUND(l.admin_fee / l.duration, 0) ELSE 0 END) as total_unrecovered_admin_fee,
                 SUM(ROUND(l.total_loan / l.duration, 0)) as total_expected_loan_principal,
@@ -5537,6 +5603,8 @@ def get_repayment_risk_summary(db: Session,
                 gmc_joins=_LOAN_GMC_JOINS,
                 loan_conditions_tl=loan_conditions_tl,
                 bad_debt=_BAD_DEBT_INSTALLMENT_PREDICATE,
+                od1=_COLLECTED_OD1_INSTALLMENT_PREDICATE,
+                od2=_COLLECTED_OD2_INSTALLMENT_PREDICATE,
             )
 
             params: dict = {}
@@ -5564,16 +5632,24 @@ def get_repayment_risk_summary(db: Session,
             record = db.execute(text(risk_query), params).fetchone()
             total_loan_principal_collected = record[0] if record and record[0] is not None else 0
             total_admin_fee_collected = record[1] if record and record[1] is not None else 0
-            total_unrecovered_loan_principal = record[2] if record and record[2] is not None else 0
-            total_unrecovered_admin_fee = record[3] if record and record[3] is not None else 0
-            total_expected_loan_principal = record[4] if record and record[4] is not None else 0
-            total_expected_admin_fee = record[5] if record and record[5] is not None else 0
+            total_loan_principal_collected_od1 = record[2] if record and record[2] is not None else 0
+            total_loan_principal_collected_od2 = record[3] if record and record[3] is not None else 0
+            total_admin_fee_collected_od1 = record[4] if record and record[4] is not None else 0
+            total_admin_fee_collected_od2 = record[5] if record and record[5] is not None else 0
+            total_unrecovered_loan_principal = record[6] if record and record[6] is not None else 0
+            total_unrecovered_admin_fee = record[7] if record and record[7] is not None else 0
+            total_expected_loan_principal = record[8] if record and record[8] is not None else 0
+            total_expected_admin_fee = record[9] if record and record[9] is not None else 0
         else:
             # kasbon / loan: single td_loan aggregate for principal/admin-fee collected.
             risk_query = """
             SELECT
                 SUM(CASE WHEN l.loan_status = 2 AND NOT ({bad_debt}) THEN l.total_loan ELSE 0 END) as total_loan_principal_collected,
                 SUM(CASE WHEN l.loan_status = 2 AND NOT ({bad_debt}) THEN l.admin_fee ELSE 0 END) as total_admin_fee_collected,
+                SUM(CASE WHEN l.loan_status = 2 AND {od1} THEN l.total_loan ELSE 0 END) as total_loan_principal_collected_od1,
+                SUM(CASE WHEN l.loan_status = 2 AND {od2} THEN l.total_loan ELSE 0 END) as total_loan_principal_collected_od2,
+                SUM(CASE WHEN l.loan_status = 2 AND {od1} THEN l.admin_fee ELSE 0 END) as total_admin_fee_collected_od1,
+                SUM(CASE WHEN l.loan_status = 2 AND {od2} THEN l.admin_fee ELSE 0 END) as total_admin_fee_collected_od2,
                 SUM(CASE WHEN l.loan_status IN (4) THEN l.total_loan ELSE 0 END) as total_unrecovered_loan_principal,
                 SUM(CASE WHEN l.loan_status IN (4) THEN l.admin_fee ELSE 0 END) as total_unrecovered_admin_fee,
                 SUM(l.total_loan) as total_expected_loan_principal,
@@ -5586,6 +5662,8 @@ def get_repayment_risk_summary(db: Session,
                 gmc_joins=_LOAN_GMC_JOINS,
                 loan_conditions=loan_conditions,
                 bad_debt=_BAD_DEBT_LUMP_PREDICATE,
+                od1=_COLLECTED_OD1_LUMP_PREDICATE,
+                od2=_COLLECTED_OD2_LUMP_PREDICATE,
             )
 
             params: dict = {}
@@ -5613,10 +5691,14 @@ def get_repayment_risk_summary(db: Session,
             record = db.execute(text(risk_query), params).fetchone()
             total_loan_principal_collected = record[0] if record and record[0] is not None else 0
             total_admin_fee_collected = record[1] if record and record[1] is not None else 0
-            total_unrecovered_loan_principal = record[2] if record and record[2] is not None else 0
-            total_unrecovered_admin_fee = record[3] if record and record[3] is not None else 0
-            total_expected_loan_principal = record[4] if record and record[4] is not None else 0
-            total_expected_admin_fee = record[5] if record and record[5] is not None else 0
+            total_loan_principal_collected_od1 = record[2] if record and record[2] is not None else 0
+            total_loan_principal_collected_od2 = record[3] if record and record[3] is not None else 0
+            total_admin_fee_collected_od1 = record[4] if record and record[4] is not None else 0
+            total_admin_fee_collected_od2 = record[5] if record and record[5] is not None else 0
+            total_unrecovered_loan_principal = record[6] if record and record[6] is not None else 0
+            total_unrecovered_admin_fee = record[7] if record and record[7] is not None else 0
+            total_expected_loan_principal = record[8] if record and record[8] is not None else 0
+            total_expected_admin_fee = record[9] if record and record[9] is not None else 0
 
         # total_collected_repayment now shares total_loan_principal_collected/total_
         # admin_fee_collected's reporting-date + bad-debt-exclusion basis (per explicit
@@ -5670,6 +5752,10 @@ def get_repayment_risk_summary(db: Session,
             "total_collected_repayment": total_collected_repayment,
             "total_loan_principal_collected": total_loan_principal_collected,
             "total_admin_fee_collected": total_admin_fee_collected,
+            "total_loan_principal_collected_od1": total_loan_principal_collected_od1,
+            "total_loan_principal_collected_od2": total_loan_principal_collected_od2,
+            "total_admin_fee_collected_od1": total_admin_fee_collected_od1,
+            "total_admin_fee_collected_od2": total_admin_fee_collected_od2,
             "total_unrecovered_repayment": total_unrecovered_repayment,
             "total_unrecovered_loan_principal": total_unrecovered_loan_principal,
             "total_unrecovered_admin_fee": total_unrecovered_admin_fee,
@@ -5688,6 +5774,10 @@ def get_repayment_risk_summary(db: Session,
             "total_collected_repayment": 0,
             "total_loan_principal_collected": 0,
             "total_admin_fee_collected": 0,
+            "total_loan_principal_collected_od1": 0,
+            "total_loan_principal_collected_od2": 0,
+            "total_admin_fee_collected_od1": 0,
+            "total_admin_fee_collected_od2": 0,
             "total_unrecovered_repayment": 0,
             "total_unrecovered_loan_principal": 0,
             "total_unrecovered_admin_fee": 0,
@@ -5727,6 +5817,13 @@ def get_repayment_risk_monthly_summary(db: Session,
     reporting-month bucketing and bad-debt exclusion (per explicit user decision — see
     get_repayment_risk_summary's docstring for the expected/collected+unrecovered+
     outstanding divergence this causes for months with early payments).
+
+    total_loan_principal_collected_od1/_od2 and total_admin_fee_collected_od1/_od2 per
+    month: same OD1 (paid exactly 1 calendar month late)/OD2 (exactly 2) breakdown as
+    get_repayment_risk_summary, keyed to the same reporting month as their parent
+    total_loan_principal_collected/total_admin_fee_collected fields — see that function's
+    docstring for the full semantics (on-time payments not broken out; 3+ months late is
+    Bad Debt Recovery, not represented here).
     """
 
     try:
@@ -5848,6 +5945,10 @@ def get_repayment_risk_monthly_summary(db: Session,
                 DATE_FORMAT({reporting_date}, '%M %Y') as month_year,
                 SUM(CASE WHEN tlh.status = 2 AND NOT ({bad_debt}) THEN ROUND(l.total_loan / l.duration, 0) ELSE 0 END) as total_loan_principal_collected,
                 SUM(CASE WHEN tlh.status = 2 AND NOT ({bad_debt}) THEN ROUND(l.admin_fee / l.duration, 0) ELSE 0 END) as total_admin_fee_collected,
+                SUM(CASE WHEN tlh.status = 2 AND {od1} THEN ROUND(l.total_loan / l.duration, 0) ELSE 0 END) as total_loan_principal_collected_od1,
+                SUM(CASE WHEN tlh.status = 2 AND {od2} THEN ROUND(l.total_loan / l.duration, 0) ELSE 0 END) as total_loan_principal_collected_od2,
+                SUM(CASE WHEN tlh.status = 2 AND {od1} THEN ROUND(l.admin_fee / l.duration, 0) ELSE 0 END) as total_admin_fee_collected_od1,
+                SUM(CASE WHEN tlh.status = 2 AND {od2} THEN ROUND(l.admin_fee / l.duration, 0) ELSE 0 END) as total_admin_fee_collected_od2,
                 SUM(CASE WHEN tlh.status = 4 THEN ROUND(l.total_loan / l.duration, 0) ELSE 0 END) as total_unrecovered_loan_principal,
                 SUM(CASE WHEN tlh.status = 4 THEN ROUND(l.admin_fee / l.duration, 0) ELSE 0 END) as total_unrecovered_admin_fee,
                 SUM(ROUND(l.total_loan / l.duration, 0)) as total_expected_loan_principal,
@@ -5863,6 +5964,8 @@ def get_repayment_risk_monthly_summary(db: Session,
                 gmc_joins=_LOAN_GMC_JOINS,
                 loan_conditions_tl=loan_conditions_tl,
                 bad_debt=_BAD_DEBT_INSTALLMENT_PREDICATE,
+                od1=_COLLECTED_OD1_INSTALLMENT_PREDICATE,
+                od2=_COLLECTED_OD2_INSTALLMENT_PREDICATE,
             )
         else:
             reporting_date = _REPORTING_DATE_LUMP
@@ -5872,6 +5975,10 @@ def get_repayment_risk_monthly_summary(db: Session,
                 DATE_FORMAT({reporting_date}, '%M %Y') as month_year,
                 SUM(CASE WHEN l.loan_status = 2 AND NOT ({bad_debt}) THEN l.total_loan ELSE 0 END) as total_loan_principal_collected,
                 SUM(CASE WHEN l.loan_status = 2 AND NOT ({bad_debt}) THEN l.admin_fee ELSE 0 END) as total_admin_fee_collected,
+                SUM(CASE WHEN l.loan_status = 2 AND {od1} THEN l.total_loan ELSE 0 END) as total_loan_principal_collected_od1,
+                SUM(CASE WHEN l.loan_status = 2 AND {od2} THEN l.total_loan ELSE 0 END) as total_loan_principal_collected_od2,
+                SUM(CASE WHEN l.loan_status = 2 AND {od1} THEN l.admin_fee ELSE 0 END) as total_admin_fee_collected_od1,
+                SUM(CASE WHEN l.loan_status = 2 AND {od2} THEN l.admin_fee ELSE 0 END) as total_admin_fee_collected_od2,
                 SUM(CASE WHEN l.loan_status = 4 THEN l.total_loan ELSE 0 END) as total_unrecovered_loan_principal,
                 SUM(CASE WHEN l.loan_status = 4 THEN l.admin_fee ELSE 0 END) as total_unrecovered_admin_fee,
                 SUM(l.total_loan) as total_expected_loan_principal,
@@ -5885,6 +5992,8 @@ def get_repayment_risk_monthly_summary(db: Session,
                 gmc_joins=_LOAN_GMC_JOINS,
                 loan_conditions=loan_conditions,
                 bad_debt=_BAD_DEBT_LUMP_PREDICATE,
+                od1=_COLLECTED_OD1_LUMP_PREDICATE,
+                od2=_COLLECTED_OD2_LUMP_PREDICATE,
             )
 
         params: dict = {}
@@ -5969,10 +6078,14 @@ def get_repayment_risk_monthly_summary(db: Session,
             principal_by_month[month_year] = {
                 "total_loan_principal_collected": record[1] if record[1] is not None else 0,
                 "total_admin_fee_collected": record[2] if record[2] is not None else 0,
-                "total_unrecovered_loan_principal": record[3] if record[3] is not None else 0,
-                "total_unrecovered_admin_fee": record[4] if record[4] is not None else 0,
-                "total_expected_loan_principal": record[5] if record[5] is not None else 0,
-                "total_expected_admin_fee": record[6] if record[6] is not None else 0,
+                "total_loan_principal_collected_od1": record[3] if record[3] is not None else 0,
+                "total_loan_principal_collected_od2": record[4] if record[4] is not None else 0,
+                "total_admin_fee_collected_od1": record[5] if record[5] is not None else 0,
+                "total_admin_fee_collected_od2": record[6] if record[6] is not None else 0,
+                "total_unrecovered_loan_principal": record[7] if record[7] is not None else 0,
+                "total_unrecovered_admin_fee": record[8] if record[8] is not None else 0,
+                "total_expected_loan_principal": record[9] if record[9] is not None else 0,
+                "total_expected_admin_fee": record[10] if record[10] is not None else 0,
             }
 
         # total_expected_repayment (expected_monthly, keyed by due month) and the

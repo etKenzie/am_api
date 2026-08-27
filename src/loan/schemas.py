@@ -250,6 +250,7 @@ class KaryawanOverdueResponse(BaseModel):
     days_overdue: int
     admin_fee: int
     total_payment: int
+    aging_status: Optional[str] = None
 
     class Config:
         from_attributes = True
@@ -337,9 +338,13 @@ class RepaymentRiskResponse(BaseModel):
     total_outstanding_repayment: int
     outstanding_rate: float
     total_loan_principal_collected: int
+    total_loan_principal_collected_od1: int
+    total_loan_principal_collected_od2: int
     total_unrecovered_loan_principal: int
     principal_collection_rate: float
     total_admin_fee_collected: int
+    total_admin_fee_collected_od1: int
+    total_admin_fee_collected_od2: int
     total_unrecovered_admin_fee: int
     admin_fee_collection_rate: float
     total_disbursed_amount: int
@@ -358,6 +363,10 @@ class MonthlyRepaymentRiskData(BaseModel):
     repayment_recovery_rate: float
     total_expected_repayment: int
     total_loan_principal_collected: int
+    total_loan_principal_collected_od1: int
+    total_loan_principal_collected_od2: int
+    total_admin_fee_collected_od1: int
+    total_admin_fee_collected_od2: int
     total_unrecovered_repayment: int
     total_outstanding_repayment: int
     outstanding_rate: float
