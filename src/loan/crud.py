@@ -2743,8 +2743,8 @@ def _merge_karyawan_overdue_lists(lists: List[list]) -> list:
             existing["total_amount_owed"] = (existing.get("total_amount_owed", 0) or 0) + (
                 row.get("total_amount_owed", 0) or 0
             )
-            existing["total_admin_fee"] = (existing.get("total_admin_fee", 0) or 0) + (
-                row.get("total_admin_fee", 0) or 0
+            existing["admin_fee"] = (existing.get("admin_fee", 0) or 0) + (
+                row.get("admin_fee", 0) or 0
             )
             existing["total_payment"] = (existing.get("total_payment", 0) or 0) + (
                 row.get("total_payment", 0) or 0
@@ -2754,7 +2754,11 @@ def _merge_karyawan_overdue_lists(lists: List[list]) -> list:
             if new_repayment and (not existing_repayment or new_repayment > existing_repayment):
                 existing["repayment_date"] = new_repayment
             if (row.get("days_overdue", 0) or 0) > (existing.get("days_overdue", 0) or 0):
+                # aging_status travels with days_overdue (not with repayment_date above) so
+                # the two stay derived from the same underlying branch's row — the more
+                # overdue of the two branches wins both fields together.
                 existing["days_overdue"] = row.get("days_overdue", 0)
+                existing["aging_status"] = row.get("aging_status")
 
     return sorted(
         merged.values(),
@@ -4788,6 +4792,7 @@ def get_karyawan_overdue_summary(db: Session,
                 continue
 
             days_overdue = 0
+            aging_status = None
             if record[7] is not None:
                 from datetime import datetime, date
                 try:
@@ -4798,8 +4803,23 @@ def get_karyawan_overdue_summary(db: Session,
                         repayment_date = repayment_date.date()
                     today = date.today()
                     days_overdue = (today - repayment_date).days
+                    # Full calendar months between today and repayment_date (this row's
+                    # MAX due date across the karyawan's overdue loans/installments), no
+                    # day-of-month cutoff — same OD1/OD2/WRITE_OFF rule as
+                    # get_karyawan_overdue_aging_summary's SQL CASE, but derived here from
+                    # the same repayment_date already returned by this row rather than a
+                    # second query, since a karyawan's overdue loans are already blended
+                    # into one row by this point (see GROUP BY above).
+                    month_diff = (today.year - repayment_date.year) * 12 + (today.month - repayment_date.month)
+                    if month_diff == 1:
+                        aging_status = "OD1"
+                    elif month_diff == 2:
+                        aging_status = "OD2"
+                    elif month_diff >= 3:
+                        aging_status = "WRITE_OFF"
                 except Exception:
                     days_overdue = 0
+                    aging_status = None
 
             overdue_list.append({
                 "id_karyawan": record[0],
@@ -4812,7 +4832,8 @@ def get_karyawan_overdue_summary(db: Session,
                 "repayment_date": str(record[7]) if record[7] else None,
                 "days_overdue": days_overdue,
                 "admin_fee": record[8] if record[8] is not None else 0,
-                "total_payment": record[9] if record[9] is not None else 0
+                "total_payment": record[9] if record[9] is not None else 0,
+                "aging_status": aging_status
             })
 
         return overdue_list
