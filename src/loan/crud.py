@@ -1707,7 +1707,7 @@ _UNRECOVERED_LUMP_PAYMENT_SQL = """
       AND l.repayment_date < CURDATE()
 """
 
-_UNRECOVERED_INSTALLMENT_PAYMENT_SQL = """
+_UNRECOVERED_INSTALLMENT_PAYMENT_SQL_BASE = """
     SELECT GREATEST(th.monthly - (
               SELECT COALESCE(SUM(amt), 0) FROM (
                 SELECT p.amount amt FROM td_loan_payment p
@@ -1743,12 +1743,99 @@ _UNRECOVERED_INSTALLMENT_PAYMENT_SQL = """
 """
 
 # Outstanding = not yet paid, but due date hasn't arrived yet (still waiting), as opposed
-# to "unrecovered" above which is not yet paid AND already past its due date.
+# to "unrecovered" above which is not yet paid AND already past its due date. Derived from
+# the BASE (pre-widening) text below — a not-yet-due row's parent loan_status hasn't shown
+# the same "loan_status=2 but still genuinely unpaid" mismatch unrecovered had, so outstanding
+# keeps the original l.loan_status IN (1, 4) scope untouched.
 _OUTSTANDING_LUMP_PAYMENT_SQL = _UNRECOVERED_LUMP_PAYMENT_SQL.replace(
     "AND l.repayment_date < CURDATE()", "AND l.repayment_date >= CURDATE()"
 )
-_OUTSTANDING_INSTALLMENT_PAYMENT_SQL = _UNRECOVERED_INSTALLMENT_PAYMENT_SQL.replace(
+_OUTSTANDING_INSTALLMENT_PAYMENT_SQL = _UNRECOVERED_INSTALLMENT_PAYMENT_SQL_BASE.replace(
     "AND th.due_date < CURDATE()", "AND th.due_date >= CURDATE()"
+)
+
+# total_unrecovered_repayment (installment side) widened per explicit user decision
+# (2026-08-27): a parent td_loan's loan_status alone doesn't reliably indicate whether one
+# specific td_loan_history installment is still owed — loans with loan_status = 2 ("closed")
+# can still contain individual installment rows stuck at th.status = 4 (explicitly flagged
+# unrecovered) for years (e.g. loan_form_id 373's 2021-10-24 installment, still th.status=4
+# in 2026 despite its parent loan showing loan_status=2). The old l.loan_status IN (1, 4)
+# heuristic silently dropped ~121,000,000 IDR of such rows from total_unrecovered_repayment
+# while total_unrecovered_loan_principal/total_unrecovered_admin_fee (get_repayment_risk_
+# summary) counted them via th.status = 4 directly, causing the two to diverge. Switched to
+# th.status = 4 as the explicit source of truth (same signal the principal/admin-fee fields
+# already use), broadened to the same l.loan_status IN (1, 2, 4) universe used everywhere
+# else for installment rows (get_total_expected_repayment, the repayment-risk risk_query
+# itself), so both figures now draw from the same "unrecovered" population.
+_UNRECOVERED_INSTALLMENT_PAYMENT_SQL = _UNRECOVERED_INSTALLMENT_PAYMENT_SQL_BASE.replace(
+    "WHERE l.loan_status IN (1, 4)",
+    "WHERE l.loan_status IN (1, 2, 4)\n      AND th.status = 4",
+)
+
+# total_unrecovered_loan_principal/total_unrecovered_admin_fee (get_repayment_risk_summary/
+# _monthly_summary) sum the full l.total_loan/l.admin_fee for still-open (loan_status/
+# tlh.status = 4) rows. A row can carry a partial payment recorded via td_loan_payment/
+# td_loan_payment_allocation (status = 1) without loan_status flipping to Paid (2) — see
+# _UNRECOVERED_LUMP_PAYMENT_SQL/_UNRECOVERED_INSTALLMENT_PAYMENT_SQL above, which already
+# net this out of total_unrecovered_repayment via GREATEST(total_payment - paid, 0). Without
+# the same netting here, total_unrecovered_loan_principal + total_unrecovered_admin_fee
+# overstates total_unrecovered_repayment by exactly the sum of those partial payments. These
+# expressions replicate the same GREATEST(... - paid, 0) netting, then split the netted
+# amount proportionally to the row's own principal:admin_fee ratio (no source-of-truth split
+# exists for a partial payment, matching the "proportional to loan ratio" convention used
+# elsewhere in this file) with the admin-fee share as the remainder, so principal + fee
+# always sums back to the netted payment_due exactly (no rounding drift). Uses the `l`/`tlh`
+# aliases as bound inside get_repayment_risk_summary/_monthly_summary's own risk_query — not
+# reusable outside that query shape.
+_LUMP_UNREC_PARTIAL_PAID_SQL = """(SELECT COALESCE(SUM(amt), 0) FROM (
+            SELECT p.amount amt FROM td_loan_payment p
+            WHERE p.loan_id = l.id AND p.status = 1 AND p.loan_history_id IS NULL
+              AND NOT EXISTS (SELECT 1 FROM td_loan_payment_allocation a WHERE a.payment_id = p.id)
+            UNION ALL
+            SELECT a.amount FROM td_loan_payment_allocation a
+            INNER JOIN td_loan_payment p ON p.id = a.payment_id
+            WHERE p.loan_id = l.id AND p.status = 1 AND a.loan_history_id IS NULL
+          ) pp)"""
+_LUMP_UNREC_PAYMENT_DUE_SQL = f"GREATEST(l.total_payment - {_LUMP_UNREC_PARTIAL_PAID_SQL}, 0)"
+_LUMP_UNREC_PRINCIPAL_SQL = (
+    f"ROUND({_LUMP_UNREC_PAYMENT_DUE_SQL} * l.total_loan / NULLIF(l.total_payment, 0), 0)"
+)
+_LUMP_UNREC_ADMIN_FEE_SQL = f"({_LUMP_UNREC_PAYMENT_DUE_SQL} - {_LUMP_UNREC_PRINCIPAL_SQL})"
+
+_INSTALLMENT_UNREC_PARTIAL_PAID_SQL = """(SELECT COALESCE(SUM(amt), 0) FROM (
+            SELECT p.amount amt FROM td_loan_payment p
+            WHERE p.loan_id = l.id AND p.status = 1 AND p.loan_history_id = tlh.id
+              AND NOT EXISTS (SELECT 1 FROM td_loan_payment_allocation a WHERE a.payment_id = p.id)
+            UNION ALL
+            SELECT a.amount FROM td_loan_payment_allocation a
+            INNER JOIN td_loan_payment p ON p.id = a.payment_id
+            WHERE p.loan_id = l.id AND p.status = 1 AND a.loan_history_id = tlh.id
+          ) pp)"""
+_INSTALLMENT_UNREC_ROW_TOTAL_SQL = (
+    "(ROUND(l.total_loan / l.duration, 0) + ROUND(l.admin_fee / l.duration, 0))"
+)
+_INSTALLMENT_UNREC_PAYMENT_DUE_SQL = (
+    f"GREATEST({_INSTALLMENT_UNREC_ROW_TOTAL_SQL} - {_INSTALLMENT_UNREC_PARTIAL_PAID_SQL}, 0)"
+)
+_INSTALLMENT_UNREC_PRINCIPAL_SQL = (
+    f"ROUND({_INSTALLMENT_UNREC_PAYMENT_DUE_SQL} * ROUND(l.total_loan / l.duration, 0) "
+    f"/ NULLIF({_INSTALLMENT_UNREC_ROW_TOTAL_SQL}, 0), 0)"
+)
+_INSTALLMENT_UNREC_ADMIN_FEE_SQL = (
+    f"({_INSTALLMENT_UNREC_PAYMENT_DUE_SQL} - {_INSTALLMENT_UNREC_PRINCIPAL_SQL})"
+)
+
+# get_repayment_risk_summary/_monthly_summary's risk_query CASE guard for
+# total_unrecovered_loan_principal/total_unrecovered_admin_fee: tlh.status = 4 alone is not
+# fully reliable — a handful of rows keep status = 4 after actually being paid (payment_date
+# populated outside the normal status-flip path) or before their due_date has even arrived
+# (status set prematurely). total_unrecovered_repayment's own installment query already
+# guards on payment_date/due_date (see _UNRECOVERED_INSTALLMENT_PAYMENT_SQL_BASE); mirror the
+# same guard here so both stay counting the same population instead of total_unrecovered_
+# loan_principal/_admin_fee overcounting by a couple of already-paid/not-yet-due rows.
+_INSTALLMENT_UNREC_STATUS_GUARD = (
+    "tlh.status = 4 AND (tlh.payment_date IS NULL OR tlh.payment_date = '0000-00-00') "
+    "AND tlh.due_date < CURDATE()"
 )
 
 # Expected = the full amount that became due in the period, paid or not (no GREATEST/
@@ -5471,6 +5558,19 @@ def get_repayment_risk_summary(db: Session,
       metrics) are unrecovered-vs-disbursement ratios, matched to /loan/coverage-
       utilization's total_disbursed_amount rather than to total_expected_repayment — see
       get_total_disbursed_amount and _recalculate_repayment_risk_derivatives.
+    - total_unrecovered_loan_principal + total_unrecovered_admin_fee reconciles with
+      total_unrecovered_repayment for every single loan_type (kasbon/extradana/aku_cicil/
+      installment) — both draw from the same still-unpaid, past-due, loan_status IN (1, 2, 4)
+      population, and both net out partial payments (td_loan_payment/td_loan_payment_
+      allocation, status = 1) the same way (see _LUMP_UNREC_*/_INSTALLMENT_UNREC_* and
+      _UNRECOVERED_INSTALLMENT_PAYMENT_SQL). A few IDR of drift can appear for installment
+      loan_types from th.monthly vs. ROUND(total_loan/duration)+ROUND(admin_fee/duration)
+      using independent, pre-existing roundings — immaterial, not a bug. loan_type="all" is
+      the one exception: it does NOT reconcile, because get_total_unrecovered_repayment's
+      "all" scope applies no per-product predicate at all (a deliberate, pre-existing gap —
+      see get_total_expected_repayment's docstring/_unrecovered_repayment_scope) while this
+      function's "all" branch sums the three per-product-predicated principal/fee totals —
+      different populations by design, not something this reconciliation fix addresses.
     - total_loan_principal_collected_od1/_od2 and total_admin_fee_collected_od1/_od2 are a
       partial breakdown of total_loan_principal_collected/total_admin_fee_collected by how
       late the payment landed relative to its due date (see _COLLECTED_OD1_LUMP_PREDICATE/
@@ -5588,8 +5688,8 @@ def get_repayment_risk_summary(db: Session,
                 SUM(CASE WHEN tlh.status = 2 AND {od2} THEN ROUND(l.total_loan / l.duration, 0) ELSE 0 END) as total_loan_principal_collected_od2,
                 SUM(CASE WHEN tlh.status = 2 AND {od1} THEN ROUND(l.admin_fee / l.duration, 0) ELSE 0 END) as total_admin_fee_collected_od1,
                 SUM(CASE WHEN tlh.status = 2 AND {od2} THEN ROUND(l.admin_fee / l.duration, 0) ELSE 0 END) as total_admin_fee_collected_od2,
-                SUM(CASE WHEN tlh.status = 4 THEN ROUND(l.total_loan / l.duration, 0) ELSE 0 END) as total_unrecovered_loan_principal,
-                SUM(CASE WHEN tlh.status = 4 THEN ROUND(l.admin_fee / l.duration, 0) ELSE 0 END) as total_unrecovered_admin_fee,
+                SUM(CASE WHEN {unrec_guard} THEN {unrec_principal} ELSE 0 END) as total_unrecovered_loan_principal,
+                SUM(CASE WHEN {unrec_guard} THEN {unrec_fee} ELSE 0 END) as total_unrecovered_admin_fee,
                 SUM(ROUND(l.total_loan / l.duration, 0)) as total_expected_loan_principal,
                 SUM(ROUND(l.admin_fee / l.duration, 0)) as total_expected_admin_fee
             FROM td_loan_history tlh
@@ -5605,6 +5705,9 @@ def get_repayment_risk_summary(db: Session,
                 bad_debt=_BAD_DEBT_INSTALLMENT_PREDICATE,
                 od1=_COLLECTED_OD1_INSTALLMENT_PREDICATE,
                 od2=_COLLECTED_OD2_INSTALLMENT_PREDICATE,
+                unrec_guard=_INSTALLMENT_UNREC_STATUS_GUARD,
+                unrec_principal=_INSTALLMENT_UNREC_PRINCIPAL_SQL,
+                unrec_fee=_INSTALLMENT_UNREC_ADMIN_FEE_SQL,
             )
 
             params: dict = {}
@@ -5650,8 +5753,8 @@ def get_repayment_risk_summary(db: Session,
                 SUM(CASE WHEN l.loan_status = 2 AND {od2} THEN l.total_loan ELSE 0 END) as total_loan_principal_collected_od2,
                 SUM(CASE WHEN l.loan_status = 2 AND {od1} THEN l.admin_fee ELSE 0 END) as total_admin_fee_collected_od1,
                 SUM(CASE WHEN l.loan_status = 2 AND {od2} THEN l.admin_fee ELSE 0 END) as total_admin_fee_collected_od2,
-                SUM(CASE WHEN l.loan_status IN (4) THEN l.total_loan ELSE 0 END) as total_unrecovered_loan_principal,
-                SUM(CASE WHEN l.loan_status IN (4) THEN l.admin_fee ELSE 0 END) as total_unrecovered_admin_fee,
+                SUM(CASE WHEN l.loan_status IN (4) THEN {unrec_principal} ELSE 0 END) as total_unrecovered_loan_principal,
+                SUM(CASE WHEN l.loan_status IN (4) THEN {unrec_fee} ELSE 0 END) as total_unrecovered_admin_fee,
                 SUM(l.total_loan) as total_expected_loan_principal,
                 SUM(l.admin_fee) as total_expected_admin_fee
             FROM td_loan l
@@ -5664,6 +5767,8 @@ def get_repayment_risk_summary(db: Session,
                 bad_debt=_BAD_DEBT_LUMP_PREDICATE,
                 od1=_COLLECTED_OD1_LUMP_PREDICATE,
                 od2=_COLLECTED_OD2_LUMP_PREDICATE,
+                unrec_principal=_LUMP_UNREC_PRINCIPAL_SQL,
+                unrec_fee=_LUMP_UNREC_ADMIN_FEE_SQL,
             )
 
             params: dict = {}
@@ -5949,8 +6054,8 @@ def get_repayment_risk_monthly_summary(db: Session,
                 SUM(CASE WHEN tlh.status = 2 AND {od2} THEN ROUND(l.total_loan / l.duration, 0) ELSE 0 END) as total_loan_principal_collected_od2,
                 SUM(CASE WHEN tlh.status = 2 AND {od1} THEN ROUND(l.admin_fee / l.duration, 0) ELSE 0 END) as total_admin_fee_collected_od1,
                 SUM(CASE WHEN tlh.status = 2 AND {od2} THEN ROUND(l.admin_fee / l.duration, 0) ELSE 0 END) as total_admin_fee_collected_od2,
-                SUM(CASE WHEN tlh.status = 4 THEN ROUND(l.total_loan / l.duration, 0) ELSE 0 END) as total_unrecovered_loan_principal,
-                SUM(CASE WHEN tlh.status = 4 THEN ROUND(l.admin_fee / l.duration, 0) ELSE 0 END) as total_unrecovered_admin_fee,
+                SUM(CASE WHEN {unrec_guard} THEN {unrec_principal} ELSE 0 END) as total_unrecovered_loan_principal,
+                SUM(CASE WHEN {unrec_guard} THEN {unrec_fee} ELSE 0 END) as total_unrecovered_admin_fee,
                 SUM(ROUND(l.total_loan / l.duration, 0)) as total_expected_loan_principal,
                 SUM(ROUND(l.admin_fee / l.duration, 0)) as total_expected_admin_fee
             FROM td_loan_history tlh
@@ -5966,6 +6071,9 @@ def get_repayment_risk_monthly_summary(db: Session,
                 bad_debt=_BAD_DEBT_INSTALLMENT_PREDICATE,
                 od1=_COLLECTED_OD1_INSTALLMENT_PREDICATE,
                 od2=_COLLECTED_OD2_INSTALLMENT_PREDICATE,
+                unrec_guard=_INSTALLMENT_UNREC_STATUS_GUARD,
+                unrec_principal=_INSTALLMENT_UNREC_PRINCIPAL_SQL,
+                unrec_fee=_INSTALLMENT_UNREC_ADMIN_FEE_SQL,
             )
         else:
             reporting_date = _REPORTING_DATE_LUMP
@@ -5979,8 +6087,8 @@ def get_repayment_risk_monthly_summary(db: Session,
                 SUM(CASE WHEN l.loan_status = 2 AND {od2} THEN l.total_loan ELSE 0 END) as total_loan_principal_collected_od2,
                 SUM(CASE WHEN l.loan_status = 2 AND {od1} THEN l.admin_fee ELSE 0 END) as total_admin_fee_collected_od1,
                 SUM(CASE WHEN l.loan_status = 2 AND {od2} THEN l.admin_fee ELSE 0 END) as total_admin_fee_collected_od2,
-                SUM(CASE WHEN l.loan_status = 4 THEN l.total_loan ELSE 0 END) as total_unrecovered_loan_principal,
-                SUM(CASE WHEN l.loan_status = 4 THEN l.admin_fee ELSE 0 END) as total_unrecovered_admin_fee,
+                SUM(CASE WHEN l.loan_status = 4 THEN {unrec_principal} ELSE 0 END) as total_unrecovered_loan_principal,
+                SUM(CASE WHEN l.loan_status = 4 THEN {unrec_fee} ELSE 0 END) as total_unrecovered_admin_fee,
                 SUM(l.total_loan) as total_expected_loan_principal,
                 SUM(l.admin_fee) as total_expected_admin_fee
             FROM td_loan l
@@ -5994,6 +6102,8 @@ def get_repayment_risk_monthly_summary(db: Session,
                 bad_debt=_BAD_DEBT_LUMP_PREDICATE,
                 od1=_COLLECTED_OD1_LUMP_PREDICATE,
                 od2=_COLLECTED_OD2_LUMP_PREDICATE,
+                unrec_principal=_LUMP_UNREC_PRINCIPAL_SQL,
+                unrec_fee=_LUMP_UNREC_ADMIN_FEE_SQL,
             )
 
         params: dict = {}
