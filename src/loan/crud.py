@@ -7635,6 +7635,93 @@ def _apply_installment_delinquency_override(
             index_by_key[key] = new_row
 
 
+def _apply_aging_breakdown(
+    db: Session,
+    client_disbursements: list,
+    counts_by_sourced_to: dict,
+    *,
+    loan_type: str,
+    client_segment_filter: str = None,
+    product_type_filter: str = None,
+    start_date: str = None,
+    end_date: str = None,
+) -> None:
+    """Add od1_count/od2_count/write_off_count to each client_summary row, reusing
+    get_karyawan_overdue_summary's per-karyawan aging_status classification (full
+    calendar months elapsed since repayment_date/due_date, as of today) rather than
+    re-deriving the aging cutoffs here. Adds a new client row for any sourced_to/
+    project that only shows up via an overdue karyawan in this period, mirroring
+    _apply_installment_delinquency_override."""
+
+    overdue_rows = get_karyawan_overdue_summary(
+        db,
+        client_segment_filter=client_segment_filter,
+        product_type_filter=product_type_filter,
+        start_date=start_date,
+        end_date=end_date,
+        loan_type=loan_type,
+    )
+
+    aging_by_key = {}
+    for row in overdue_rows:
+        sourced_to = row.get("sourced_to") or "Unknown"
+        project = row.get("project") or "Unknown"
+        key = f"{sourced_to}_{project}"
+        bucket = aging_by_key.setdefault(key, {
+            "sourced_to": sourced_to,
+            "project": project,
+            "od1_count": 0,
+            "od2_count": 0,
+            "write_off_count": 0,
+        })
+        aging_status = row.get("aging_status")
+        if aging_status == "OD1":
+            bucket["od1_count"] += 1
+        elif aging_status == "OD2":
+            bucket["od2_count"] += 1
+        elif aging_status == "WRITE_OFF":
+            bucket["write_off_count"] += 1
+
+    index_by_key = {
+        f"{row['sourced_to']}_{row['project']}": row for row in client_disbursements
+    }
+
+    for key, bucket in aging_by_key.items():
+        existing = index_by_key.get(key)
+        if existing is not None:
+            existing["od1_count"] = bucket["od1_count"]
+            existing["od2_count"] = bucket["od2_count"]
+            existing["write_off_count"] = bucket["write_off_count"]
+        else:
+            employee_data = counts_by_sourced_to.get(bucket["sourced_to"], {"eligible": 0, "active": 0})
+            new_row = {
+                "sourced_to": bucket["sourced_to"],
+                "project": bucket["project"],
+                "total_disbursement": 0,
+                "total_requests": 0,
+                "approved_requests": 0,
+                "delinquent_requests": 0,
+                "eligible_employees": employee_data["eligible"],
+                "active_employees": employee_data["active"],
+                "eligible_rate": (employee_data["eligible"] / employee_data["active"]) if employee_data["active"] > 0 else 0,
+                "penetration_rate": 0,
+                "total_admin_fee_collected": 0,
+                "total_unrecovered_payment": 0,
+                "admin_fee_profit": 0,
+                "delinquency_rate": 0,
+                "od1_count": bucket["od1_count"],
+                "od2_count": bucket["od2_count"],
+                "write_off_count": bucket["write_off_count"],
+            }
+            client_disbursements.append(new_row)
+            index_by_key[key] = new_row
+
+    for row in client_disbursements:
+        row.setdefault("od1_count", 0)
+        row.setdefault("od2_count", 0)
+        row.setdefault("write_off_count", 0)
+
+
 def get_client_summary(db: Session, start_date: str = None, end_date: str = None, loan_type: str = "kasbon",
                        client_segment_filter: str = None, product_type_filter: str = None) -> list:
     """Get comprehensive client summary with disbursement and other metrics"""
@@ -7824,6 +7911,17 @@ def get_client_summary(db: Session, start_date: str = None, end_date: str = None
                 start_date=start_date,
                 end_date=end_date,
             )
+
+        _apply_aging_breakdown(
+            db,
+            client_disbursements,
+            counts_by_sourced_to,
+            loan_type=loan_type,
+            client_segment_filter=client_segment_filter,
+            product_type_filter=product_type_filter,
+            start_date=start_date,
+            end_date=end_date,
+        )
 
         return client_disbursements
 

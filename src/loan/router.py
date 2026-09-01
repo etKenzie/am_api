@@ -70,7 +70,10 @@ async def get_client_summary(
     product_type: str = None,
     db: Session = Depends(get_db)
 ):
-    """Get comprehensive client summary. Use loan_type=all to combine kasbon, extradana, and aku_cicil."""
+    """Get comprehensive client summary. Use loan_type=all to combine kasbon, extradana, and
+    aku_cicil. Each row also includes od1_count/od2_count/write_off_count, an aggregate of
+    per-karyawan aging_status (see /loan/karyawan-overdue) across that client's overdue
+    karyawan."""
     try:
         client_summaries = crud.get_client_summary(
             db,
