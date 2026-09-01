@@ -7646,14 +7646,13 @@ def _apply_aging_breakdown(
     start_date: str = None,
     end_date: str = None,
 ) -> None:
-    """Add od1_count/od2_count/write_off_count and od1_amount/od2_amount/write_off_amount
-    to each client_summary row, reusing get_karyawan_overdue_summary's per-karyawan
-    aging_status classification (full calendar months elapsed since repayment_date/
-    due_date, as of today) rather than re-deriving the aging cutoffs here. The *_amount
-    fields sum total_payment (remaining principal + admin fee still owed) across the
-    karyawan in each bucket. Adds a new client row for any sourced_to/project that only
-    shows up via an overdue karyawan in this period, mirroring
-    _apply_installment_delinquency_override."""
+    """Add od1_amount/od2_amount/write_off_amount to each client_summary row: the
+    remaining total_payment (principal + admin fee still owed), summed per aging
+    bucket across a client's overdue karyawan, reusing get_karyawan_overdue_summary's
+    per-karyawan aging_status classification (full calendar months elapsed since
+    repayment_date/due_date, as of today) rather than re-deriving the aging cutoffs
+    here. Adds a new client row for any sourced_to/project that only shows up via an
+    overdue karyawan in this period, mirroring _apply_installment_delinquency_override."""
 
     overdue_rows = get_karyawan_overdue_summary(
         db,
@@ -7672,9 +7671,6 @@ def _apply_aging_breakdown(
         bucket = aging_by_key.setdefault(key, {
             "sourced_to": sourced_to,
             "project": project,
-            "od1_count": 0,
-            "od2_count": 0,
-            "write_off_count": 0,
             "od1_amount": 0,
             "od2_amount": 0,
             "write_off_amount": 0,
@@ -7682,13 +7678,10 @@ def _apply_aging_breakdown(
         aging_status = row.get("aging_status")
         amount = row.get("total_payment") or 0
         if aging_status == "OD1":
-            bucket["od1_count"] += 1
             bucket["od1_amount"] += amount
         elif aging_status == "OD2":
-            bucket["od2_count"] += 1
             bucket["od2_amount"] += amount
         elif aging_status == "WRITE_OFF":
-            bucket["write_off_count"] += 1
             bucket["write_off_amount"] += amount
 
     index_by_key = {
@@ -7698,9 +7691,6 @@ def _apply_aging_breakdown(
     for key, bucket in aging_by_key.items():
         existing = index_by_key.get(key)
         if existing is not None:
-            existing["od1_count"] = bucket["od1_count"]
-            existing["od2_count"] = bucket["od2_count"]
-            existing["write_off_count"] = bucket["write_off_count"]
             existing["od1_amount"] = bucket["od1_amount"]
             existing["od2_amount"] = bucket["od2_amount"]
             existing["write_off_amount"] = bucket["write_off_amount"]
@@ -7721,9 +7711,6 @@ def _apply_aging_breakdown(
                 "total_unrecovered_payment": 0,
                 "admin_fee_profit": 0,
                 "delinquency_rate": 0,
-                "od1_count": bucket["od1_count"],
-                "od2_count": bucket["od2_count"],
-                "write_off_count": bucket["write_off_count"],
                 "od1_amount": bucket["od1_amount"],
                 "od2_amount": bucket["od2_amount"],
                 "write_off_amount": bucket["write_off_amount"],
@@ -7732,9 +7719,6 @@ def _apply_aging_breakdown(
             index_by_key[key] = new_row
 
     for row in client_disbursements:
-        row.setdefault("od1_count", 0)
-        row.setdefault("od2_count", 0)
-        row.setdefault("write_off_count", 0)
         row.setdefault("od1_amount", 0)
         row.setdefault("od2_amount", 0)
         row.setdefault("write_off_amount", 0)
