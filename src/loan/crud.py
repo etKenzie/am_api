@@ -2143,9 +2143,11 @@ def _build_unrecovered_repayment_parts(
     db: Session = None,
     lump_sql: str = _UNRECOVERED_LUMP_PAYMENT_SQL,
     installment_sql: str = _UNRECOVERED_INSTALLMENT_PAYMENT_SQL,
+    group_by_client: bool = False,
 ) -> list[str]:
     company_filter = COMPANY_FILTER
     parts: list[str] = []
+    client_select = "src.keterangan AS sourced_to, prj.keterangan AS project, " if group_by_client else ""
 
     if include_lump:
         lump_select = (
@@ -2155,9 +2157,11 @@ def _build_unrecovered_repayment_parts(
         )
         lump_query = lump_sql.replace(
             "SELECT GREATEST(",
-            f"SELECT {lump_select}GREATEST(",
+            f"SELECT {client_select}{lump_select}GREATEST(",
             1,
         )
+        if group_by_client:
+            lump_query += " AND src.keterangan IS NOT NULL"
         if group_by_month:
             lump_query += " AND l.repayment_date IS NOT NULL"
         if extra_loan_predicate:
@@ -2193,9 +2197,11 @@ def _build_unrecovered_repayment_parts(
         )
         installment_query = installment_sql.replace(
             "SELECT GREATEST(",
-            f"SELECT {installment_select}GREATEST(",
+            f"SELECT {client_select}{installment_select}GREATEST(",
             1,
         )
+        if group_by_client:
+            installment_query += " AND src.keterangan IS NOT NULL"
         if extra_loan_predicate:
             installment_query += f" AND {extra_loan_predicate}"
         if start_date and end_date:
@@ -2334,6 +2340,60 @@ def get_total_unrecovered_repayment_monthly(
                 continue
             monthly_data[row[0]] = row[1] if row[1] is not None else 0
         return monthly_data
+    except Exception:
+        import traceback
+        traceback.print_exc()
+        return {}
+
+
+def get_total_unrecovered_repayment_by_client(
+    db: Session,
+    *,
+    client_segment_filter: str = None,
+    product_type_filter: str = None,
+    start_date: str = None,
+    end_date: str = None,
+    loan_type: str = "loan",
+) -> dict:
+    """Outstanding payment due (same due-date-based, partial-payment-netted methodology as
+    get_total_unrecovered_repayment) grouped by (sourced_to, project) instead of collapsed
+    to one total. Used by get_client_summary so its admin_fee_profit matches /loan/
+    repayment-risk's admin_fee_profit for the same loan_type/date range."""
+    try:
+        include_lump, include_installment, extra_loan_predicate = _unrecovered_repayment_scope(
+            loan_type, db
+        )
+        params: dict = {}
+        parts = _build_unrecovered_repayment_parts(
+            include_lump=include_lump,
+            include_installment=include_installment,
+            extra_loan_predicate=extra_loan_predicate,
+            group_by_month=False,
+            group_by_client=True,
+            params=params,
+            client_segment_filter=client_segment_filter,
+            product_type_filter=product_type_filter,
+            start_date=start_date,
+            end_date=end_date,
+            db=db,
+        )
+
+        if not parts:
+            return {}
+
+        union_sql = parts[0] if len(parts) == 1 else f"{' UNION ALL '.join(parts)}"
+        query = f"""
+        SELECT sourced_to, project, COALESCE(SUM(payment_due), 0) AS total_unrecovered_repayment
+        FROM ({union_sql}) x
+        GROUP BY sourced_to, project
+        """
+
+        result: dict = {}
+        for row in db.execute(text(query), params).fetchall():
+            sourced_to = row[0] if row[0] else "Unknown"
+            project = row[1] if row[1] else "Unknown"
+            result[(sourced_to, project)] = float(row[2]) if row[2] is not None else 0
+        return result
     except Exception:
         import traceback
         traceback.print_exc()
@@ -5519,6 +5579,121 @@ def get_expected_repayment(db: Session,
         return 0
 
 
+def _get_admin_fee_collected_by_client(
+    db: Session,
+    loan_type: str,
+    *,
+    client_segment_filter: str = None,
+    product_type_filter: str = None,
+    start_date: str = None,
+    end_date: str = None,
+) -> dict:
+    """Admin fee collected, grouped by (sourced_to, project), for exactly one product type
+    ("kasbon"/"extradana"/"aku_cicil" — never "installment"/"all", callers merge those).
+    Mirrors get_repayment_risk_summary's admin_fee_collected branch: reporting-date basis
+    (payment date if paid on/before its due date, else the due date) and excludes rows that
+    crossed into Bad Debt Recovery (paid 3+ calendar months late) — those belong to /loan/
+    bad-debt-recovery only, never both. Used by get_client_summary so its admin_fee_profit
+    matches /loan/repayment-risk's admin_fee_profit for the same loan_type/date range."""
+    params: dict = {}
+    if loan_type == "extradana":
+        loan_conditions_tl = (
+            "l.loan_id IN (SELECT ls.id FROM loan_setting ls WHERE ls.loan_type LIKE 'Extradana%')"
+        )
+    else:
+        loan_conditions_tl = resolve_loan_conditions("aku_cicil", db)
+
+    if loan_type in ("extradana", "aku_cicil"):
+        query = f"""
+        SELECT
+            src.keterangan as sourced_to,
+            prj.keterangan as project,
+            SUM(CASE WHEN tlh.status = 2 AND NOT ({_BAD_DEBT_INSTALLMENT_PREDICATE})
+                THEN ROUND(l.admin_fee / l.duration, 0) ELSE 0 END) as admin_fee_collected
+        FROM td_loan_history tlh
+        INNER JOIN td_loan l ON tlh.loan_form_id = l.id
+        {_LOAN_GMC_JOINS}
+        WHERE tlh.due_date IS NOT NULL
+        AND l.id_karyawan IS NOT NULL
+        AND l.loan_status IN (1, 2, 4)
+        AND {loan_conditions_tl}
+        AND src.keterangan IS NOT NULL
+        AND emp.keterangan IN {COMPANY_FILTER}
+        """
+        date_column = _REPORTING_DATE_INSTALLMENT
+    else:
+        loan_conditions = resolve_loan_conditions("kasbon", db)
+        query = f"""
+        SELECT
+            src.keterangan as sourced_to,
+            prj.keterangan as project,
+            SUM(CASE WHEN l.loan_status = 2 AND NOT ({_BAD_DEBT_LUMP_PREDICATE})
+                THEN l.admin_fee ELSE 0 END) as admin_fee_collected
+        FROM td_loan l
+        {_LOAN_GMC_JOINS}
+        WHERE l.loan_status IN (1, 2, 4)
+        AND {loan_conditions}
+        AND src.keterangan IS NOT NULL
+        AND emp.keterangan IN {COMPANY_FILTER}
+        """
+        date_column = _REPORTING_DATE_LUMP
+
+    query = _apply_project_management_filters(
+        query, params, client_segment_filter, product_type_filter, db=db
+    )
+    if start_date and end_date:
+        query = append_date_filters(
+            query, params, start_date=start_date, end_date=end_date, date_column=date_column
+        )
+    query += " GROUP BY src.keterangan, prj.keterangan"
+
+    result: dict = {}
+    for row in db.execute(text(query), params).fetchall():
+        sourced_to = row[0] if row[0] else "Unknown"
+        project = row[1] if row[1] else "Unknown"
+        result[(sourced_to, project)] = float(row[2]) if row[2] is not None else 0
+    return result
+
+
+def get_admin_fee_collected_by_client(
+    db: Session,
+    loan_type: str,
+    *,
+    client_segment_filter: str = None,
+    product_type_filter: str = None,
+    start_date: str = None,
+    end_date: str = None,
+) -> dict:
+    """Admin fee collected grouped by (sourced_to, project) for any loan_type, merging the
+    per-product totals the same way get_repayment_risk_summary's "all" branch merges
+    _merge_repayment_risk_summaries across ALL_LOAN_TYPES."""
+    try:
+        if is_all_loan_types(loan_type):
+            product_types = ALL_LOAN_TYPES
+        elif loan_type == "installment":
+            product_types = ("extradana", "aku_cicil")
+        elif loan_type in ("loan", "kasbon"):
+            product_types = ("kasbon",)
+        else:
+            product_types = (loan_type,)
+
+        merged: dict = {}
+        for product_type in product_types:
+            for key, value in _get_admin_fee_collected_by_client(
+                db, product_type,
+                client_segment_filter=client_segment_filter,
+                product_type_filter=product_type_filter,
+                start_date=start_date,
+                end_date=end_date,
+            ).items():
+                merged[key] = merged.get(key, 0) + value
+        return merged
+    except Exception:
+        import traceback
+        traceback.print_exc()
+        return {}
+
+
 def get_repayment_risk_summary(db: Session,
                                employer_filter: str = None, sourced_to_filter: str = None,
                                project_filter: str = None, client_segment_filter: str = None, product_type_filter: str = None, loan_status_filter: int = None,
@@ -7724,6 +7899,85 @@ def _apply_aging_breakdown(
         row.setdefault("write_off_amount", 0)
 
 
+def _apply_repayment_risk_admin_fee_profit(
+    db: Session,
+    client_disbursements: list,
+    counts_by_sourced_to: dict,
+    *,
+    loan_type: str,
+    client_segment_filter: str = None,
+    product_type_filter: str = None,
+    start_date: str = None,
+    end_date: str = None,
+) -> None:
+    """Recompute total_admin_fee_collected/total_unrecovered_payment/admin_fee_profit using
+    the same reporting-date/due-date, bad-debt-aware, partial-payment-netted methodology as
+    /loan/repayment-risk's admin_fee_profit (get_repayment_risk_summary /
+    _recalculate_repayment_risk_derivatives), so the two endpoints agree for the same
+    loan_type/date range. Supersedes this function's own proses_date-based total_admin_fee_
+    collected/total_unrecovered_payment set above (and, for extradana/aku_cicil/installment,
+    _apply_installment_delinquency_override's total_unrecovered_payment) — those filtered by
+    disbursement date with no bad-debt exclusion and no partial-payment netting, which is why
+    admin_fee_profit could go far more negative here than /loan/repayment-risk's equivalent
+    figure for the same client."""
+    admin_fee_collected_by_client = get_admin_fee_collected_by_client(
+        db, loan_type,
+        client_segment_filter=client_segment_filter,
+        product_type_filter=product_type_filter,
+        start_date=start_date,
+        end_date=end_date,
+    )
+    unrecovered_repayment_by_client = get_total_unrecovered_repayment_by_client(
+        db,
+        client_segment_filter=client_segment_filter,
+        product_type_filter=product_type_filter,
+        start_date=start_date,
+        end_date=end_date,
+        loan_type=loan_type,
+    )
+
+    for record in client_disbursements:
+        record["total_admin_fee_collected"] = 0
+        record["total_unrecovered_payment"] = 0
+
+    index_by_key = {f"{r['sourced_to']}_{r['project']}": r for r in client_disbursements}
+
+    def _get_or_create(sourced_to: str, project: str) -> dict:
+        key = f"{sourced_to}_{project}"
+        existing = index_by_key.get(key)
+        if existing is not None:
+            return existing
+        employee_data = counts_by_sourced_to.get(sourced_to, {"eligible": 0, "active": 0})
+        new_row = {
+            "sourced_to": sourced_to,
+            "project": project,
+            "total_disbursement": 0,
+            "total_requests": 0,
+            "approved_requests": 0,
+            "delinquent_requests": 0,
+            "eligible_employees": employee_data["eligible"],
+            "active_employees": employee_data["active"],
+            "eligible_rate": (employee_data["eligible"] / employee_data["active"]) if employee_data["active"] > 0 else 0,
+            "penetration_rate": 0,
+            "total_admin_fee_collected": 0,
+            "total_unrecovered_payment": 0,
+            "admin_fee_profit": 0,
+            "delinquency_rate": 0,
+        }
+        client_disbursements.append(new_row)
+        index_by_key[key] = new_row
+        return new_row
+
+    for (sourced_to, project), collected in admin_fee_collected_by_client.items():
+        _get_or_create(sourced_to, project)["total_admin_fee_collected"] = collected
+
+    for (sourced_to, project), unrecovered in unrecovered_repayment_by_client.items():
+        _get_or_create(sourced_to, project)["total_unrecovered_payment"] = unrecovered
+
+    for record in client_disbursements:
+        record["admin_fee_profit"] = record["total_admin_fee_collected"] - record["total_unrecovered_payment"]
+
+
 def get_client_summary(db: Session, start_date: str = None, end_date: str = None, loan_type: str = "kasbon",
                        client_segment_filter: str = None, product_type_filter: str = None) -> list:
     """Get comprehensive client summary with disbursement and other metrics"""
@@ -7915,6 +8169,17 @@ def get_client_summary(db: Session, start_date: str = None, end_date: str = None
             )
 
         _apply_aging_breakdown(
+            db,
+            client_disbursements,
+            counts_by_sourced_to,
+            loan_type=loan_type,
+            client_segment_filter=client_segment_filter,
+            product_type_filter=product_type_filter,
+            start_date=start_date,
+            end_date=end_date,
+        )
+
+        _apply_repayment_risk_admin_fee_profit(
             db,
             client_disbursements,
             counts_by_sourced_to,
