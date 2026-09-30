@@ -17,7 +17,7 @@ router = APIRouter(prefix="/loan", tags=["loan"])
 
 
 @router.get("/karyawan", response_model=schemas.KaryawanEnhancedListResponse)
-async def get_karyawan(
+def get_karyawan(
     id_karyawan: int = None,
     employer: str = None,
     sourced_to: str = None,
@@ -62,7 +62,7 @@ async def get_karyawan(
 
 
 @router.get("/client-summary")
-async def get_client_summary(
+def get_client_summary(
     start_date: str = None,
     end_date: str = None,
     loan_type: str = "loan",
@@ -99,7 +99,7 @@ async def get_client_summary(
 
 
 @router.get("/summary", response_model=schemas.SummaryResponse)
-async def get_summary(
+def get_summary(
     start_date: str = None,
     end_date: str = None,
     id_karyawan: int = None,
@@ -164,7 +164,7 @@ async def get_summary(
 
 
 @router.get("/requests", response_model=schemas.RequestsResponse)
-async def get_requests(
+def get_requests(
     start_date: str = None,
     end_date: str = None,
     id_karyawan: int = None,
@@ -213,7 +213,7 @@ async def get_requests(
 
 
 @router.get("/disbursement", response_model=schemas.DisbursementResponse)
-async def get_disbursement(
+def get_disbursement(
     start_date: str = None,
     end_date: str = None,
     id_karyawan: int = None,
@@ -256,7 +256,7 @@ async def get_disbursement(
 
 
 @router.get("/disbursement-monthly", response_model=schemas.DisbursementMonthlyResponse)
-async def get_disbursement_monthly(
+def get_disbursement_monthly(
     start_date: str,
     end_date: str,
     id_karyawan: int = None,
@@ -298,7 +298,7 @@ async def get_disbursement_monthly(
 
 
 @router.get("/summary-monthly", response_model=schemas.SummaryMonthlyResponse)
-async def get_summary_monthly(
+def get_summary_monthly(
     start_date: str,
     end_date: str,
     id_karyawan: int = None,
@@ -340,7 +340,7 @@ async def get_summary_monthly(
 
 
 @router.get("/loans", response_model=schemas.LoanListResponse)
-async def get_loans(
+def get_loans(
     employer: str = None,
     sourced_to: str = None,
     project: str = None,
@@ -381,7 +381,7 @@ async def get_loans(
 
 
 @router.get("/loan-purpose", response_model=schemas.LoanPurposeSummaryListResponse)
-async def get_loan_purpose_summary(
+def get_loan_purpose_summary(
     loan_type: str = "loan",
     employer: str = None,
     sourced_to: str = None,
@@ -429,7 +429,7 @@ async def get_loan_purpose_summary(
 
 
 @router.get("/applicant-insights", response_model=schemas.LoanApplicantInsightsResponse)
-async def get_loan_applicant_insights(
+def get_loan_applicant_insights(
     loan_type: str = "loan",
     employer: str = None,
     sourced_to: str = None,
@@ -476,7 +476,7 @@ async def get_loan_applicant_insights(
 
 
 @router.get("/filters")
-async def get_available_filters(
+def get_available_filters(
     employer: str = None,
     placement: str = None,
     loan_type: str = "loan",
@@ -505,7 +505,7 @@ async def get_available_filters(
 
 
 @router.get("/loan-fees", response_model=schemas.LoanFeesResponse)
-async def get_loan_fees(
+def get_loan_fees(
     employer: str = None,
     sourced_to: str = None,
     project: str = None,
@@ -559,7 +559,7 @@ async def get_loan_fees(
 
 
 @router.get("/loan-fees-monthly", response_model=schemas.LoanFeesMonthlyResponse)
-async def get_loan_fees_monthly(
+def get_loan_fees_monthly(
     start_date: str,
     end_date: str,
     employer: str = None,
@@ -608,7 +608,7 @@ async def get_loan_fees_monthly(
 
 
 @router.get("/loan-risk", response_model=schemas.LoanRiskResponse)
-async def get_loan_risk(
+def get_loan_risk(
     employer: str = None,
     sourced_to: str = None,
     project: str = None,
@@ -658,7 +658,7 @@ async def get_loan_risk(
 
 
 @router.get("/loan-risk-monthly", response_model=schemas.LoanRiskMonthlyResponse)
-async def get_loan_risk_monthly(
+def get_loan_risk_monthly(
     start_date: str,
     end_date: str,
     employer: str = None,
@@ -707,7 +707,7 @@ async def get_loan_risk_monthly(
 
 
 @router.get("/karyawan-overdue")
-async def get_karyawan_overdue(
+def get_karyawan_overdue(
     employer: str = None,
     sourced_to: str = None,
     project: str = None,
@@ -758,7 +758,7 @@ async def get_karyawan_overdue(
 
 
 @router.get("/repayment-risk")
-async def get_repayment_risk(
+def get_repayment_risk(
     start_date: str = None,
     end_date: str = None,
     employer: str = None,
@@ -873,7 +873,7 @@ async def get_repayment_risk(
 
 
 @router.get("/repayment-risk-monthly")
-async def get_repayment_risk_monthly(
+def get_repayment_risk_monthly(
     start_date: str,
     end_date: str,
     employer: str = None,
@@ -922,7 +922,7 @@ async def get_repayment_risk_monthly(
 
 
 @router.get("/bad-debt-recovery")
-async def get_bad_debt_recovery(
+def get_bad_debt_recovery(
     start_date: str = None,
     end_date: str = None,
     employer: str = None,
@@ -983,7 +983,7 @@ async def get_bad_debt_recovery(
 
 
 @router.get("/bad-debt-recovery-monthly")
-async def get_bad_debt_recovery_monthly(
+def get_bad_debt_recovery_monthly(
     start_date: str,
     end_date: str,
     employer: str = None,
@@ -1030,7 +1030,7 @@ async def get_bad_debt_recovery_monthly(
 
 
 @router.get("/disbursement-expected-return", response_model=schemas.DisbursementExpectedReturnResponse)
-async def get_disbursement_expected_return(
+def get_disbursement_expected_return(
     start_date: str = None,
     end_date: str = None,
     employer: str = None,
@@ -1085,7 +1085,7 @@ async def get_disbursement_expected_return(
 
 
 @router.get("/disbursement-expected-return-monthly", response_model=schemas.DisbursementExpectedReturnMonthlyResponse)
-async def get_disbursement_expected_return_monthly(
+def get_disbursement_expected_return_monthly(
     start_date: str,
     end_date: str,
     employer: str = None,
@@ -1130,7 +1130,7 @@ async def get_disbursement_expected_return_monthly(
 
 
 @router.get("/coverage-utilization")
-async def get_coverage_utilization(
+def get_coverage_utilization(
     start_date: str = None,
     end_date: str = None,
     employer: str = None,
@@ -1202,7 +1202,7 @@ async def get_coverage_utilization(
 
 
 @router.get("/coverage-utilization-monthly")
-async def get_coverage_utilization_monthly(
+def get_coverage_utilization_monthly(
     start_date: str,
     end_date: str,
     employer: str = None,

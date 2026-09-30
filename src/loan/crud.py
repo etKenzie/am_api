@@ -127,6 +127,34 @@ _PARTIAL_PAYMENTS_INSTALLMENT_JOIN_SQL = """
     ) pay ON pay.loan_history_id = tlh.id"""
 
 
+_PARTIAL_PAID_BY_ROW_SQL = """(
+        SELECT loan_id, loan_history_id, SUM(amt) AS paid FROM (
+            SELECT p.loan_id, p.loan_history_id, p.amount AS amt FROM td_loan_payment p
+            WHERE p.status = 1
+              AND NOT EXISTS (SELECT 1 FROM td_loan_payment_allocation a WHERE a.payment_id = p.id)
+            UNION ALL
+            SELECT p.loan_id, a.loan_history_id, a.amount FROM td_loan_payment_allocation a
+            INNER JOIN td_loan_payment p ON p.id = a.payment_id
+            WHERE p.status = 1
+        ) u
+        GROUP BY loan_id, loan_history_id
+    )"""
+
+
+def _lump_partial_paid_join(loan_alias: str = "l") -> str:
+    return (
+        f"\n    LEFT JOIN {_PARTIAL_PAID_BY_ROW_SQL} pp"
+        f" ON pp.loan_id = {loan_alias}.id AND pp.loan_history_id IS NULL"
+    )
+
+
+def _installment_partial_paid_join(loan_alias: str, history_alias: str) -> str:
+    return (
+        f"\n    LEFT JOIN {_PARTIAL_PAID_BY_ROW_SQL} pp"
+        f" ON pp.loan_id = {loan_alias}.id AND pp.loan_history_id = {history_alias}.id"
+    )
+
+
 def _installment_partial_recovery_sql(loan_conditions_tl: str) -> str:
     """Per-payment-transaction principal/fee credit for still-open (status=4) installments
     that have received a partial payment. See the block comment above
@@ -1663,6 +1691,116 @@ def get_total_active_employees(
         return 0
 
 
+def _coverage_snapshot_counts(
+    db: Session,
+    *,
+    loan_type: str,
+    start_date: str = None,
+    end_date: str = None,
+    employer_filter: str = None,
+    sourced_to_filter: str = None,
+    project_filter: str = None,
+    client_segment_filter: str = None,
+    product_type_filter: str = None,
+) -> dict | None:
+    """Single data_record_eligible scan for get_coverage_utilization_summary's
+    total_active_employees / total_eligible_employees / total_coverage_project.
+    Returns None whenever any of get_total_active_employees,
+    get_total_eligible_employees_for_loan_type or get_total_coverage_project would
+    take its legacy data_record / live fallback, so the caller runs those instead."""
+    try:
+        range_start, range_end = _eligible_date_range(start_date=start_date, end_date=end_date)
+
+        employer_code = _resolve_gmc_code(
+            db, value=employer_filter, group_gmc="sub_client"
+        )
+        sourced_to_code = _resolve_gmc_code(
+            db, value=sourced_to_filter, group_gmc="placement_client"
+        )
+        project_code = _resolve_gmc_code(
+            db, value=project_filter, group_gmc="client_project"
+        )
+
+        params = {
+            "start_date": range_start,
+            "end_date": range_end,
+            "f_employer": employer_code,
+            "f_sourced_to": sourced_to_code,
+            "f_project": project_code,
+            "f_product": product_type_filter,
+        }
+        segment_predicate = _eligible_segment_predicate(
+            client_segment_filter, params, db
+        )
+        allowed_employer_predicate = _allowed_employer_predicate(db, params)
+
+        detail_filters_used = any(
+            [
+                employer_code,
+                sourced_to_code,
+                project_code,
+                client_segment_filter,
+                product_type_filter,
+            ]
+        )
+        product_predicate = _eligible_product_snapshot_predicate(loan_type)
+
+        query = f"""
+        SELECT
+            COUNT(DISTINCT de.id_karyawan) AS total_active,
+            COUNT(DISTINCT CASE WHEN de.is_loan_eligible = 1 THEN de.id_karyawan END) AS total_loan_eligible,
+            COUNT(DISTINCT CASE WHEN de.is_loan_eligible = 1 AND de.project IS NOT NULL AND de.project <> ''
+                THEN de.project END) AS total_coverage_project,
+            COUNT(DISTINCT CASE WHEN {product_predicate or "1=0"} THEN de.id_karyawan END) AS total_product_eligible,
+            EXISTS (SELECT 1 FROM data_record_eligible WHERE snapshot_date BETWEEN :start_date AND :end_date) AS has_any,
+            EXISTS (SELECT 1 FROM data_record_eligible WHERE snapshot_date BETWEEN :start_date AND :end_date
+                    AND is_loan_eligible = 1) AS has_loan_eligible,
+            EXISTS (SELECT 1 FROM data_record_eligible WHERE snapshot_date BETWEEN :start_date AND :end_date
+                    AND is_loan_eligible = 1 AND project IS NOT NULL AND project <> '') AS has_eligible_project,
+            EXISTS (SELECT 1 FROM data_record_eligible WHERE snapshot_date BETWEEN :start_date AND :end_date
+                    AND (is_kasbon_eligible = 1 OR is_aku_cicil_eligible = 1 OR is_extradana_eligible = 1)) AS has_product_snapshot
+        FROM data_record_eligible de
+        WHERE de.snapshot_date BETWEEN :start_date AND :end_date
+          AND ({allowed_employer_predicate})
+          AND (:f_employer IS NULL OR de.employer = :f_employer)
+          AND (:f_sourced_to IS NULL OR de.sourced_to = :f_sourced_to)
+          AND (:f_project IS NULL OR de.project = :f_project)
+          AND ({segment_predicate})
+          AND (:f_product IS NULL OR de.product_type = :f_product)
+        """
+        (
+            total_active,
+            total_loan_eligible,
+            total_coverage_project,
+            total_product_eligible,
+            has_any,
+            has_loan_eligible,
+            has_eligible_project,
+            has_product_snapshot,
+        ) = db.execute(text(query), params).fetchone()
+
+        if not detail_filters_used and not has_any:
+            return None
+        if not detail_filters_used and not has_eligible_project:
+            return None
+        if product_predicate is None and not detail_filters_used and not has_loan_eligible:
+            return None
+        if product_predicate is not None and not has_product_snapshot:
+            return None
+
+        return {
+            "total_active_employees": int(total_active),
+            "total_eligible_employees": int(
+                total_product_eligible if product_predicate else total_loan_eligible
+            ),
+            "total_coverage_project": int(total_coverage_project),
+        }
+    except Exception:
+        import traceback
+        traceback.print_exc()
+        return None
+
+
 def _append_proses_date_range(query: str, params: dict, start_date: str, end_date: str) -> str:
     return append_date_filters(
         query,
@@ -1674,16 +1812,7 @@ def _append_proses_date_range(query: str, params: dict, start_date: str, end_dat
 
 
 _UNRECOVERED_LUMP_PAYMENT_SQL = """
-    SELECT GREATEST(l.total_payment - (
-              SELECT COALESCE(SUM(amt), 0) FROM (
-                SELECT p.amount amt FROM td_loan_payment p
-                WHERE p.loan_id = l.id AND p.status = 1 AND p.loan_history_id IS NULL
-                  AND NOT EXISTS (SELECT 1 FROM td_loan_payment_allocation a WHERE a.payment_id = p.id)
-                UNION ALL
-                SELECT a.amount FROM td_loan_payment_allocation a
-                INNER JOIN td_loan_payment p ON p.id = a.payment_id
-                WHERE p.loan_id = l.id AND p.status = 1 AND a.loan_history_id IS NULL
-              ) t), 0) AS payment_due
+    SELECT GREATEST(l.total_payment - COALESCE(pp.paid, 0), 0) AS payment_due
     FROM td_loan l
     INNER JOIN td_karyawan tk ON l.id_karyawan = tk.id_karyawan
     INNER JOIN tbl_gmc emp
@@ -1700,7 +1829,7 @@ _UNRECOVERED_LUMP_PAYMENT_SQL = """
         ON tk.project = prj.kode_gmc
         AND prj.group_gmc = 'client_project'
         AND prj.aktif = 'Yes'
-        AND prj.keterangan3 = 1
+        AND prj.keterangan3 = 1""" + _lump_partial_paid_join("l") + """
     WHERE l.loan_status IN (1, 4)
       AND l.duration = 1
       AND (l.payment_date IS NULL OR l.payment_date = '0000-00-00')
@@ -1708,16 +1837,7 @@ _UNRECOVERED_LUMP_PAYMENT_SQL = """
 """
 
 _UNRECOVERED_INSTALLMENT_PAYMENT_SQL_BASE = """
-    SELECT GREATEST(th.monthly - (
-              SELECT COALESCE(SUM(amt), 0) FROM (
-                SELECT p.amount amt FROM td_loan_payment p
-                WHERE p.loan_id = l.id AND p.status = 1 AND p.loan_history_id = th.id
-                  AND NOT EXISTS (SELECT 1 FROM td_loan_payment_allocation a WHERE a.payment_id = p.id)
-                UNION ALL
-                SELECT a.amount FROM td_loan_payment_allocation a
-                INNER JOIN td_loan_payment p ON p.id = a.payment_id
-                WHERE p.loan_id = l.id AND p.status = 1 AND a.loan_history_id = th.id
-              ) t), 0) AS payment_due
+    SELECT GREATEST(th.monthly - COALESCE(pp.paid, 0), 0) AS payment_due
     FROM td_loan l
     INNER JOIN td_karyawan tk ON l.id_karyawan = tk.id_karyawan
     INNER JOIN tbl_gmc emp
@@ -1735,7 +1855,7 @@ _UNRECOVERED_INSTALLMENT_PAYMENT_SQL_BASE = """
         AND prj.group_gmc = 'client_project'
         AND prj.aktif = 'Yes'
         AND prj.keterangan3 = 1
-    INNER JOIN td_loan_history th ON th.loan_form_id = l.id
+    INNER JOIN td_loan_history th ON th.loan_form_id = l.id""" + _installment_partial_paid_join("l", "th") + """
     WHERE l.loan_status IN (1, 4)
       AND l.duration > 1
       AND (th.payment_date IS NULL OR th.payment_date = '0000-00-00')
@@ -1786,31 +1906,16 @@ _UNRECOVERED_INSTALLMENT_PAYMENT_SQL = _UNRECOVERED_INSTALLMENT_PAYMENT_SQL_BASE
 # elsewhere in this file) with the admin-fee share as the remainder, so principal + fee
 # always sums back to the netted payment_due exactly (no rounding drift). Uses the `l`/`tlh`
 # aliases as bound inside get_repayment_risk_summary/_monthly_summary's own risk_query — not
-# reusable outside that query shape.
-_LUMP_UNREC_PARTIAL_PAID_SQL = """(SELECT COALESCE(SUM(amt), 0) FROM (
-            SELECT p.amount amt FROM td_loan_payment p
-            WHERE p.loan_id = l.id AND p.status = 1 AND p.loan_history_id IS NULL
-              AND NOT EXISTS (SELECT 1 FROM td_loan_payment_allocation a WHERE a.payment_id = p.id)
-            UNION ALL
-            SELECT a.amount FROM td_loan_payment_allocation a
-            INNER JOIN td_loan_payment p ON p.id = a.payment_id
-            WHERE p.loan_id = l.id AND p.status = 1 AND a.loan_history_id IS NULL
-          ) pp)"""
+# reusable outside that query shape, and the query must include the matching `pp` join
+# (_lump_partial_paid_join / _installment_partial_paid_join).
+_LUMP_UNREC_PARTIAL_PAID_SQL = "COALESCE(pp.paid, 0)"
 _LUMP_UNREC_PAYMENT_DUE_SQL = f"GREATEST(l.total_payment - {_LUMP_UNREC_PARTIAL_PAID_SQL}, 0)"
 _LUMP_UNREC_PRINCIPAL_SQL = (
     f"ROUND({_LUMP_UNREC_PAYMENT_DUE_SQL} * l.total_loan / NULLIF(l.total_payment, 0), 0)"
 )
 _LUMP_UNREC_ADMIN_FEE_SQL = f"({_LUMP_UNREC_PAYMENT_DUE_SQL} - {_LUMP_UNREC_PRINCIPAL_SQL})"
 
-_INSTALLMENT_UNREC_PARTIAL_PAID_SQL = """(SELECT COALESCE(SUM(amt), 0) FROM (
-            SELECT p.amount amt FROM td_loan_payment p
-            WHERE p.loan_id = l.id AND p.status = 1 AND p.loan_history_id = tlh.id
-              AND NOT EXISTS (SELECT 1 FROM td_loan_payment_allocation a WHERE a.payment_id = p.id)
-            UNION ALL
-            SELECT a.amount FROM td_loan_payment_allocation a
-            INNER JOIN td_loan_payment p ON p.id = a.payment_id
-            WHERE p.loan_id = l.id AND p.status = 1 AND a.loan_history_id = tlh.id
-          ) pp)"""
+_INSTALLMENT_UNREC_PARTIAL_PAID_SQL = "COALESCE(pp.paid, 0)"
 _INSTALLMENT_UNREC_ROW_TOTAL_SQL = (
     "(ROUND(l.total_loan / l.duration, 0) + ROUND(l.admin_fee / l.duration, 0))"
 )
@@ -2148,6 +2253,10 @@ def _build_unrecovered_repayment_parts(
     company_filter = COMPANY_FILTER
     parts: list[str] = []
     client_select = "src.keterangan AS sourced_to, prj.keterangan AS project, " if group_by_client else ""
+    # With src.keterangan IS NOT NULL the optimizer drives from td_karyawan (~130k lookups
+    # into td_loan); forcing the loan tables first is ~15x faster (EXPLAIN ANALYZE, Sep 2026).
+    lump_hint = "/*+ JOIN_PREFIX(l) */ " if group_by_client else ""
+    installment_hint = "/*+ JOIN_PREFIX(th, l) */ " if group_by_client else ""
 
     if include_lump:
         lump_select = (
@@ -2157,7 +2266,7 @@ def _build_unrecovered_repayment_parts(
         )
         lump_query = lump_sql.replace(
             "SELECT GREATEST(",
-            f"SELECT {client_select}{lump_select}GREATEST(",
+            f"SELECT {lump_hint}{client_select}{lump_select}GREATEST(",
             1,
         )
         if group_by_client:
@@ -2197,7 +2306,7 @@ def _build_unrecovered_repayment_parts(
         )
         installment_query = installment_sql.replace(
             "SELECT GREATEST(",
-            f"SELECT {client_select}{installment_select}GREATEST(",
+            f"SELECT {installment_hint}{client_select}{installment_select}GREATEST(",
             1,
         )
         if group_by_client:
@@ -4707,18 +4816,7 @@ def get_karyawan_overdue_summary(db: Session,
             # total_amount_owed (pokok) and total_admin_fee (bunga) are that same
             # remainder split proportionally, so owed + admin_fee == total_payment.
             # Mirrors the netting done in _UNRECOVERED_LUMP_PAYMENT_SQL.
-            _lump_paid_subquery = """(
-                SELECT COALESCE(SUM(amt), 0) FROM (
-                    SELECT p.amount amt FROM td_loan_payment p
-                    WHERE p.loan_id = l.id AND p.status = 1 AND p.loan_history_id IS NULL
-                      AND NOT EXISTS (SELECT 1 FROM td_loan_payment_allocation a WHERE a.payment_id = p.id)
-                    UNION ALL
-                    SELECT a.amount FROM td_loan_payment_allocation a
-                    INNER JOIN td_loan_payment p ON p.id = a.payment_id
-                    WHERE p.loan_id = l.id AND p.status = 1 AND a.loan_history_id IS NULL
-                ) t
-            )"""
-            _lump_remaining_payment = f"GREATEST(l.total_payment - {_lump_paid_subquery}, 0)"
+            _lump_remaining_payment = "GREATEST(l.total_payment - COALESCE(pp.paid, 0), 0)"
 
             overdue_query = """
             SELECT DISTINCT
@@ -4753,7 +4851,7 @@ def get_karyawan_overdue_summary(db: Session,
                 ON tk.project = prj.kode_gmc
                 AND prj.group_gmc = 'client_project'
                 AND prj.aktif = 'Yes'
-                AND prj.keterangan3 = 1
+                AND prj.keterangan3 = 1""" + _lump_partial_paid_join("l") + """
             WHERE l.loan_status = 4
             AND l.id_karyawan IS NOT NULL
             AND {loan_conditions}
@@ -4771,18 +4869,7 @@ def get_karyawan_overdue_summary(db: Session,
             # total_amount_owed (pokok) and total_admin_fee (bunga) are that same
             # remainder split proportionally, so owed + admin_fee == total_payment.
             # Mirrors the netting done in _UNRECOVERED_INSTALLMENT_PAYMENT_SQL.
-            _installment_paid_subquery = """(
-                SELECT COALESCE(SUM(amt), 0) FROM (
-                    SELECT p.amount amt FROM td_loan_payment p
-                    WHERE p.loan_id = tl.id AND p.status = 1 AND p.loan_history_id = tlh.id
-                      AND NOT EXISTS (SELECT 1 FROM td_loan_payment_allocation a WHERE a.payment_id = p.id)
-                    UNION ALL
-                    SELECT a.amount FROM td_loan_payment_allocation a
-                    INNER JOIN td_loan_payment p ON p.id = a.payment_id
-                    WHERE p.loan_id = tl.id AND p.status = 1 AND a.loan_history_id = tlh.id
-                ) t
-            )"""
-            _installment_remaining_payment = f"GREATEST(tlh.monthly - {_installment_paid_subquery}, 0)"
+            _installment_remaining_payment = "GREATEST(tlh.monthly - COALESCE(pp.paid, 0), 0)"
 
             overdue_query = """
             SELECT DISTINCT
@@ -4817,7 +4904,7 @@ def get_karyawan_overdue_summary(db: Session,
                 ON tk.project = prj.kode_gmc
                 AND prj.group_gmc = 'client_project'
                 AND prj.aktif = 'Yes'
-                AND prj.keterangan3 = 1
+                AND prj.keterangan3 = 1""" + _installment_partial_paid_join("tl", "tlh") + """
             WHERE tlh.due_date IS NOT NULL
             AND tlh.status = 4
             AND tl.id_karyawan IS NOT NULL
@@ -5603,9 +5690,11 @@ def _get_admin_fee_collected_by_client(
     else:
         loan_conditions_tl = resolve_loan_conditions("aku_cicil", db)
 
+    # JOIN_PREFIX: the non-sargable reporting-date CASE makes MySQL drive from td_karyawan
+    # instead of the loan tables (EXPLAIN ANALYZE, Sep 2026: kasbon 1.9s -> 0.34s).
     if loan_type in ("extradana", "aku_cicil"):
         query = f"""
-        SELECT
+        SELECT /*+ JOIN_PREFIX(tlh, l) */
             src.keterangan as sourced_to,
             prj.keterangan as project,
             SUM(CASE WHEN tlh.status = 2 AND NOT ({_BAD_DEBT_INSTALLMENT_PREDICATE})
@@ -5624,7 +5713,7 @@ def _get_admin_fee_collected_by_client(
     else:
         loan_conditions = resolve_loan_conditions("kasbon", db)
         query = f"""
-        SELECT
+        SELECT /*+ JOIN_PREFIX(l) */
             src.keterangan as sourced_to,
             prj.keterangan as project,
             SUM(CASE WHEN l.loan_status = 2 AND NOT ({_BAD_DEBT_LUMP_PREDICATE})
@@ -5697,7 +5786,8 @@ def get_admin_fee_collected_by_client(
 def get_repayment_risk_summary(db: Session,
                                employer_filter: str = None, sourced_to_filter: str = None,
                                project_filter: str = None, client_segment_filter: str = None, product_type_filter: str = None, loan_status_filter: int = None,
-                               id_karyawan_filter: int = None, start_date: str = None, end_date: str = None, loan_type: str = "loan") -> dict:
+                               id_karyawan_filter: int = None, start_date: str = None, end_date: str = None, loan_type: str = "loan",
+                               include_period_totals: bool = True) -> dict:
     """Get repayment risk summary with various repayment and risk metrics.
 
     Two independent attribution models are in play here, and they must not be conflated:
@@ -5771,7 +5861,7 @@ def get_repayment_risk_summary(db: Session,
             start_date=start_date,
             end_date=end_date,
             loan_type=loan_type,
-        )
+        ) if include_period_totals else 0
 
         if is_all_loan_types(loan_type):
             summaries = [
@@ -5787,6 +5877,7 @@ def get_repayment_risk_summary(db: Session,
                     start_date=start_date,
                     end_date=end_date,
                     loan_type=product_type,
+                    include_period_totals=False,
                 )
                 for product_type in ALL_LOAN_TYPES
             ]
@@ -5875,7 +5966,7 @@ def get_repayment_risk_summary(db: Session,
             AND l.loan_status IN (1, 2, 4)
             AND {loan_conditions_tl}
             """.format(
-                gmc_joins=_LOAN_GMC_JOINS,
+                gmc_joins=_LOAN_GMC_JOINS + _installment_partial_paid_join("l", "tlh"),
                 loan_conditions_tl=loan_conditions_tl,
                 bad_debt=_BAD_DEBT_INSTALLMENT_PREDICATE,
                 od1=_COLLECTED_OD1_INSTALLMENT_PREDICATE,
@@ -5937,7 +6028,7 @@ def get_repayment_risk_summary(db: Session,
             WHERE l.loan_status IN (1, 2, 4)
             AND {loan_conditions}
             """.format(
-                gmc_joins=_LOAN_GMC_JOINS,
+                gmc_joins=_LOAN_GMC_JOINS + _lump_partial_paid_join("l"),
                 loan_conditions=loan_conditions,
                 bad_debt=_BAD_DEBT_LUMP_PREDICATE,
                 od1=_COLLECTED_OD1_LUMP_PREDICATE,
@@ -5997,7 +6088,7 @@ def get_repayment_risk_summary(db: Session,
             start_date=start_date,
             end_date=end_date,
             loan_type=loan_type,
-        )
+        ) if include_period_totals else 0
 
         total_outstanding_repayment = get_total_outstanding_repayment(
             db,
@@ -6011,7 +6102,7 @@ def get_repayment_risk_summary(db: Session,
             start_date=start_date,
             end_date=end_date,
             loan_type=loan_type,
-        )
+        ) if include_period_totals else 0
 
         disbursed = get_total_disbursed_amount(
             db,
@@ -6025,7 +6116,7 @@ def get_repayment_risk_summary(db: Session,
             start_date=start_date,
             end_date=end_date,
             loan_type=loan_type,
-        )
+        ) if include_period_totals else {"total_disbursed_amount": 0, "total_admin_fee_disbursed": 0}
 
         return _recalculate_repayment_risk_derivatives({
             "total_expected_repayment": total_expected_repayment,
@@ -6241,7 +6332,7 @@ def get_repayment_risk_monthly_summary(db: Session,
             AND {loan_conditions_tl}
             """.format(
                 reporting_date=reporting_date,
-                gmc_joins=_LOAN_GMC_JOINS,
+                gmc_joins=_LOAN_GMC_JOINS + _installment_partial_paid_join("l", "tlh"),
                 loan_conditions_tl=loan_conditions_tl,
                 bad_debt=_BAD_DEBT_INSTALLMENT_PREDICATE,
                 od1=_COLLECTED_OD1_INSTALLMENT_PREDICATE,
@@ -6272,7 +6363,7 @@ def get_repayment_risk_monthly_summary(db: Session,
             AND {loan_conditions}
             """.format(
                 reporting_date=reporting_date,
-                gmc_joins=_LOAN_GMC_JOINS,
+                gmc_joins=_LOAN_GMC_JOINS + _lump_partial_paid_join("l"),
                 loan_conditions=loan_conditions,
                 bad_debt=_BAD_DEBT_LUMP_PREDICATE,
                 od1=_COLLECTED_OD1_LUMP_PREDICATE,
@@ -6868,8 +6959,9 @@ def get_coverage_utilization_summary(db: Session,
         params = {}
         loan_conditions = resolve_loan_conditions(loan_type, db)
 
-        total_active_employees = get_total_active_employees(
+        snapshot_counts = _coverage_snapshot_counts(
             db,
+            loan_type=loan_type,
             start_date=start_date,
             end_date=end_date,
             employer_filter=employer_filter,
@@ -6878,29 +6970,44 @@ def get_coverage_utilization_summary(db: Session,
             client_segment_filter=client_segment_filter,
             product_type_filter=product_type_filter,
         )
+        if snapshot_counts is not None:
+            total_active_employees = snapshot_counts["total_active_employees"]
+            total_eligible_employees = snapshot_counts["total_eligible_employees"]
+            total_coverage_project = snapshot_counts["total_coverage_project"]
+        else:
+            total_active_employees = get_total_active_employees(
+                db,
+                start_date=start_date,
+                end_date=end_date,
+                employer_filter=employer_filter,
+                sourced_to_filter=sourced_to_filter,
+                project_filter=project_filter,
+                client_segment_filter=client_segment_filter,
+                product_type_filter=product_type_filter,
+            )
 
-        total_eligible_employees = get_total_eligible_employees_for_loan_type(
-            db,
-            loan_type,
-            start_date=start_date,
-            end_date=end_date,
-            employer_filter=employer_filter,
-            sourced_to_filter=sourced_to_filter,
-            project_filter=project_filter,
-            client_segment_filter=client_segment_filter,
-            product_type_filter=product_type_filter,
-        )
+            total_eligible_employees = get_total_eligible_employees_for_loan_type(
+                db,
+                loan_type,
+                start_date=start_date,
+                end_date=end_date,
+                employer_filter=employer_filter,
+                sourced_to_filter=sourced_to_filter,
+                project_filter=project_filter,
+                client_segment_filter=client_segment_filter,
+                product_type_filter=product_type_filter,
+            )
 
-        total_coverage_project = get_total_coverage_project(
-            db,
-            start_date=start_date,
-            end_date=end_date,
-            employer_filter=employer_filter,
-            sourced_to_filter=sourced_to_filter,
-            project_filter=project_filter,
-            client_segment_filter=client_segment_filter,
-            product_type_filter=product_type_filter,
-        )
+            total_coverage_project = get_total_coverage_project(
+                db,
+                start_date=start_date,
+                end_date=end_date,
+                employer_filter=employer_filter,
+                sourced_to_filter=sourced_to_filter,
+                project_filter=project_filter,
+                client_segment_filter=client_segment_filter,
+                product_type_filter=product_type_filter,
+            )
 
         # Loan requests by received_date; approved/rejected/disbursed by proses_date.
         if start_date and end_date:
@@ -7706,18 +7813,7 @@ def _apply_installment_delinquency_override(
     # td_loan_payment / td_loan_payment_allocation) — an installment can be status = 4
     # (overdue) while part of its `monthly` amount has already been paid. Mirrors the
     # netting in get_karyawan_overdue_summary / _UNRECOVERED_INSTALLMENT_PAYMENT_SQL.
-    _installment_paid_subquery = """(
-        SELECT COALESCE(SUM(amt), 0) FROM (
-            SELECT p.amount amt FROM td_loan_payment p
-            WHERE p.loan_id = tl.id AND p.status = 1 AND p.loan_history_id = tlh.id
-              AND NOT EXISTS (SELECT 1 FROM td_loan_payment_allocation a WHERE a.payment_id = p.id)
-            UNION ALL
-            SELECT a.amount FROM td_loan_payment_allocation a
-            INNER JOIN td_loan_payment p ON p.id = a.payment_id
-            WHERE p.loan_id = tl.id AND p.status = 1 AND a.loan_history_id = tlh.id
-        ) t
-    )"""
-    _installment_remaining_payment = f"GREATEST(tlh.monthly - {_installment_paid_subquery}, 0)"
+    _installment_remaining_payment = "GREATEST(tlh.monthly - COALESCE(pp.paid, 0), 0)"
 
     query = f"""
     SELECT
@@ -7744,7 +7840,7 @@ def _apply_installment_delinquency_override(
         ON tk.project = prj.kode_gmc
         AND prj.group_gmc = 'client_project'
         AND prj.aktif = 'Yes'
-        AND prj.keterangan3 = 1
+        AND prj.keterangan3 = 1{_installment_partial_paid_join("tl", "tlh")}
     WHERE tlh.due_date IS NOT NULL
     AND {loan_conditions_tl}
     AND src.keterangan IS NOT NULL
@@ -7997,74 +8093,12 @@ def get_client_summary(db: Session, start_date: str = None, end_date: str = None
         # This mirrors get_karyawan_overdue_summary's td_loan_history/due_date handling.
         needs_installment_delinquency = loan_type in ("extradana", "aku_cicil", "installment")
 
-        # Build parameters dict for filters (needed for both queries)
         params = {}
 
-        # Get employee counts using the exact same approach as coverage utilization
-        # For each sourced_to and project combination, we'll run the same query as coverage utilization
-        employee_counts = {}
-
-        # Keyed only by sourced_to (not project) — reused for any client added by the
-        # installment delinquency override below, which may not appear in combinations_query.
-        counts_by_sourced_to = {}
-
-        # Get unique sourced_to and project combinations from the loan data first
-        combinations_query = f"""
-        SELECT DISTINCT
-            src.keterangan as sourced_to,
-            prj.keterangan as project
-        FROM td_loan l
-        LEFT JOIN td_karyawan tk
-            ON l.id_karyawan = tk.id_karyawan
-        LEFT JOIN tbl_gmc emp
-            ON tk.valdo_inc = emp.kode_gmc
-            AND emp.group_gmc = 'sub_client'
-            AND emp.aktif = 'Yes'
-            AND emp.keterangan3 = 1
-        LEFT JOIN tbl_gmc src
-            ON tk.placement = src.kode_gmc
-            AND src.group_gmc = 'placement_client'
-            AND src.aktif = 'Yes'
-            AND src.keterangan3 = 1
-        LEFT JOIN tbl_gmc prj
-            ON tk.project = prj.kode_gmc
-            AND prj.group_gmc = 'client_project'
-            AND prj.aktif = 'Yes'
-            AND prj.keterangan3 = 1
-        WHERE {loan_conditions}
-        AND src.keterangan IS NOT NULL
-        AND emp.keterangan IN {company_filter}
-        """
-
-        if start_date and end_date:
-            combinations_query = append_date_filters(
-                combinations_query,
-                params,
-                start_date=start_date,
-                end_date=end_date,
-            )
-
-        combinations_query = _apply_project_management_filters(
-            combinations_query, params, client_segment_filter, product_type_filter, db=db
-        )
-
         try:
-            combinations_result = db.execute(text(combinations_query), params)
-            combinations = combinations_result.fetchall()
-
             counts_by_sourced_to = _fetch_employee_counts_by_sourced_to(db, company_filter)
-            for combo in combinations:
-                sourced_to = combo[0] if combo[0] else "Unknown"
-                project = combo[1] if combo[1] else "Unknown"
-                key = f"{sourced_to}_{project}"
-                employee_counts[key] = counts_by_sourced_to.get(
-                    sourced_to,
-                    {"eligible": 0, "active": 0},
-                )
-
         except Exception:
-            # Fallback: return empty employee counts
-            employee_counts = {}
+            counts_by_sourced_to = {}
 
         # Build the main loan summary query (without correlated subqueries)
         client_summary_query = """
@@ -8133,10 +8167,9 @@ def get_client_summary(db: Session, start_date: str = None, end_date: str = None
         for record in records:
             sourced_to = record[0] if record[0] else "Unknown"
             project = record[1] if record[1] else "Unknown"
-            key = f"{sourced_to}_{project}"
 
             # Get employee counts from the pre-calculated dictionary
-            employee_data = employee_counts.get(key, {"eligible": 0, "active": 0})
+            employee_data = counts_by_sourced_to.get(sourced_to, {"eligible": 0, "active": 0})
 
             client_disbursements.append({
                 "sourced_to": sourced_to,
