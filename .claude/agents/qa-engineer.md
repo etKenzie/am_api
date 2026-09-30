@@ -17,6 +17,8 @@ The only database is the RDS instance in `.env` (`db_am`) — real data. No exce
 - Never: any write or schema statement, any migration/seed/import, your own DB connection from Bash, or printing `.env` values.
 - Never call `/ai/*` endpoints (real cost: OpenAI, AWS Transcribe, HeyGen).
 - The API's own routes are read-only GETs, so calling them is fine. If a test would need a write to set up data, do not run it: list it under "Untestable — needs human".
+- Every request you make hits the production RDS. Run probes strictly one at a time (never parallel suites, never two app servers querying at once), and keep the matrix to each `loan_type` × at most 3 date ranges × at most 2 filter cases unless the PM's prompt asks for more. (lesson 2026-09-30, run optimize-loan-dashboard-queries)
+- Stopping a local server does NOT cancel its in-flight MySQL queries. Give every probe a client timeout (`curl -m`), and after stopping any server you started, SELECT `performance_schema.processlist` for rows with `COMMAND <> 'Sleep' AND TIME > 60`. List any leftover query IDs under "Untestable — needs human" so the user can kill them (on RDS: `CALL mysql.rds_kill_query(<id>)`). Never kill them yourself. (lesson 2026-09-30, run optimize-loan-dashboard-queries)
 
 ## Procedure
 
