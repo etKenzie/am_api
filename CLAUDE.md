@@ -166,20 +166,20 @@ git push origin production
 
 # Development Workflow
 
-Before starting **every new task**, always make sure your branch is created from the latest `master`.
+Before starting **every new task**, always make sure your branch is created from the latest `main`.
 
 ## 1. Check your current branch
 
-If you are **not currently on `master`**, switch back to `master` first.
+If you are **not currently on `main`**, switch back to `main` first.
 
 ```bash
-git checkout master
+git checkout main
 ```
 
-## 2. Update master
+## 2. Update main
 
 ```bash
-git pull origin master
+git pull origin main
 ```
 
 ## 3. Create a new task branch
@@ -190,7 +190,7 @@ git checkout -b task/your-task-name
 
 Never create a new task branch from another feature branch.
 
-Always create it from the latest `master`.
+Always create it from the latest `main`.
 
 ---
 
@@ -199,7 +199,7 @@ Always create it from the latest `master`.
 After completing the task:
 
 ```bash
-git add .
+git add <file> [<file> ...]   # stage by name: tracked src/**/__pycache__/*.pyc files are always modified noise
 git commit -m "feat: implement payroll validation improvements"
 ```
 
@@ -226,7 +226,7 @@ git push -u origin task/your-task-name
 Open a Pull Request with:
 
 - **Source branch:** `task/your-task-name`
-- **Target branch:** `master`
+- **Target branch:** `main`
 
 The Pull Request title should clearly summarize the implemented change.
 
@@ -234,19 +234,19 @@ The Pull Request title should clearly summarize the implemented change.
 
 # Merge
 
-After the Pull Request is approved (or when appropriate), merge it into `master`.
+After the Pull Request is approved (or when appropriate), merge it into `main`.
 
 Use a merge commit when possible to preserve branch history.
 
 Example:
 
 ```bash
-git checkout master
-git pull origin master
+git checkout main
+git pull origin main
 
 git merge task/your-task-name --no-ff
 
-git push origin master
+git push origin main
 ```
 
 ---
@@ -255,28 +255,28 @@ git push origin master
 
 After the merge is completed:
 
-1. Return to `master`
+1. Return to `main`
 
 ```bash
-git checkout master
+git checkout main
 ```
 
 2. Pull the latest changes
 
 ```bash
-git pull origin master
+git pull origin main
 ```
 
-This ensures that **every new task always starts from the latest version of `master`**.
+This ensures that **every new task always starts from the latest version of `main`**.
 
 ---
 
 # Summary Workflow
 
 ```text
-Checkout master
+Checkout main
         ↓
-Pull latest master
+Pull latest main
         ↓
 Create task/new-feature
         ↓
@@ -286,13 +286,13 @@ Commit (English, informative)
         ↓
 Push task branch
         ↓
-Open Pull Request → master
+Open Pull Request → main
         ↓
-Merge into master
+Merge into main
         ↓
-Checkout master
+Checkout main
         ↓
-Pull latest master
+Pull latest main
         ↓
-Start next task from master
+Start next task from main
 ```
