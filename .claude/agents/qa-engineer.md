@@ -34,6 +34,7 @@ The only database is the RDS instance in `.env` (`db_am`) — real data. No exce
    - The same metric in sibling endpoints (e.g. `client-summary`, `repayment-risk`, `coverage`) must agree; compare them with identical params and report any difference.
    - Recompute at least one headline figure independently with a bounded read-only SELECT and compare.
    - Loan-type parts must add up (`installment` = `extradana` + `aku_cicil`; `all` = all three) where the metric is additive.
+   - Figures that must stay unchanged (pure-performance changes, or parent totals next to a changed sub-figure): an endpoint diff before/after is not enough on its own, since live data shifts between calls. Prove it with a bounded SELECT running the old SQL fragment vs the new API value. If a `main` baseline cannot run, write out the invariance argument precisely: where the changed fragment is used (columns only, never WHERE/JOIN/GROUP BY), plus a non-zero API value matching independent SQL. Do not leave a bare UNTESTED. (lesson 2026-10-01, runs optimize-loan-dashboard-queries + fix-od1-starts-day-after-due-date)
 6. **Performance smoke**: note the response time of each changed endpoint on a realistic range (a year, all clients). Flag anything over ~10 s and run `EXPLAIN` on the suspicious query.
 
 ## Rules

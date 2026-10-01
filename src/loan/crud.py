@@ -1,6 +1,7 @@
 from sqlalchemy.orm import Session
 from sqlalchemy import text
 from typing import List, Optional
+from datetime import date
 
 try:
     from .date_filters import append_date_filters, month_bounds, start_of_day, end_of_day
@@ -44,14 +45,16 @@ _BAD_DEBT_INSTALLMENT_PREDICATE = (
 
 # OD1/OD2 breakdown of already-collected (status/loan_status = 2) repayments: same
 # calendar-month-late measurement as the bad-debt predicates above (payment_date vs
-# due_date, PERIOD_DIFF on YYYYMM), but for the 1- and 2-month-late slices that still count
-# as ordinary Repayment (M+3+ is Bad Debt Recovery, handled separately above). On-time
-# payments (paid on/before the due date) are intentionally not broken out here — only the
+# due_date, PERIOD_DIFF on YYYYMM). OD1 = paid after the due date and no later than the
+# month after the due month; OD2 = paid exactly 2 calendar months after the due month
+# (M+3+ is Bad Debt Recovery, handled separately above). On-time payments (paid on/before
+# the due date) are intentionally not broken out here — only the
 # OD1/OD2 slices of total_loan_principal_collected/total_admin_fee_collected are exposed,
 # per explicit request; they are not required to sum back to those totals.
 _COLLECTED_OD1_LUMP_PREDICATE = (
     "l.payment_date IS NOT NULL AND l.payment_date != '0000-00-00' "
-    "AND PERIOD_DIFF(DATE_FORMAT(l.payment_date, '%Y%m'), DATE_FORMAT(l.repayment_date, '%Y%m')) = 1"
+    "AND DATE(l.payment_date) > l.repayment_date "
+    "AND PERIOD_DIFF(DATE_FORMAT(l.payment_date, '%Y%m'), DATE_FORMAT(l.repayment_date, '%Y%m')) <= 1"
 )
 _COLLECTED_OD2_LUMP_PREDICATE = (
     "l.payment_date IS NOT NULL AND l.payment_date != '0000-00-00' "
@@ -59,12 +62,24 @@ _COLLECTED_OD2_LUMP_PREDICATE = (
 )
 _COLLECTED_OD1_INSTALLMENT_PREDICATE = (
     "tlh.payment_date IS NOT NULL AND tlh.payment_date != '0000-00-00' "
-    "AND PERIOD_DIFF(DATE_FORMAT(tlh.payment_date, '%Y%m'), DATE_FORMAT(tlh.due_date, '%Y%m')) = 1"
+    "AND tlh.payment_date > tlh.due_date "
+    "AND PERIOD_DIFF(DATE_FORMAT(tlh.payment_date, '%Y%m'), DATE_FORMAT(tlh.due_date, '%Y%m')) <= 1"
 )
 _COLLECTED_OD2_INSTALLMENT_PREDICATE = (
     "tlh.payment_date IS NOT NULL AND tlh.payment_date != '0000-00-00' "
     "AND PERIOD_DIFF(DATE_FORMAT(tlh.payment_date, '%Y%m'), DATE_FORMAT(tlh.due_date, '%Y%m')) = 2"
 )
+
+
+def _classify_aging_status(due_date: date, today: date) -> Optional[str]:
+    if due_date >= today:
+        return None
+    month_diff = (today.year - due_date.year) * 12 + (today.month - due_date.month)
+    if month_diff <= 1:
+        return "OD1"
+    if month_diff == 2:
+        return "OD2"
+    return "WRITE_OFF"
 
 # repayment-risk reporting-month attribution: each repayment is counted in exactly one
 # month — the payment month if paid on/before its due date, or once it has crossed into
@@ -4986,19 +5001,13 @@ def get_karyawan_overdue_summary(db: Session,
                         repayment_date = repayment_date.date()
                     today = date.today()
                     days_overdue = (today - repayment_date).days
-                    # Full calendar months between today and repayment_date (this row's
-                    # MAX due date across the karyawan's overdue loans/installments), no
-                    # day-of-month cutoff: due month + 1 = OD1, +2 = OD2, +3 or more =
+                    # Aged against repayment_date (this row's MAX due date across the
+                    # karyawan's overdue loans/installments): OD1 from the day after the due
+                    # date through due month + 1, +2 calendar months = OD2, +3 or more =
                     # WRITE_OFF. Derived from the same repayment_date already returned by
                     # this row rather than a second query, since a karyawan's overdue loans
                     # are already blended into one row by this point (see GROUP BY above).
-                    month_diff = (today.year - repayment_date.year) * 12 + (today.month - repayment_date.month)
-                    if month_diff == 1:
-                        aging_status = "OD1"
-                    elif month_diff == 2:
-                        aging_status = "OD2"
-                    elif month_diff >= 3:
-                        aging_status = "WRITE_OFF"
+                    aging_status = _classify_aging_status(repayment_date, today)
                 except Exception:
                     days_overdue = 0
                     aging_status = None
@@ -5839,8 +5848,8 @@ def get_repayment_risk_summary(db: Session,
     - total_loan_principal_collected_od1/_od2 and total_admin_fee_collected_od1/_od2 are a
       partial breakdown of total_loan_principal_collected/total_admin_fee_collected by how
       late the payment landed relative to its due date (see _COLLECTED_OD1_LUMP_PREDICATE/
-      _COLLECTED_OD2_LUMP_PREDICATE and their _INSTALLMENT counterparts): OD1 = paid exactly
-      1 calendar month after the due month, OD2 = exactly 2. On-time payments (paid on/
+      _COLLECTED_OD2_LUMP_PREDICATE and their _INSTALLMENT counterparts): OD1 = paid after
+      the due date, up to the month after the due month, OD2 = exactly 2. On-time payments (paid on/
       before the due date) are deliberately not broken out into their own field, and 3+
       months late is already Bad Debt Recovery (excluded from total_loan_principal_collected/
       total_admin_fee_collected entirely, per the bullet above) — so OD1 + OD2 do NOT sum
@@ -6190,7 +6199,8 @@ def get_repayment_risk_monthly_summary(db: Session,
     outstanding divergence this causes for months with early payments).
 
     total_loan_principal_collected_od1/_od2 and total_admin_fee_collected_od1/_od2 per
-    month: same OD1 (paid exactly 1 calendar month late)/OD2 (exactly 2) breakdown as
+    month: same OD1 (paid after the due date, up to the month after the due month)/OD2
+    (exactly 2 calendar months late) breakdown as
     get_repayment_risk_summary, keyed to the same reporting month as their parent
     total_loan_principal_collected/total_admin_fee_collected fields — see that function's
     docstring for the full semantics (on-time payments not broken out; 3+ months late is
@@ -7920,7 +7930,7 @@ def _apply_aging_breakdown(
     """Add od1_amount/od2_amount/write_off_amount to each client_summary row: the
     remaining total_payment (principal + admin fee still owed), summed per aging
     bucket across a client's overdue karyawan, reusing get_karyawan_overdue_summary's
-    per-karyawan aging_status classification (full calendar months elapsed since
+    per-karyawan aging_status classification (_classify_aging_status on
     repayment_date/due_date, as of today) rather than re-deriving the aging cutoffs
     here. Adds a new client row for any sourced_to/project that only shows up via an
     overdue karyawan in this period, mirroring _apply_installment_delinquency_override."""

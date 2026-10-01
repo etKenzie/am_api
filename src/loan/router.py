@@ -721,9 +721,10 @@ def get_karyawan_overdue(
     db: Session = Depends(get_db)
 ):
     """Get karyawan with overdue loans. Use loan_type=all to combine kasbon, extradana, and
-    aku_cicil. Each row includes aging_status (OD1/OD2/WRITE_OFF), based on full calendar
-    months elapsed since repayment_date (this row's latest due date); null if the loan is
-    overdue but not yet a full month past due."""
+    aku_cicil. Each row includes aging_status (OD1/OD2/WRITE_OFF), aged against
+    repayment_date (this row's latest due date): OD1 from the day after the due date through
+    the month after the due month, OD2 = 2 calendar months, WRITE_OFF = 3+; null only if
+    not yet past due."""
 
     try:
         overdue_list = crud.get_karyawan_overdue_summary(
@@ -791,8 +792,8 @@ def get_repayment_risk(
     combined); pass loan_type=loan/extradana/aku_cicil to scope to a single product.
     total_loan_principal_collected_od1/_od2 and total_admin_fee_collected_od1/_od2 are a
     partial breakdown of total_loan_principal_collected/total_admin_fee_collected by how
-    many calendar months late the payment was (OD1 = 1 month late, OD2 = 2 months late);
-    on-time payments aren't broken out and 3+ months late is Bad Debt Recovery, so OD1+OD2
+    late the payment was (OD1 = paid after the due date, up to the month after the due
+    month, OD2 = 2 months late); on-time payments aren't broken out and 3+ months late is Bad Debt Recovery, so OD1+OD2
     do not sum back to the parent totals.
     total_unrecovered_loan_principal + total_unrecovered_admin_fee reconciles with
     total_unrecovered_repayment for loan_type=loan/extradana/aku_cicil/installment (both are
