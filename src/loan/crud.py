@@ -447,7 +447,7 @@ def _project_management_join_sql(required: bool = True) -> str:
     join_type = "INNER" if required else "LEFT"
     return f"""
         {join_type} JOIN (
-            SELECT DISTINCT gmc_id, client_segment, product_type
+            SELECT DISTINCT gmc_id, segment_id, sub_segment_id, product_type
             FROM tbl_project_management
         ) tpm ON tpm.gmc_id = prj.id"""
 
@@ -455,10 +455,15 @@ def _project_management_join_sql(required: bool = True) -> str:
 def _project_management_label_joins_sql() -> str:
     return """
         LEFT JOIN tbl_gmc seg
-            ON seg.kode_gmc = tpm.client_segment
+            ON seg.kode_gmc = tpm.segment_id
             AND seg.group_gmc = 'segment'
             AND seg.keterangan3 = 1
             AND seg.aktif = 'Yes'
+        LEFT JOIN tbl_gmc ss
+            ON ss.kode_gmc = tpm.sub_segment_id
+            AND ss.group_gmc = 'sub_segment'
+            AND ss.keterangan3 = 1
+            AND ss.aktif = 'Yes'
         LEFT JOIN tbl_gmc pt
             ON pt.kode_gmc = tpm.product_type
             AND pt.group_gmc = 'product_type'
@@ -523,45 +528,41 @@ def _empty_client_segment_group(category_id: str, category_name: str) -> dict:
     }
 
 
-def _client_segment_codes_in_category_sql(category: str) -> str:
-    """Segment codes for all_bfsi / all_non_bfsi — matches segment name/code like /loan/filters."""
+_SUB_SEGMENTS_WITH_PARENT_FROM_SQL = """
+    FROM tbl_gmc ss
+    INNER JOIN tbl_gmc seg
+        ON seg.group_gmc = 'segment'
+        AND seg.keterangan3 = 1
+        AND seg.aktif = 'Yes'
+        AND CAST(seg.kode_gmc AS CHAR) = ss.keterangan2
+    WHERE ss.group_gmc = 'sub_segment'
+      AND ss.keterangan3 = 1
+      AND ss.aktif = 'Yes'
+"""
+
+
+def _sub_segment_codes_in_category_sql(category: str) -> str:
+    """Inline (db-less) form of _resolve_aggregate_segment_codes: same rule as
+    _normalize_client_segment_category applied to the parent segment name."""
     norm_name = "LOWER(REPLACE(REPLACE(seg.keterangan, '-', ' '), '_', ' '))"
-    norm_code = "LOWER(REPLACE(REPLACE(seg.kode_gmc, '-', ' '), '_', ' '))"
     if category == "bfsi":
-        name_match = f"""
-            (
-                ({norm_name} LIKE '%bfsi%' OR {norm_code} LIKE '%bfsi%')
-                AND {norm_name} NOT LIKE '%non%bfsi%'
-                AND {norm_code} NOT LIKE '%non%bfsi%'
-            )
-        """
+        name_match = f"({norm_name} LIKE '%bfsi%' AND {norm_name} NOT LIKE '%non%')"
     else:
-        name_match = f"""
-            (
-                {norm_name} LIKE '%non%bfsi%'
-                OR {norm_code} LIKE '%non%bfsi%'
-            )
-        """
-    return f"""
-        SELECT DISTINCT seg.kode_gmc
-        FROM tbl_gmc seg
-        INNER JOIN tbl_project_management tpm
-            ON tpm.client_segment = seg.kode_gmc
-        WHERE seg.group_gmc = 'segment'
-          AND seg.keterangan3 = 1
-          AND seg.aktif = 'Yes'
-          AND tpm.client_segment IS NOT NULL
-          AND tpm.client_segment <> ''
-          AND {name_match}
-    """
+        name_match = f"({norm_name} LIKE '%non%' AND {norm_name} LIKE '%bfsi%')"
+    return f"SELECT ss.kode_gmc {_SUB_SEGMENTS_WITH_PARENT_FROM_SQL}      AND {name_match}"
 
 
-def _resolve_aggregate_segment_codes(db: Session, category: str) -> list[str]:
-    """Load BFSI / Non-BFSI segment codes once per DB session (request)."""
-    cache = db.info.setdefault("loan_segment_codes", {})
-    if category not in cache:
-        rows = db.execute(text(_client_segment_codes_in_category_sql(category))).fetchall()
-        cache[category] = [row[0] for row in rows if row[0]]
+def _resolve_aggregate_segment_codes(db: Session, category: str) -> list:
+    """Sub-segment kode under the BFSI / Non-BFSI parent segment, loaded once per DB session (request)."""
+    cache = db.info.get("loan_sub_segment_codes")
+    if cache is None:
+        cache = {"bfsi": [], "non_bfsi": []}
+        query = f"SELECT ss.kode_gmc, seg.keterangan {_SUB_SEGMENTS_WITH_PARENT_FROM_SQL}"
+        for code, parent_name in db.execute(text(query)).fetchall():
+            normalized_id, _ = _normalize_client_segment_category(parent_name, None)
+            if code is not None and normalized_id in cache:
+                cache[normalized_id].append(code)
+        db.info["loan_sub_segment_codes"] = cache
     return cache[category]
 
 
@@ -579,8 +580,10 @@ def _segment_filter_predicate(
     elif client_segment_filter == CLIENT_SEGMENT_ALL_NON_BFSI:
         category = "non_bfsi"
     else:
-        params["client_segment"] = client_segment_filter
-        return "tpm.client_segment = :client_segment"
+        if not client_segment_filter.isdecimal():
+            return "1=0"
+        params["client_segment"] = int(client_segment_filter)
+        return "tpm.sub_segment_id = :client_segment"
 
     if db is not None:
         codes = _resolve_aggregate_segment_codes(db, category)
@@ -591,9 +594,9 @@ def _segment_filter_predicate(
             key = f"agg_seg_{category}_{index}"
             params[key] = code
             placeholders.append(f":{key}")
-        return f"tpm.client_segment IN ({', '.join(placeholders)})"
+        return f"tpm.sub_segment_id IN ({', '.join(placeholders)})"
 
-    return f"tpm.client_segment IN ({_client_segment_codes_in_category_sql(category)})"
+    return f"tpm.sub_segment_id IN ({_sub_segment_codes_in_category_sql(category)})"
 
 
 def _inject_project_management_join(
@@ -754,22 +757,22 @@ def _fetch_project_management_filter_options(db: Session) -> dict:
     client_segment_query = """
         SELECT
             tg.kode_gmc AS option_id,
-            tg.keterangan AS option_name,
-            COALESCE(parent.kode_gmc, tg.keterangan2) AS category_id,
-            COALESCE(parent.keterangan, tg.keterangan2) AS category_name
+            CONCAT_WS(' ', parent.keterangan, tg.keterangan) AS option_name,
+            parent.kode_gmc AS category_id,
+            parent.keterangan AS category_name
         FROM tbl_project_management AS tpm
         INNER JOIN tbl_gmc AS tg
-            ON tg.kode_gmc = tpm.client_segment
-            AND tg.group_gmc = 'segment'
+            ON tg.kode_gmc = tpm.sub_segment_id
+            AND tg.group_gmc = 'sub_segment'
             AND tg.keterangan3 = 1
             AND tg.aktif = 'Yes'
-        LEFT JOIN tbl_gmc AS parent
-            ON parent.kode_gmc = tg.keterangan2
+        INNER JOIN tbl_gmc AS parent
+            ON CAST(parent.kode_gmc AS CHAR) = tg.keterangan2
             AND parent.group_gmc = 'segment'
+            AND parent.keterangan3 = 1
             AND parent.aktif = 'Yes'
-        WHERE tpm.client_segment IS NOT NULL
-          AND tpm.client_segment <> ''
-        GROUP BY tg.kode_gmc, tg.keterangan, parent.kode_gmc, parent.keterangan, tg.keterangan2
+        WHERE tpm.sub_segment_id IS NOT NULL
+        GROUP BY tg.kode_gmc, tg.keterangan, parent.kode_gmc, parent.keterangan
         ORDER BY category_name, option_id
     """
     product_types = [
@@ -4122,8 +4125,8 @@ def get_loans_with_karyawan(db: Session, limit: int = 1000000,
             src.keterangan AS sourced_to_name,
             prj.kode_gmc AS project_code,
             prj.keterangan AS project_name,
-            tpm.client_segment AS client_segment_id,
-            seg.keterangan AS client_segment_name,
+            CAST(tpm.sub_segment_id AS CHAR) AS client_segment_id,
+            NULLIF(CONCAT_WS(' ', seg.keterangan, ss.keterangan), '') AS client_segment_name,
             tpm.product_type AS product_type_id,
             pt.keterangan AS product_type_name
         FROM td_loan l
