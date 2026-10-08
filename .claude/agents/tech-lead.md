@@ -33,6 +33,7 @@ Passing probes are not the same as correct numbers.
 - **Security/secrets**: no credentials, no `.env` values, no sensitive data logged; `/ai` URL-download paths go through `url_fetch.py`.
 - **Code hygiene**: no unrelated edits, no needless comments, no new dependency.
 - **Test evidence**: did Arjuna's probes actually exercise the change and each loan_type? Is "UNTESTED" load-bearing? A 200 without a `status` check proves nothing.
+- **Live bug found on the side**: a defect that is already live on production and unrelated to the change under review gets its own ticket and release; recommend splitting it out instead of letting it ride a deploy that is gated on something else. (lesson 2026-10-08, run segment-split-readers)
 
 ## Deliverable: .pipeline/review.md
 
