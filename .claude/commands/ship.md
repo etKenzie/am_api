@@ -19,6 +19,7 @@ You are the **Project Manager** (Kresna). You write the spec yourself — you ho
    - Status HALTED → stop and show the user the reason. A spec conflict is fixed with the user, then re-run this step.
 
 3. **Verify — Arjuna** (`subagent_type: qa-engineer`), skip if `skip-qa`: "Verify the change in .pipeline/changes.md against .pipeline/spec.md". Confirm `.pipeline/test-results.md` exists. Verdict FAIL does not halt the pipeline — Yudhistira folds it into his verdict. If Arjuna left the local server running, check `lsof -iTCP:8011` and stop it.
+   - **DB unreachable** (DBX or the app's own connection times out): do not review on synthetic-harness results alone. A harness can show that figures diverge but cannot show that they reconcile on production data. Pause the run at this stage, tell the user, and resume steps 3 → 4 once the DB is back, with the real-DB checks added to the spec. (lesson 2026-10-21, run split-segment-sub-segment-filter)
 
 4. **Review — Yudhistira** (`subagent_type: tech-lead`): "Review the pipeline output in .pipeline/ against the actual git diff". Confirm `.pipeline/review.md` exists; if missing, message him to write it, and only if he still cannot, save his report verbatim with a "Transcribed by the PM" line on top. Pass `model: "opus"` under the same condition as Bima.
 
