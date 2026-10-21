@@ -154,6 +154,10 @@ class LoanResponse(BaseModel):
     project_name: Optional[str] = None
     client_segment_id: Optional[str] = None
     client_segment_name: Optional[str] = None
+    segment_id: Optional[str] = None
+    segment_name: Optional[str] = None
+    sub_segment_id: Optional[str] = None
+    sub_segment_name: Optional[str] = None
     product_type_id: Optional[str] = None
     product_type_name: Optional[str] = None
 

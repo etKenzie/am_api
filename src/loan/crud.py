@@ -1,6 +1,6 @@
 from sqlalchemy.orm import Session
 from sqlalchemy import text
-from typing import List, Optional
+from typing import List, NamedTuple, Optional
 from datetime import date
 
 try:
@@ -475,6 +475,27 @@ CLIENT_SEGMENT_ALL_BFSI = "all_bfsi"
 CLIENT_SEGMENT_ALL_NON_BFSI = "all_non_bfsi"
 
 
+class SegmentFilter(NamedTuple):
+    segment: str | None
+    sub_segment: str | None
+
+
+def build_segment_filter(client_segment, segment, sub_segment) -> SegmentFilter | None:
+    segment = (segment or "").strip() or None
+    sub_segment = (sub_segment or "").strip() or (client_segment or "").strip() or None
+    if not (segment or sub_segment):
+        return None
+    return SegmentFilter(segment, sub_segment)
+
+
+def _as_segment_filter(value) -> SegmentFilter | None:
+    if not value:
+        return None
+    if isinstance(value, SegmentFilter):
+        return value
+    return SegmentFilter(None, value)
+
+
 def _normalize_client_segment_category(category_id: str, category_name: str) -> tuple[str | None, str | None]:
     combined = f"{category_id or ''} {category_name or ''}".lower().replace("-", " ").replace("_", " ")
     if "non" in combined and "bfsi" in combined:
@@ -552,28 +573,57 @@ def _sub_segment_codes_in_category_sql(category: str) -> str:
     return f"SELECT ss.kode_gmc {_SUB_SEGMENTS_WITH_PARENT_FROM_SQL}      AND {name_match}"
 
 
-def _resolve_aggregate_segment_codes(db: Session, category: str) -> list:
-    """Sub-segment kode under the BFSI / Non-BFSI parent segment, loaded once per DB session (request)."""
+def _load_sub_segment_codes(db: Session) -> dict:
+    """Sub-segment kode grouped by BFSI / Non-BFSI and by parent segment kode, loaded once per DB session (request)."""
     cache = db.info.get("loan_sub_segment_codes")
     if cache is None:
-        cache = {"bfsi": [], "non_bfsi": []}
-        query = f"SELECT ss.kode_gmc, seg.keterangan {_SUB_SEGMENTS_WITH_PARENT_FROM_SQL}"
-        for code, parent_name in db.execute(text(query)).fetchall():
+        cache = {"bfsi": [], "non_bfsi": [], "by_segment": {}}
+        query = f"SELECT ss.kode_gmc, seg.keterangan, seg.kode_gmc {_SUB_SEGMENTS_WITH_PARENT_FROM_SQL}"
+        for code, parent_name, parent_code in db.execute(text(query)).fetchall():
+            if code is None:
+                continue
             normalized_id, _ = _normalize_client_segment_category(parent_name, None)
-            if code is not None and normalized_id in cache:
+            if normalized_id in ("bfsi", "non_bfsi"):
                 cache[normalized_id].append(code)
+            cache["by_segment"].setdefault(str(parent_code), []).append(code)
         db.info["loan_sub_segment_codes"] = cache
-    return cache[category]
+    return cache
+
+
+def _resolve_aggregate_segment_codes(db: Session, category: str) -> list:
+    return _load_sub_segment_codes(db)[category]
+
+
+def _resolve_sub_segment_codes_of_segment(db: Session, segment_id: str) -> list:
+    return _load_sub_segment_codes(db)["by_segment"].get(str(int(segment_id)), [])
 
 
 def _segment_filter_predicate(
-    client_segment_filter: str,
+    client_segment_filter,
     params: dict,
     db: Session = None,
 ) -> str | None:
-    if not client_segment_filter:
+    segment_filter = _as_segment_filter(client_segment_filter)
+    if segment_filter is None:
         return None
 
+    conditions = []
+    if segment_filter.segment:
+        segment = segment_filter.segment.strip()
+        if not segment.isdecimal():
+            return "1=0"
+        params["segment"] = int(segment)
+        conditions.append("tpm.segment_id = :segment")
+    if segment_filter.sub_segment:
+        conditions.append(_sub_segment_filter_predicate(segment_filter.sub_segment, params, db))
+    return " AND ".join(conditions)
+
+
+def _sub_segment_filter_predicate(
+    client_segment_filter: str,
+    params: dict,
+    db: Session = None,
+) -> str:
     client_segment_filter = client_segment_filter.strip()
     if client_segment_filter == CLIENT_SEGMENT_ALL_BFSI:
         category = "bfsi"
@@ -759,7 +809,8 @@ def _fetch_project_management_filter_options(db: Session) -> dict:
             tg.kode_gmc AS option_id,
             CONCAT_WS(' ', parent.keterangan, tg.keterangan) AS option_name,
             parent.kode_gmc AS category_id,
-            parent.keterangan AS category_name
+            parent.keterangan AS category_name,
+            tg.keterangan AS sub_segment_name
         FROM tbl_project_management AS tpm
         INNER JOIN tbl_gmc AS tg
             ON tg.kode_gmc = tpm.sub_segment_id
@@ -780,10 +831,35 @@ def _fetch_project_management_filter_options(db: Session) -> dict:
         for row in db.execute(text(product_type_query)).fetchall()
         if row[0] is not None
     ]
-    segment_options = _build_client_segment_filter_options(
-        db.execute(text(client_segment_query)).fetchall()
-    )
-    return {"product_types": product_types, **segment_options}
+    segment_rows = db.execute(text(client_segment_query)).fetchall()
+    segment_options = _build_client_segment_filter_options(segment_rows)
+    return {
+        "product_types": product_types,
+        **segment_options,
+        **_build_segment_split_filter_options(segment_rows),
+    }
+
+
+def _build_segment_split_filter_options(rows: list) -> dict:
+    segments: dict = {}
+    sub_segments = []
+    for row in rows:
+        option_id, segment_id, segment_name, sub_segment_name = row[0], row[2], row[3], row[4]
+        if option_id is None:
+            continue
+        sub_segments.append(
+            {
+                "option_id": option_id,
+                "option_name": sub_segment_name,
+                "segment_id": segment_id,
+                "segment_name": segment_name,
+            }
+        )
+        segments.setdefault(segment_id, {"option_id": segment_id, "option_name": segment_name})
+    return {
+        "segments": [segments[key] for key in sorted(segments)],
+        "sub_segments": sub_segments,
+    }
 
 
 def _append_loan_org_filters(
@@ -1007,14 +1083,49 @@ def _allowed_employer_predicate(db: Session, params: dict, column: str = "de.emp
 
 
 def _eligible_segment_predicate(
+    client_segment_filter,
+    params: dict,
+    db: Session = None,
+) -> str:
+    """
+    Snapshot (de.client_segment) predicate. de.client_segment stores the sub-segment code:
+    - sub_segment / legacy client_segment: exact code, or the all_bfsi / all_non_bfsi aggregates;
+    - segment: numeric parent id, matches every sub-segment code of that parent;
+    - segment and sub_segment together are ANDed.
+    """
+    segment_filter = _as_segment_filter(client_segment_filter)
+    if segment_filter is None:
+        return "1=1"
+
+    conditions = []
+    if segment_filter.segment:
+        conditions.append(_eligible_parent_segment_predicate(segment_filter.segment, params, db))
+    if segment_filter.sub_segment:
+        conditions.append(_eligible_sub_segment_predicate(segment_filter.sub_segment, params, db))
+    return " AND ".join(conditions)
+
+
+def _eligible_parent_segment_predicate(segment: str, params: dict, db: Session = None) -> str:
+    # de.client_segment only stores the sub-segment code, so a segment matches its sub-segments.
+    segment = segment.strip()
+    if not segment.isdecimal() or db is None:
+        return "1=0"
+    codes = _resolve_sub_segment_codes_of_segment(db, segment)
+    if not codes:
+        return "1=0"
+    placeholders = []
+    for index, code in enumerate(codes):
+        key = f"elig_segp_{index}"
+        params[key] = code
+        placeholders.append(f":{key}")
+    return f"de.client_segment IN ({', '.join(placeholders)})"
+
+
+def _eligible_sub_segment_predicate(
     client_segment_filter: str,
     params: dict,
     db: Session = None,
 ) -> str:
-    """Match other loan endpoints: exact code, or all_bfsi / all_non_bfsi aggregates."""
-    if not client_segment_filter:
-        return "1=1"
-
     client_segment_filter = client_segment_filter.strip()
     if client_segment_filter == CLIENT_SEGMENT_ALL_BFSI:
         category = "bfsi"
@@ -4128,7 +4239,11 @@ def get_loans_with_karyawan(db: Session, limit: int = 1000000,
             CAST(tpm.sub_segment_id AS CHAR) AS client_segment_id,
             NULLIF(CONCAT_WS(' ', seg.keterangan, ss.keterangan), '') AS client_segment_name,
             tpm.product_type AS product_type_id,
-            pt.keterangan AS product_type_name
+            pt.keterangan AS product_type_name,
+            CAST(tpm.segment_id AS CHAR) AS segment_id,
+            seg.keterangan AS segment_name,
+            CAST(tpm.sub_segment_id AS CHAR) AS sub_segment_id,
+            ss.keterangan AS sub_segment_name
         FROM td_loan l
         INNER JOIN td_karyawan tk
             ON l.id_karyawan = tk.id_karyawan
@@ -4213,6 +4328,10 @@ def get_loans_with_karyawan(db: Session, limit: int = 1000000,
                 "client_segment_name": record[23],
                 "product_type_id": record[24],
                 "product_type_name": record[25],
+                "segment_id": record[26],
+                "segment_name": record[27],
+                "sub_segment_id": record[28],
+                "sub_segment_name": record[29],
             })
 
         return loans_list
@@ -4306,6 +4425,8 @@ def get_available_filter_values(db: Session, employer_filter: str = None, placem
             "projects": projects,
             "client_segments": pm_options["client_segments"],
             "client_segment_groups": pm_options["client_segment_groups"],
+            "segments": pm_options["segments"],
+            "sub_segments": pm_options["sub_segments"],
             "product_types": pm_options["product_types"],
         }
 
@@ -4319,6 +4440,8 @@ def get_available_filter_values(db: Session, employer_filter: str = None, placem
             "projects": [],
             "client_segments": fallback_segments["client_segments"],
             "client_segment_groups": fallback_segments["client_segment_groups"],
+            "segments": [],
+            "sub_segments": [],
             "product_types": [],
         }
 
