@@ -4342,7 +4342,7 @@ def get_loans_with_karyawan(db: Session, limit: int = 1000000,
         return []
 
 
-def get_available_filter_values(db: Session, employer_filter: str = None, placement_filter: str = None, loan_type: str = "loan") -> dict:
+def get_available_filter_values(db: Session, employer_filter: str = None, placement_filter: str = None, loan_type: str = "loan", segment_filter: str = None) -> dict:
     """Get available filter values from tbl_gmc table for different categories with cascading filters"""
 
     try:
@@ -4418,6 +4418,13 @@ def get_available_filter_values(db: Session, employer_filter: str = None, placem
         placements = [row[0] for row in db.execute(text(placement_query), placement_params).fetchall()]
         projects = [row[0] for row in db.execute(text(project_query), project_params).fetchall()]
         pm_options = _fetch_project_management_filter_options(db)
+        sub_segments = pm_options["sub_segments"]
+        segment_filter = (segment_filter or "").strip()
+        if segment_filter:
+            sub_segments = [
+                option for option in sub_segments
+                if segment_filter.isdecimal() and option["segment_id"] == int(segment_filter)
+            ]
 
         return {
             "employers": employers,
@@ -4426,7 +4433,7 @@ def get_available_filter_values(db: Session, employer_filter: str = None, placem
             "client_segments": pm_options["client_segments"],
             "client_segment_groups": pm_options["client_segment_groups"],
             "segments": pm_options["segments"],
-            "sub_segments": pm_options["sub_segments"],
+            "sub_segments": sub_segments,
             "product_types": pm_options["product_types"],
         }
 

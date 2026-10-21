@@ -500,16 +500,18 @@ def get_available_filters(
     employer: str = None,
     placement: str = None,
     loan_type: str = "loan",
+    segment: str = None,
     db: Session = Depends(get_db)
 ):
-    """Get available filter values. Use loan_type=all to combine kasbon, extradana, and aku_cicil."""
+    """Get available filter values. Use loan_type=all to combine kasbon, extradana, and aku_cicil. Pass segment to list only that segment's sub_segments."""
 
     try:
         filter_values = crud.get_available_filter_values(
             db,
             employer_filter=employer,
             placement_filter=placement,
-            loan_type=loan_type
+            loan_type=loan_type,
+            segment_filter=segment
         )
 
         return {
